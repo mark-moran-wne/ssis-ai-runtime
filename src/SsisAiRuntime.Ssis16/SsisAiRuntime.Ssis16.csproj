@@ -2,11 +2,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SsisAiRuntime.Core\SsisAiRuntime.Core.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.Inspectors\SsisAiRuntime.Inspectors.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <SSIS16BinnPath Condition="'$(SSIS16BinnPath)' == ''">$(ProgramFiles)\Microsoft SQL Server\160\DTS\Binn</SSIS16BinnPath>
+    <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll')">$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
+    <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == '' and Exists('$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SQLServer.ManagedDTS\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SQLServer.ManagedDTS.dll')">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SQLServer.ManagedDTS\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
@@ -16,9 +19,14 @@
 
   <ItemGroup>
     <Reference Include="Microsoft.SQLServer.ManagedDTS">
-      <HintPath>$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll</HintPath>
+      <HintPath>$(SSIS16ManagedDtsPath)</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="ValidateSsis16ManagedDtsPath" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(SSIS16ManagedDtsPath)' == '' or !Exists('$(SSIS16ManagedDtsPath)')"
+           Text="SSIS 16 Microsoft.SQLServer.ManagedDTS.dll was not found. Set SSIS16ManagedDtsPath to the full DLL path or SSIS16BinnPath to its DTS\Binn directory." />
+  </Target>
 
 </Project>
