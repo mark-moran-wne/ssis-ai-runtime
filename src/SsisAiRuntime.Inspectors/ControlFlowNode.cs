@@ -1,0 +1,24 @@
+namespace SsisAiRuntime.Inspectors
+{
+    public sealed class ControlFlowNode
+    {
+        public ControlFlowNode(SemanticHandle handle, string name, string creationName, int depth, bool isContainer)
+        {
+            Handle = handle;
+            Name = name ?? string.Empty;
+            CreationName = creationName ?? string.Empty;
+            Depth = depth;
+            IsContainer = isContainer;
+        }
+
+        public SemanticHandle Handle { get; }
+
+        public string Name { get; }
+
+        public string CreationName { get; }
+
+        public int Depth { get; }
+
+        public bool IsContainer { get; }
+    }
+}

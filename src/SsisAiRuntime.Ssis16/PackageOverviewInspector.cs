@@ -33,5 +33,10 @@ namespace SsisAiRuntime.Ssis16
                 package.Parameters.Count,
                 package.HasExpressions);
         }
+
+        public InspectionResult<PackageOverview> InspectDetailed(PackageSession<DtsRuntime.Package> session)
+        {
+            return InspectionResult<PackageOverview>.Complete(new[] { Inspect(session) });
+        }
     }
 }

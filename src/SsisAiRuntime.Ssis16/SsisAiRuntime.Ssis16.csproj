@@ -10,6 +10,10 @@
     <SSIS16BinnPath Condition="'$(SSIS16BinnPath)' == ''">$(ProgramFiles)\Microsoft SQL Server\160\DTS\Binn</SSIS16BinnPath>
     <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll')">$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
     <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == '' and Exists('$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SQLServer.ManagedDTS\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SQLServer.ManagedDTS.dll')">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SQLServer.ManagedDTS\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
+    <SSIS16PipelineWrapPath Condition="'$(SSIS16PipelineWrapPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SqlServer.DTSPipelineWrap.dll')">$(SSIS16BinnPath)\Microsoft.SqlServer.DTSPipelineWrap.dll</SSIS16PipelineWrapPath>
+    <SSIS16PipelineWrapPath Condition="'$(SSIS16PipelineWrapPath)' == '' and Exists('$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SqlServer.DTSPipelineWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSPipelineWrap.dll')">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SqlServer.DTSPipelineWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSPipelineWrap.dll</SSIS16PipelineWrapPath>
+    <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SqlServer.DTSRuntimeWrap.dll')">$(SSIS16BinnPath)\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
+    <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == '' and Exists('$(WINDIR)\Microsoft.NET\assembly\GAC_32\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll')">$(WINDIR)\Microsoft.NET\assembly\GAC_32\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
@@ -22,11 +26,23 @@
       <HintPath>$(SSIS16ManagedDtsPath)</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSPipelineWrap">
+      <HintPath>$(SSIS16PipelineWrapPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap">
+      <HintPath>$(SSIS16RuntimeWrapPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <Target Name="ValidateSsis16ManagedDtsPath" BeforeTargets="ResolveAssemblyReferences">
     <Error Condition="'$(SSIS16ManagedDtsPath)' == '' or !Exists('$(SSIS16ManagedDtsPath)')"
            Text="SSIS 16 Microsoft.SQLServer.ManagedDTS.dll was not found. Set SSIS16ManagedDtsPath to the full DLL path or SSIS16BinnPath to its DTS\Binn directory." />
+        <Error Condition="'$(SSIS16PipelineWrapPath)' == '' or !Exists('$(SSIS16PipelineWrapPath)')"
+          Text="SSIS 16 Microsoft.SqlServer.DTSPipelineWrap.dll was not found. Set SSIS16PipelineWrapPath to the full DLL path or SSIS16BinnPath to its DTS\Binn directory." />
+            <Error Condition="'$(SSIS16RuntimeWrapPath)' == '' or !Exists('$(SSIS16RuntimeWrapPath)')"
+              Text="SSIS 16 Microsoft.SqlServer.DTSRuntimeWrap.dll was not found. Set SSIS16RuntimeWrapPath to the full DLL path or SSIS16BinnPath to its DTS\Binn directory." />
   </Target>
 
 </Project>
