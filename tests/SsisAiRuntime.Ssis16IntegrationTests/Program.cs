@@ -280,7 +280,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             string expectedKind = "ExplicitMapping", string forbiddenText = null)
         {
             var report = RunCli(new[] { "trace", path, "--flow", flowId, "--component", componentId,
-                "--column", columnId, "--direction", upstream ? "upstream" : "downstream" }, 0);
+                "--column", columnId, "--direction", upstream ? "upstream" : "downstream", "--details" }, 0);
             Require((bool)report["succeeded"] && (bool)report["isComplete"], "fixture.cli.envelope");
             Require((bool)report["redaction"]["applied"] && (bool)report["redaction"]["expressionTextOmitted"] &&
                 (bool)report["redaction"]["settingValuesOmitted"], "fixture.cli.redaction");
@@ -314,7 +314,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 foreach (var command in new[] { "overview", "sql", "lineage", "configuration" })
                 {
                     stage = "package.smoke." + command;
-                    var report = RunCli(new[] { command, path }, 0, 5);
+                    var report = RunCli(new[] { command, path, "--details" }, 0, 5);
                     Require((bool)report["succeeded"] && (string)report["command"] == command, "smoke.envelope");
                     Require((bool)report["isComplete"] == ((int)report["exitCode"] == 0), "smoke.complete");
                     var expectedGaps = command == "sql" ? sql.UnsupportedItems.Count : command == "lineage" ? flows.UnsupportedItems.Count :
@@ -335,13 +335,13 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     }
                     Console.WriteLine("Package smoke " + command + ": PASS; count=" + count + "; coverageGaps=" + expectedGaps + ".");
                 }
-                var batch = RunCli(new[] { "all", path, "--summary" }, 0, 5);
+                var batch = RunCli(new[] { "all", path }, 0, 5);
                 Require(((JArray)batch["completedOperations"]).Count == 4 && ((JArray)batch["skippedOperations"]).Count == 0, "smoke.batch");
                 var executables = new PackageExecutableInspector().InspectDetailed(session);
                 var precedence = new PackagePrecedenceInspector().InspectDetailed(session);
                 var catalog = new SemanticHandleCatalogBuilder().Build(overview, connections.Items, variables.Items, parameters.Items, executables.Items, flows.Items);
                 var graph = new ControlFlowGraphBuilder().Build(executables.Items, precedence, catalog);
-                var graphReport = RunCli(new[] { "control-flow", path, "--summary" }, 0, 5);
+                var graphReport = RunCli(new[] { "control-flow", path }, 0, 5);
                 Require((int)graphReport["results"]["counts"]["nodes"] == graph.Nodes.Count &&
                     (int)graphReport["results"]["counts"]["precedenceEdges"] == graph.Edges.Count(edge => edge.Kind == ControlFlowEdgeKind.Precedence), "smoke.graph");
                 RunCli(new[] { "execute", path }, 2);

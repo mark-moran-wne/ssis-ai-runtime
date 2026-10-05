@@ -26,7 +26,7 @@ public class CliRunnerTests
                 return Success();
             });
 
-            Assert.Equal(0, runner.Run(new[] { command, path }, output));
+            Assert.Equal(0, runner.Run(new[] { command, path, "--details" }, output));
             var json = JObject.Parse(output.ToString());
             Assert.Equal(1, calls);
             Assert.Equal("1.0", json["schemaVersion"]);
@@ -36,6 +36,22 @@ public class CliRunnerTests
             Assert.Empty((JArray)json["diagnostics"]!);
             Assert.Empty((JArray)json["unsupportedItems"]!);
             Assert.Equal("metadata-only", json["redaction"]!["policy"]);
+            Assert.Null(json["outputMode"]);
+        });
+    }
+
+    [Fact]
+    public void SummaryIsTheDefaultOutputMode()
+    {
+        WithPackage(path =>
+        {
+            var runner = new CliRunner((_, _) => Success(Package()));
+            var output = new StringWriter();
+            Assert.Equal(0, runner.Run(new[] { "overview", path }, output));
+            var json = JObject.Parse(output.ToString());
+            Assert.Equal("summary", (string)json["outputMode"]!);
+            Assert.NotNull(json["results"]!["counts"]);
+            Assert.Null(json["results"]!["connectionCount"]);
         });
     }
 
@@ -45,6 +61,7 @@ public class CliRunnerTests
     [InlineData("overview")]
     [InlineData("overview", " ")]
     [InlineData("overview", "package.dtsx", "--password=secret")]
+    [InlineData("overview", "package.dtsx", "--summary")]
     public void InvalidArgumentsNeverInvokeService(params string[] args)
     {
         var output = new StringWriter();
@@ -96,7 +113,7 @@ public class CliRunnerTests
             var runner = new CliRunner((_, _) => Success(new { package, sql, setting }, new[] { unsupported }));
             var output = new StringWriter();
 
-            Assert.Equal(5, runner.Run(new[] { "sql", path }, output));
+            Assert.Equal(5, runner.Run(new[] { "sql", path, "--details" }, output));
             var json = JObject.Parse(output.ToString());
             Assert.True((bool)json["succeeded"]!);
             Assert.False((bool)json["isComplete"]!);
@@ -118,7 +135,7 @@ public class CliRunnerTests
             var runner = new CliRunner((_, _) => Success(Package(), items));
             var output = new StringWriter();
 
-            Assert.Equal(5, runner.Run(new[] { "overview", path, "--summary" }, output));
+            Assert.Equal(5, runner.Run(new[] { "overview", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.Equal(1869, (int)json["coverage"]!["unsupportedCount"]!);
             Assert.Equal(12, (int)json["coverage"]!["groupsOmitted"]!);
@@ -138,11 +155,11 @@ public class CliRunnerTests
         {
             var output = new StringWriter();
             var runner = new CliRunner((_, _) => Success());
-            Assert.Equal(4, runner.Run(new[] { "sql", path, "--summary" }, output));
+            Assert.Equal(4, runner.Run(new[] { "sql", path }, output));
             output.GetStringBuilder().Clear();
             var context = new PackageContextBuilder().BuildSql(Package(), InspectionResult<SqlStatementOverview>.Complete(Array.Empty<SqlStatementOverview>()));
             runner = new CliRunner((_, _) => Success(context));
-            Assert.Equal(0, runner.Run(new[] { "sql", path, "--summary" }, output));
+            Assert.Equal(0, runner.Run(new[] { "sql", path }, output));
             Assert.Equal(0, (int)JObject.Parse(output.ToString())["results"]!["counts"]!["sqlTasks"]!);
         });
     }
@@ -172,7 +189,7 @@ public class CliRunnerTests
             var calls = 0;
             var runner = new CliRunner((command, _) => { calls++; Assert.Equal("all", command); return Success(new CliInspectionBatch(reports)); });
             var output = new StringWriter();
-            Assert.Equal(5, runner.Run(new[] { "all", path, "--summary" }, output));
+            Assert.Equal(5, runner.Run(new[] { "all", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.Equal(1, calls);
             Assert.Equal(4, ((JArray)json["completedOperations"]!).Count);
@@ -199,7 +216,7 @@ public class CliRunnerTests
             };
             var runner = new CliRunner((_, _) => Success(new CliInspectionBatch(reports)));
             var output = new StringWriter();
-            Assert.Equal(4, runner.Run(new[] { "all", path, "--summary" }, output));
+            Assert.Equal(4, runner.Run(new[] { "all", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.False((bool)json["succeeded"]!);
             Assert.Equal(0, (int)json["results"]!["overview"]!["exitCode"]!);
@@ -220,7 +237,7 @@ public class CliRunnerTests
             var gap = new UnsupportedItem("id", "Setting", "Component", "reason-secret", reasonCode);
             var runner = new CliRunner((_, _) => Success(Package(), new[] { gap }));
             var output = new StringWriter();
-            Assert.Equal(5, runner.Run(new[] { "overview", path, "--summary" }, output));
+            Assert.Equal(5, runner.Run(new[] { "overview", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.Equal(reasonCode, (string)json["unsupportedItems"]![0]!["reasonCode"]!);
             Assert.Equal(reasonCode, (string)json["coverage"]!["reasonCounts"]![0]!["reasonCode"]!);
@@ -240,7 +257,7 @@ public class CliRunnerTests
                 new RuntimeDiagnostic(new string('X', 500) + index, RuntimeDiagnosticSeverity.Warning, "message-secret")));
             var runner = new CliRunner((_, _) => new CliInspection(Package(), diagnostics, Array.Empty<UnsupportedItem>()));
             var output = new StringWriter();
-            Assert.Equal(0, runner.Run(new[] { "overview", path, "--summary" }, output));
+            Assert.Equal(0, runner.Run(new[] { "overview", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.Equal(8, ((JArray)json["diagnostics"]!).Count);
             Assert.Equal(20, (int)json["coverage"]!["diagnosticCount"]!);
@@ -257,11 +274,11 @@ public class CliRunnerTests
         {
             var sql = new PackageContextBuilder().BuildSql(Package(), InspectionResult<SqlStatementOverview>.Complete(Array.Empty<SqlStatementOverview>()));
             var runner = new CliRunner((_, _) => Success(sql));
-            Assert.Equal(4, runner.Run(new[] { "configuration", path, "--summary" }, new StringWriter()));
+            Assert.Equal(4, runner.Run(new[] { "configuration", path }, new StringWriter()));
             var package = new PackageOverview(Guid.NewGuid(), "Demo", "", "", DateTime.MinValue,
                 1, 0, 0, "DontSaveSensitive", "Default", 0, 0, 0, 0, 0, false);
             runner = new CliRunner((_, _) => Success(package));
-            Assert.Equal(4, runner.Run(new[] { "overview", path, "--summary" }, new StringWriter()));
+            Assert.Equal(4, runner.Run(new[] { "overview", path }, new StringWriter()));
         });
     }
 
@@ -283,8 +300,8 @@ public class CliRunnerTests
                     Array.Empty<DataFlowColumnOverview>(), Array.Empty<ColumnLineageLink>())));
             });
             var output = new StringWriter();
-            Assert.Equal(0, runner.Run(new[] { "trace", path, "--flow", "flow", "--component", "component", "--column", "column", "--direction", "upstream", "--summary" }, output));
-            Assert.Equal("Upstream", (string)JObject.Parse(output.ToString())["results"]!["counts"]!["direction"]!);
+            Assert.Equal(0, runner.Run(new[] { "trace", path, "--flow", "flow", "--component", "component", "--column", "column", "--direction", "upstream", "--details" }, output));
+            Assert.Equal("Upstream", (string)JObject.Parse(output.ToString())["results"]!["trace"]!["direction"]!);
         });
     }
 
@@ -319,8 +336,8 @@ public class CliRunnerTests
                     Array.Empty<ControlFlowEdge>(), Array.Empty<UnsupportedItem>())));
             });
             var output = new StringWriter();
-            Assert.Equal(0, runner.Run(new[] { operation, path, "--task", "task-id", "--recursive", "--summary" }, output));
-            Assert.Equal(0, (int)JObject.Parse(output.ToString())["results"]!["counts"]!["precedenceEdges"]!);
+            Assert.Equal(0, runner.Run(new[] { operation, path, "--task", "task-id", "--recursive", "--details" }, output));
+            Assert.NotNull(JObject.Parse(output.ToString())["results"]!["graph"]);
         });
     }
 
@@ -354,8 +371,8 @@ public class CliRunnerTests
                 return Success(new PackageSearchResult(package, catalog, invocation.Search.Query, invocation.Search.Kind));
             });
             var output = new StringWriter();
-            Assert.Equal(0, runner.Run(new[] { "search", path, "--query", "query-secret", "--kind", "executable", "--summary" }, output));
-            Assert.Equal(0, (int)JObject.Parse(output.ToString())["results"]!["counts"]!["totalMatches"]!);
+            Assert.Equal(0, runner.Run(new[] { "search", path, "--query", "query-secret", "--kind", "executable", "--details" }, output));
+            Assert.NotNull(JObject.Parse(output.ToString())["results"]!["matches"]);
             Assert.DoesNotContain("query-secret", output.ToString());
         });
     }

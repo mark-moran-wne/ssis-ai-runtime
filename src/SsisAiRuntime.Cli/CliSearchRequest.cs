@@ -19,16 +19,18 @@ namespace SsisAiRuntime.Cli
         public static bool TryParse(string[] args, out CliSearchRequest? request, out bool summary)
         {
             request = null;
-            summary = false;
+            summary = true;
             string? query = null;
             SemanticObjectKind? kind = null;
+            var outputModeSpecified = false;
             for (var index = 2; index < args.Length; index++)
             {
                 var option = args[index];
-                if (option == "--summary")
+                if (option == "--details")
                 {
-                    if (summary) { return false; }
-                    summary = true;
+                    if (outputModeSpecified) { return false; }
+                    summary = false;
+                    outputModeSpecified = true;
                     continue;
                 }
                 if ((option != "--query" && option != "--kind") || index + 1 >= args.Length ||

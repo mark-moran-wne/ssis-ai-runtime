@@ -41,7 +41,7 @@ namespace SsisAiRuntime.Cli
         public int Run(string[]? args, TextWriter output)
         {
             string? command = null;
-            var summary = args != null && args.Length == 3 && args[2] == "--summary";
+            var summary = true;
             try
             {
                 CliTraceRequest? request = null;
@@ -50,14 +50,15 @@ namespace SsisAiRuntime.Cli
                 var trace = args != null && args.Length >= 2 && args[0] == "trace";
                 var taskQuery = args != null && args.Length >= 2 && (args[0] == "predecessors" || args[0] == "successors");
                 var search = args != null && args.Length >= 2 && args[0] == "search";
+                if (args != null && args.Length == 3 && args[2] == "--details") { summary = false; }
                 var valid = search ? CliSearchRequest.TryParse(args!, out searchRequest, out summary) : trace ? CliTraceRequest.TryParse(args!, out request, out summary) : taskQuery ?
                     CliTaskRequest.TryParse(args!, out taskRequest, out summary) :
-                    args != null && (args.Length == 2 || summary) &&
+                    args != null && (args.Length == 2 || args.Length == 3 && args[2] == "--details") &&
                     (CliInspectionBatch.Operations.Contains(args[0]) || args[0] == "all" || args[0] == "control-flow");
                 if (!valid || args == null || string.IsNullOrWhiteSpace(args[1]))
                 {
                     return Write(output, null, 2, null, new JArray(Diagnostic("cli.usage", "Error",
-                        "Usage: SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|all|control-flow> <package.dtsx> [--summary]; trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--summary]; <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--summary]; search <package.dtsx> --query <text> [--kind <object-kind>] [--summary]")), new JArray());
+                        "Usage: SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|all|control-flow> <package.dtsx> [--details]; trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]; <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]; search <package.dtsx> --query <text> [--kind <object-kind>] [--details]")), new JArray());
                 }
 
                 command = args[0];

@@ -15,16 +15,18 @@ namespace SsisAiRuntime.Cli
         public static bool TryParse(string[] args, out CliTaskRequest? request, out bool summary)
         {
             request = null;
-            summary = false;
+            summary = true;
             string? task = null;
             var recursive = false;
+            var outputModeSpecified = false;
             for (var index = 2; index < args.Length; index++)
             {
                 switch (args[index])
                 {
-                    case "--summary":
-                        if (summary) { return false; }
-                        summary = true;
+                    case "--details":
+                        if (outputModeSpecified) { return false; }
+                        summary = false;
+                        outputModeSpecified = true;
                         break;
                     case "--recursive":
                         if (recursive) { return false; }
