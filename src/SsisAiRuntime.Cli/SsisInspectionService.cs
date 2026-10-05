@@ -131,7 +131,7 @@ namespace SsisAiRuntime.Cli
                     }
                 }
 
-                if (command != "all")
+                if (command != "inspect")
                 {
                     return InspectOperation(command);
                 }

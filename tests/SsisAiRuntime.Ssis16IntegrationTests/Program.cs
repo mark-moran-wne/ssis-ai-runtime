@@ -335,7 +335,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     }
                     Console.WriteLine("Package smoke " + command + ": PASS; count=" + count + "; coverageGaps=" + expectedGaps + ".");
                 }
-                var batch = RunCli(new[] { "all", path }, 0, 5);
+                var batch = RunCli(new[] { "inspect", path }, 0, 5);
                 Require(((JArray)batch["completedOperations"]).Count == 4 && ((JArray)batch["skippedOperations"]).Count == 0, "smoke.batch");
                 var executables = new PackageExecutableInspector().InspectDetailed(session);
                 var precedence = new PackagePrecedenceInspector().InspectDetailed(session);

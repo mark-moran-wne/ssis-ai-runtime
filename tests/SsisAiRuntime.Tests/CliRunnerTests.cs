@@ -58,6 +58,7 @@ public class CliRunnerTests
     [Theory]
     [InlineData()]
     [InlineData("execute", "password=secret")]
+    [InlineData("all", "package.dtsx")]
     [InlineData("overview")]
     [InlineData("overview", " ")]
     [InlineData("overview", "package.dtsx", "--password=secret")]
@@ -69,6 +70,18 @@ public class CliRunnerTests
         Assert.Equal(2, runner.Run(args, output));
         Assert.Equal("cli.usage", JObject.Parse(output.ToString())["diagnostics"]![0]!["code"]);
         Assert.DoesNotContain("secret", output.ToString());
+    }
+
+    [Fact]
+    public void NoArgumentsShowMultilineUsageAndDefaultOutputMode()
+    {
+        var output = new StringWriter();
+        var runner = new CliRunner((_, _) => throw new InvalidOperationException("must not inspect"));
+        Assert.Equal(2, runner.Run(Array.Empty<string>(), output));
+        var message = (string)JObject.Parse(output.ToString())["diagnostics"]![0]!["message"]!;
+        Assert.Contains("Usage:", message);
+        Assert.Contains(Environment.NewLine + "  SsisAiRuntime.Cli.exe trace", message);
+        Assert.Contains("Output defaults to a bounded summary. Use --details", message);
     }
 
     [Fact]
@@ -168,7 +181,7 @@ public class CliRunnerTests
         1, 0, 0, "DontSaveSensitive", "Default", 0, 0, 0, 0, 0, false);
 
     [Fact]
-    public void AllRetainsReportsAndContinuesThroughIncompleteCoverage()
+    public void InspectRetainsReportsAndContinuesThroughIncompleteCoverage()
     {
         WithPackage(path =>
         {
@@ -187,9 +200,9 @@ public class CliRunnerTests
                     InspectionResult<ExpressionOverview>.Complete(Array.Empty<ExpressionOverview>())))
             };
             var calls = 0;
-            var runner = new CliRunner((command, _) => { calls++; Assert.Equal("all", command); return Success(new CliInspectionBatch(reports)); });
+            var runner = new CliRunner((command, _) => { calls++; Assert.Equal("inspect", command); return Success(new CliInspectionBatch(reports)); });
             var output = new StringWriter();
-            Assert.Equal(5, runner.Run(new[] { "all", path }, output));
+            Assert.Equal(5, runner.Run(new[] { "inspect", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.Equal(1, calls);
             Assert.Equal(4, ((JArray)json["completedOperations"]!).Count);
@@ -202,7 +215,7 @@ public class CliRunnerTests
     }
 
     [Fact]
-    public void AllFailurePreservesEarlierReportsAndListsSkippedOperations()
+    public void InspectFailurePreservesEarlierReportsAndListsSkippedOperations()
     {
         WithPackage(path =>
         {
@@ -216,7 +229,7 @@ public class CliRunnerTests
             };
             var runner = new CliRunner((_, _) => Success(new CliInspectionBatch(reports)));
             var output = new StringWriter();
-            Assert.Equal(4, runner.Run(new[] { "all", path }, output));
+            Assert.Equal(4, runner.Run(new[] { "inspect", path }, output));
             var json = JObject.Parse(output.ToString());
             Assert.False((bool)json["succeeded"]!);
             Assert.Equal(0, (int)json["results"]!["overview"]!["exitCode"]!);

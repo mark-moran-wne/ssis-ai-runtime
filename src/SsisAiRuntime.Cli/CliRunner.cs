@@ -54,11 +54,21 @@ namespace SsisAiRuntime.Cli
                 var valid = search ? CliSearchRequest.TryParse(args!, out searchRequest, out summary) : trace ? CliTraceRequest.TryParse(args!, out request, out summary) : taskQuery ?
                     CliTaskRequest.TryParse(args!, out taskRequest, out summary) :
                     args != null && (args.Length == 2 || args.Length == 3 && args[2] == "--details") &&
-                    (CliInspectionBatch.Operations.Contains(args[0]) || args[0] == "all" || args[0] == "control-flow");
+                    (CliInspectionBatch.Operations.Contains(args[0]) || args[0] == "inspect" || args[0] == "control-flow");
                 if (!valid || args == null || string.IsNullOrWhiteSpace(args[1]))
                 {
+                    var usage = string.Join(Environment.NewLine, new[]
+                    {
+                        "Usage:",
+                        "  SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|inspect|control-flow> <package.dtsx> [--details]",
+                        "  SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]",
+                        "  SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]",
+                        "  SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]",
+                        "",
+                        "Output defaults to a bounded summary. Use --details for the full redacted projection."
+                    });
                     return Write(output, null, 2, null, new JArray(Diagnostic("cli.usage", "Error",
-                        "Usage: SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|all|control-flow> <package.dtsx> [--details]; trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]; <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]; search <package.dtsx> --query <text> [--kind <object-kind>] [--details]")), new JArray());
+                        usage)), new JArray());
                 }
 
                 command = args[0];
@@ -69,7 +79,7 @@ namespace SsisAiRuntime.Cli
                 }
 
                 var inspection = inspect(new CliInspectionRequest(command, args[1], request, taskRequest, searchRequest));
-                var envelope = command == "all" && inspection.Results is CliInspectionBatch batch && !inspection.Diagnostics.HasErrors
+                var envelope = command == "inspect" && inspection.Results is CliInspectionBatch batch && !inspection.Diagnostics.HasErrors
                     ? BuildBatch(batch, summary)
                     : BuildOperation(command, inspection, summary);
                 output.WriteLine(envelope.ToString(Formatting.None));
@@ -93,7 +103,7 @@ namespace SsisAiRuntime.Cli
                     return CreateEnvelope(command, inspection.FailureExitCode, null, diagnostics, new JArray(),
                         summary ? CliSummary.Coverage(Array.Empty<UnsupportedItem>()) : null);
                 }
-                if (inspection.Results == null || command == "all")
+                if (inspection.Results == null || command == "inspect")
                 {
                     throw new InvalidOperationException("Missing or unexpected inspection results.");
                 }
@@ -172,7 +182,7 @@ namespace SsisAiRuntime.Cli
             {
                 coverage["examplesOmitted"] = unsupported.Count;
             }
-            var envelope = CreateEnvelope("all", exitCode, reports, diagnostics, new JArray(), coverage);
+            var envelope = CreateEnvelope("inspect", exitCode, reports, diagnostics, new JArray(), coverage);
             envelope["completedOperations"] = new JArray(reports.Properties().Select(property => property.Name));
             envelope["skippedOperations"] = skipped;
             return envelope;
