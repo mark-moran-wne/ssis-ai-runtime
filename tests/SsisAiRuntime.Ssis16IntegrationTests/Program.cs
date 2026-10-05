@@ -16,8 +16,13 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
     {
         private static string stage = "initialization";
 
-        private static int Main()
+        private static int Main(string[] args)
         {
+            if (args.Length > 1)
+            {
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx]");
+                return 2;
+            }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             try
@@ -59,6 +64,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     ProbeExpressionParser(load.Session.Package);
                     Require(Hash(path) == before, "fixture.parser.hash");
                     VerifyDerivedFixture(directory);
+                    if (args.Length == 1) { VerifyExistingPackage(args[0]); }
                     return 0;
                 }
                 finally
@@ -68,7 +74,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
             catch (Exception)
             {
-                Console.Error.WriteLine("Native Data Conversion verification failed at " + stage + ". Raw exception details are withheld.");
+                Console.Error.WriteLine("Native integration verification failed at " + stage + ". Raw exception details are withheld.");
                 return 1;
             }
             finally
@@ -273,13 +279,94 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
         private static void VerifyCli(string path, string flowId, string componentId, string columnId, bool upstream,
             string expectedKind = "ExplicitMapping", string forbiddenText = null)
         {
+            var report = RunCli(new[] { "trace", path, "--flow", flowId, "--component", componentId,
+                "--column", columnId, "--direction", upstream ? "upstream" : "downstream" }, 0);
+            Require((bool)report["succeeded"] && (bool)report["isComplete"], "fixture.cli.envelope");
+            Require((bool)report["redaction"]["applied"] && (bool)report["redaction"]["expressionTextOmitted"] &&
+                (bool)report["redaction"]["settingValuesOmitted"], "fixture.cli.redaction");
+            if (expectedKind != null)
+            {
+                Require(report["results"]["trace"]["links"].Any(link => (string)link["kind"] == expectedKind), "fixture.cli.mapping");
+            }
+            if (forbiddenText != null) { Require(!report.ToString().Contains(forbiddenText), "fixture.cli.literal"); }
+            RequireNoValues(report);
+        }
+
+        private static void VerifyExistingPackage(string path)
+        {
+            stage = "package.smoke.load";
+            Require(File.Exists(path), "smoke.file");
+            var before = Hash(path);
+            var load = new PackageLoader().Load(path);
+            Require(load.Succeeded, "smoke.load");
+            try
+            {
+                var session = load.Session;
+                var overview = new PackageOverviewInspector().Inspect(session);
+                var sql = new PackageSqlInspector().InspectDetailed(session);
+                var flows = new PackageDataFlowInspector().InspectDetailed(session);
+                var connections = new PackageConnectionInspector().InspectDetailed(session);
+                var variables = new PackageVariableInspector().InspectDetailed(session);
+                var parameters = new PackageParameterInspector().InspectDetailed(session);
+                var expressions = new PackageExpressionInspector().InspectDetailed(session);
+                Require(connections.Items.Count == session.Package.Connections.Count && variables.Items.Count == session.Package.Variables.Count &&
+                    parameters.Items.Count == session.Package.Parameters.Count, "smoke.native.counts");
+                foreach (var command in new[] { "overview", "sql", "lineage", "configuration" })
+                {
+                    stage = "package.smoke." + command;
+                    var report = RunCli(new[] { command, path }, 0, 5);
+                    Require((bool)report["succeeded"] && (string)report["command"] == command, "smoke.envelope");
+                    Require((bool)report["isComplete"] == ((int)report["exitCode"] == 0), "smoke.complete");
+                    var expectedGaps = command == "sql" ? sql.UnsupportedItems.Count : command == "lineage" ? flows.UnsupportedItems.Count :
+                        command == "configuration" ? connections.UnsupportedItems.Count + variables.UnsupportedItems.Count + parameters.UnsupportedItems.Count + expressions.UnsupportedItems.Count : 0;
+                    Require(((JArray)report["unsupportedItems"]).Count == expectedGaps, "smoke.coverage");
+                    var expectedCount = command == "overview" ? overview.ConnectionCount : command == "sql" ? sql.Items.Count :
+                        command == "lineage" ? flows.Items.Count : connections.Items.Count;
+                    var count = command == "overview" ? (int)report["results"]["connectionCount"] :
+                        command == "sql" ? ((JArray)report["results"]["sqlStatements"]).Count :
+                        command == "lineage" ? ((JArray)report["results"]["dataFlows"]).Count : ((JArray)report["results"]["connections"]).Count;
+                    Require(count == expectedCount, "smoke.cli.counts");
+                    RequireNoValues(report);
+                    Require((string)report["redaction"]["policy"] == "metadata-only", "smoke.redaction.policy");
+                    foreach (var field in new[] { "applied", "connectionStringsOmitted", "variableValuesOmitted", "parameterValuesOmitted",
+                        "expressionTextOmitted", "sqlTextOmitted", "settingValuesOmitted", "descriptionsOmitted", "diagnosticDetailsOmitted" })
+                    {
+                        Require((bool)report["redaction"][field], "smoke.redaction.flag");
+                    }
+                    Console.WriteLine("Package smoke " + command + ": PASS; count=" + count + "; coverageGaps=" + expectedGaps + ".");
+                }
+                var batch = RunCli(new[] { "all", path, "--summary" }, 0, 5);
+                Require(((JArray)batch["completedOperations"]).Count == 4 && ((JArray)batch["skippedOperations"]).Count == 0, "smoke.batch");
+                var executables = new PackageExecutableInspector().InspectDetailed(session);
+                var precedence = new PackagePrecedenceInspector().InspectDetailed(session);
+                var catalog = new SemanticHandleCatalogBuilder().Build(overview, connections.Items, variables.Items, parameters.Items, executables.Items, flows.Items);
+                var graph = new ControlFlowGraphBuilder().Build(executables.Items, precedence, catalog);
+                var graphReport = RunCli(new[] { "control-flow", path, "--summary" }, 0, 5);
+                Require((int)graphReport["results"]["counts"]["nodes"] == graph.Nodes.Count &&
+                    (int)graphReport["results"]["counts"]["precedenceEdges"] == graph.Edges.Count(edge => edge.Kind == ControlFlowEdgeKind.Precedence), "smoke.graph");
+                RunCli(new[] { "execute", path }, 2);
+                RunCli(new[] { "overview", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".dtsx") }, 3);
+                Require(Hash(path) == before, "smoke.hash");
+                Console.WriteLine("Package smoke: PASS; direct/CLI counts, coverage, graph, error exits, redaction, and unchanged SHA-256; no execution or validation.");
+            }
+            finally { load.Session.Package.Dispose(); }
+        }
+
+        private static void RequireNoValues(JObject report)
+        {
+            Require(!report.Descendants().OfType<JProperty>().Any(property =>
+                property.Name == "statementText" || property.Name == "description" || property.Name == "value" ||
+                property.Name == "expression" || property.Name == "friendlyExpression" || property.Name == "connectionString"), "fixture.cli.values");
+        }
+
+        private static JObject RunCli(string[] arguments, params int[] allowedExitCodes)
+        {
             var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
             Require(File.Exists(cli), "fixture.cli.missing");
-            var arguments = string.Join(" ", new[] { "trace", path, "--flow", flowId, "--component", componentId,
-                "--column", columnId, "--direction", upstream ? "upstream" : "downstream" }.Select(Quote));
+            var argumentText = string.Join(" ", arguments.Select(Quote));
             using (var process = new Process
             {
-                StartInfo = new ProcessStartInfo(cli, arguments)
+                StartInfo = new ProcessStartInfo(cli, argumentText)
                 {
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -298,18 +385,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     throw new InvalidOperationException("fixture.cli.timeout");
                 }
                 System.Threading.Tasks.Task.WaitAll(stdout, stderr);
-                Require(process.ExitCode == 0, "fixture.cli.exit");
+                Require(allowedExitCodes.Contains(process.ExitCode), "fixture.cli.exit");
                 var report = JObject.Parse(stdout.Result);
-                Require((string)report["schemaVersion"] == "1.0" && (bool)report["succeeded"] && (bool)report["isComplete"], "fixture.cli.envelope");
-                Require((bool)report["redaction"]["applied"] && (bool)report["redaction"]["expressionTextOmitted"] &&
-                    (bool)report["redaction"]["settingValuesOmitted"], "fixture.cli.redaction");
-                if (expectedKind != null)
-                {
-                    Require(report["results"]["trace"]["links"].Any(link => (string)link["kind"] == expectedKind), "fixture.cli.mapping");
-                }
-                if (forbiddenText != null) { Require(!stdout.Result.Contains(forbiddenText), "fixture.cli.literal"); }
-                Require(!report.Descendants().OfType<JProperty>().Any(property =>
-                    property.Name == "statementText" || property.Name == "description" || property.Name == "value" || property.Name == "expression"), "fixture.cli.values");
+                Require((string)report["schemaVersion"] == "1.0" && (int)report["exitCode"] == process.ExitCode, "fixture.cli.envelope");
+                return report;
             }
         }
 

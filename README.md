@@ -24,14 +24,12 @@ Contributor documentation: [BuildPackage.md](BuildPackage.md).
 
 Invoke the executable directly. The example below uses the Release output location.
 
-```powershell
-$cli = '.\src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe'
-& $cli all 'C:\path\to\Package.dtsx' --summary
-& $cli overview 'C:\path\to\Package.dtsx'
-& $cli sql 'C:\path\to\Package.dtsx'
-& $cli lineage 'C:\path\to\Package.dtsx'
-& $cli configuration 'C:\path\to\Package.dtsx'
-$exitCode = $LASTEXITCODE
+```console
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe all "C:\path\to\Package.dtsx" --summary
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe overview "C:\path\to\Package.dtsx"
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe sql "C:\path\to\Package.dtsx"
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe lineage "C:\path\to\Package.dtsx"
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe configuration "C:\path\to\Package.dtsx"
 ```
 
 Commands accept a command and a package path, optionally followed by `--summary`. `overview` returns package metadata and root counts; `sql` returns SQL-task metadata and binding counts; `lineage` returns data-flow components, paths, columns, and lineage IDs; `configuration` returns connection, variable, parameter, and expression-presence metadata. These are projections of the existing services, not a new DTSX parser. SQL text and setting values are deliberately omitted in v1, even when the adapter has sanitized them.
@@ -44,9 +42,9 @@ Use `--summary` for terminal and agent consumption. The executable checks the ty
 
 Use detailed `lineage` output to select a data flow's `executableId`, a component's `id`, and an input/output column's `id`. These are native metadata IDs, not names or the numeric `lineageId`. Then invoke the executable directly:
 
-```powershell
-& $cli trace 'C:\path\to\Package.dtsx' --flow 'flow-executable-id' --component 'component-id' --column 'column-id' --direction downstream
-& $cli trace 'C:\path\to\Package.dtsx' --flow 'flow-executable-id' --component 'component-id' --column 'column-id' --direction upstream --summary
+```console
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe trace "C:\path\to\Package.dtsx" --flow "flow-executable-id" --component "component-id" --column "column-id" --direction downstream
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe trace "C:\path\to\Package.dtsx" --flow "flow-executable-id" --component "component-id" --column "column-id" --direction upstream --summary
 ```
 
 Direction defaults to `downstream`. Detailed results contain `package` and `trace`; the trace includes reached `columns` and `links`, with the selected column first. Link kinds are `Path` for a projected pipeline path, `ProjectedIdentity` for an explicitly projected same-lineage relationship inside a component, and `SynchronousPassThrough` for a proven buffer-column relationship through an output's declared synchronous input. Synchronous links retain the `synchronousOutputId`. Summary mode returns package identity and counts for flow ID, direction, columns, and links.
@@ -69,10 +67,10 @@ Trace completeness applies only to the selected projected relationships, not to 
 
 Inspect the native executable hierarchy and precedence graph, then select a task by its `nativeId` from `results.graph.nodes`:
 
-```powershell
-& $cli control-flow 'C:\path\to\Package.dtsx'
-& $cli predecessors 'C:\path\to\Package.dtsx' --task 'task-native-id' --summary
-& $cli successors 'C:\path\to\Package.dtsx' --task 'task-native-id' --recursive
+```console
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe control-flow "C:\path\to\Package.dtsx"
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe predecessors "C:\path\to\Package.dtsx" --task "task-native-id" --summary
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe successors "C:\path\to\Package.dtsx" --task "task-native-id" --recursive
 ```
 
 Detailed results contain `package` and `graph`, with semantic-handle-backed `nodes`, `edges`, and `isComplete`. The full graph contains both `Containment` and `Precedence` edges. Predecessor/successor results include the selected task first and follow only precedence edges: immediate neighbours by default, transitively with `--recursive`. Cycles are bounded by a visited set; duplicate task names do not affect ID selection. Missing or ambiguous task IDs return exit `4` with `controlflow.selection.invalid`, without echoing the supplied selector.
@@ -81,10 +79,10 @@ Summary mode returns package identity and counts for `nodes`, `precedenceEdges`,
 
 ### Metadata Search
 
-```powershell
-& $cli search 'C:\path\to\Package.dtsx' --query 'load'
-& $cli search 'C:\path\to\Package.dtsx' --query 'warehouse' --kind Connection --summary
-& $cli search 'C:\path\to\Package.dtsx' --query 'task-native-id' --kind Executable
+```console
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe search "C:\path\to\Package.dtsx" --query "load"
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe search "C:\path\to\Package.dtsx" --query "warehouse" --kind Connection --summary
+src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe search "C:\path\to\Package.dtsx" --query "task-native-id" --kind Executable
 ```
 
 Search uses case-insensitive literal substrings, not regular expressions, over catalog object names, creation names, semantic handle values, and available native IDs. The query must contain 1 to 256 characters. Optional `--kind` accepts a `SemanticObjectKind` name, such as `Connection`, `Executable`, `DataFlowComponent`, or `OutputColumn`; numeric enum values are rejected. Duplicate names return all matching objects rather than choosing one.

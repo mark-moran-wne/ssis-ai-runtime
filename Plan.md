@@ -20,7 +20,7 @@ Evolve the repository into a headless AI tool backed by the native SSIS runtime.
 - The executable inspector passed a fresh-process smoke test against WebProd Integration `Package.dtsx`: all 21 native executables were represented, with 2 roots and 2 sequence containers; no parent or creation-name metadata was missing. The package was not executed.
 - `InspectionResult<T>` exposes completeness and unsupported items; task, SQL, expression, and data-flow projections use it to make partial coverage explicit.
 - Parameter, SQL task, expression-presence, and data-flow inspectors are implemented. Parameters and variables omit values; SQL comments/literals and encrypted data-flow settings are redacted. Data-flow projections include column lineage/type/mapping metadata, runtime connection references, and an allowlist of source/destination settings; remaining custom properties are reported unsupported.
-- `tests/Run-SsisAiRuntime.Ssis16SmokeTest.ps1` builds to an isolated temporary directory and checks a caller-supplied package in a fresh process. It passed against WebProd Integration: 9 connections, 25 variables, 0 parameters, 21 executables, 9 SQL tasks, 9 data flows, 18 components, 9 paths, 18 runtime connections, 122 input columns, 284 output columns, 246 external metadata columns, and 180 settings (1 redacted). It verifies counts/redaction without executing the package.
+- Earlier WebProd smoke checks passed with 9 connections, 25 variables, 0 parameters, 21 executables, 9 SQL tasks, 9 data flows, 18 components, 9 paths, 18 runtime connections, 122 input columns, 284 output columns, 246 external metadata columns, and 180 settings (1 redacted). Repeatable package checks now live in the native C# integration executable, with no script wrapper or package execution.
 - Runtime-neutral focused context builders produce separate SQL, lineage, and configuration contexts from safe projections and propagate unsupported coverage.
 - Session-scoped hierarchical semantic handles and a resolver are implemented. Handles use escaped names/hierarchy/ordinals rather than native IDs; duplicate-name lookups return candidate lists with `Ambiguous` status.
 - A precedence inspector and handle-backed control-flow graph are implemented with containment and precedence edges. Unresolved endpoints are reported unsupported rather than guessed.
@@ -81,13 +81,13 @@ Evolve the repository into a headless AI tool backed by the native SSIS runtime.
 - `src/SsisAiRuntime.Inspectors/SemanticHandleCatalogBuilder.cs` — session-scoped handle catalog and ambiguity-aware resolver.
 - `src/SsisAiRuntime.Inspectors/ControlFlowGraphBuilder.cs` — handle-backed containment and precedence graph builder.
 - `tests/SsisAiRuntime.Tests` — portable Core tests.
-- `tests/Run-SsisAiRuntime.Ssis16SmokeTest.ps1` — repeatable Windows package-load and inspector smoke check.
+- `tests/SsisAiRuntime.Ssis16IntegrationTests` — native C# scratch-fixture verification and optional read-only package smoke checks.
 - `SsisAiRuntime.sln` and `README.md` — sole solution entry point and headless setup documentation.
 - `Plan.md` — implementation status, decisions, and sequencing for follow-on work.
 
 ## Verification
 
-1. Core and inspector tests/build run without SSIS assemblies; Windows integration tests load representative packages with SSIS 16. The current Windows solution build, all 24 portable tests, and the repeatable smoke script against WebProd `Package.dtsx` pass, including column metadata, runtime connection links, data-flow settings, focused contexts, semantic handles, and control-flow graph edges. CI automation remains to be configured on an SSIS-enabled Windows host.
+1. Core and inspector tests/build run without SSIS assemblies; Windows integration tests load representative packages with SSIS 16. The 90 portable C# tests and native C# verifier pass, including scratch Data Conversion/Derived Column fixtures and optional WebProd count/coverage/graph/JSON/redaction/error-exit/hash checks. CI automation remains to be configured on an SSIS-enabled Windows host.
 2. Inspector/context tests cover completeness, unknown components, redaction, compact projections, and focused `sql`/`lineage`/`configuration` output; graph tests cover ambiguous handles and expected relationships.
 3. CLI tests verify structured output, deterministic diagnostics, exit codes, and no secret leakage. Skill checks confirm it invokes CLI operations and remains read-only.
 4. Mutation/save integration checks use copies of representative packages: validation failure leaves originals untouched; successful saves reload; semantic diff contains intended changes and flags unexpected ones.

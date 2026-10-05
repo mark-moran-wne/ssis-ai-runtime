@@ -18,13 +18,13 @@ Run the commands below from the repository root.
 
 Build the complete solution on Windows with SSIS 16 installed:
 
-```powershell
+```console
 dotnet build .\SsisAiRuntime.sln -c Release
 ```
 
 To use non-standard assembly locations, pass their full paths:
 
-```powershell
+```console
 dotnet build .\SsisAiRuntime.sln -c Release -p:SSIS16ManagedDtsPath="C:\path\to\Microsoft.SQLServer.ManagedDTS.dll" -p:SSIS16PipelineWrapPath="C:\path\to\Microsoft.SqlServer.DTSPipelineWrap.dll" -p:SSIS16RuntimeWrapPath="C:\path\to\Microsoft.SqlServer.DTSRuntimeWrap.dll"
 ```
 
@@ -34,7 +34,7 @@ The CLI output is `src/SsisAiRuntime.Cli/bin/Release/net48/SsisAiRuntime.Cli.exe
 
 Run the runtime-neutral Core, inspector, query, and CLI-contract tests on any supported .NET 10 SDK host. These tests do not require SSIS:
 
-```powershell
+```console
 dotnet test .\tests\SsisAiRuntime.Tests\SsisAiRuntime.Tests.csproj -c Release
 ```
 
@@ -42,7 +42,7 @@ dotnet test .\tests\SsisAiRuntime.Tests\SsisAiRuntime.Tests.csproj -c Release
 
 Run the native C# verification on Windows with SSIS 16 installed:
 
-```powershell
+```console
 dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
 ```
@@ -55,10 +55,10 @@ A `CS8012` warning can occur with the installed GAC_32 interop reference. The ha
 
 ## Package Smoke Test
 
-Run the repeatable Windows smoke test against a representative package:
+Pass an optional existing package to the same C# verifier for read-only smoke checks:
 
-```powershell
-.\tests\Run-SsisAiRuntime.Ssis16SmokeTest.ps1 -PackagePath "C:\path\to\Package.dtsx"
+```console
+tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe "C:\path\to\Package.dtsx"
 ```
 
-The script builds into an isolated temporary directory, checks the direct inspectors in a fresh process, invokes all four overview/SQL/lineage/configuration CLI commands, compares counts, verifies JSON/redaction/error exits, and checks that the package's SHA-256 hash is unchanged. It never executes or saves the inspected package. Use 64-bit PowerShell compatible with the installed SSIS runtime.
+After its scratch-fixture tests, the verifier loads the supplied package, compares direct inspector and CLI overview/SQL/lineage/configuration counts and coverage, checks aggregate/graph output, rejects execution commands, verifies missing-file exits and redaction, and compares the package's SHA-256 before and after inspection. It prints aggregate status only, not raw JSON or package values. It never executes, validates, saves, or modifies the supplied package. Build first, then invoke the test executable directly; no script wrapper is required.
