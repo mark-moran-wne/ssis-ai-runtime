@@ -1,4 +1,4 @@
-# SSIS AI Runtime
+# SSIS AI Runtime (Experimental)
 
 A headless foundation for inspecting and safely operating on SSIS packages through the native SSIS runtime. The native package object remains authoritative; projections are intended for tools and AI context, not for serialization back into DTSX.
 
@@ -152,9 +152,9 @@ For `inspect`, exit `0` means every operation completed with full coverage, exit
 
 The CLI never executes, validates, saves, or edits packages. It omits connection strings, variable/parameter values, expression text, SQL text, data-flow setting values, descriptions, supplied paths, and native diagnostic/exception details. Object names and IDs remain visible for navigation; do not place secrets in metadata names. There is no raw-output or password option. Password-protected or unreadable packages may fail to load; packages with unavailable encrypted fields may produce partial metadata. This is inspection coverage, not a guarantee that a package will execute successfully.
 
-In GitHub Copilot Chat, ask for the built executable directly:
+In GitHub Copilot Chat, ask Copilot to inspect a package with the built CLI:
 
-> From the repository root, run `cd src\SsisAiRuntime.Cli\bin\Release\net48`, then run `SsisAiRuntime.Cli.exe inspect "C:\path\to\Package.dtsx"`. Use the executable directly, without a wrapper. Load and inspect only; never execute or modify it. Parse the summary JSON, handle exit 5 as incomplete inspection, and report counts, diagnostics, coverage reason codes, omitted-detail totals, and redaction status. Do not print SQL or secrets.
+> Inspect `"C:\path\to\Package.dtsx"` with `src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe inspect`. Use its default summary output, treat exit 5 as incomplete coverage, and report counts, diagnostics, coverage reason codes, omitted-detail totals, and redaction status. Inspect only; never execute or modify the package, and do not print SQL or secrets.
 
 For repeatable native fixture and package smoke checks, see [BuildPackage.md](BuildPackage.md#native-integration-tests).
 
