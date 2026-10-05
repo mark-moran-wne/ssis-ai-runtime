@@ -72,7 +72,9 @@ namespace SsisAiRuntime.Inspectors.Expressions
 
         private static ExpressionReferenceResolution Match(ExpressionReference reference, IEnumerable<ExpressionSymbol> symbols, ExpressionSymbolKind kind, bool namespaceRequired)
         {
-            var candidates = symbols.Where(symbol => symbol.Kind == kind && string.Equals(symbol.Name, reference.Name, StringComparison.OrdinalIgnoreCase) &&
+            var unwrappedVariable = kind == ExpressionSymbolKind.Variable && reference.NamespaceName.Length == 0;
+            var candidates = symbols.Where(symbol => (symbol.Kind == kind || (unwrappedVariable && symbol.Kind == ExpressionSymbolKind.SystemVariable)) &&
+                string.Equals(symbol.Name, reference.Name, StringComparison.OrdinalIgnoreCase) &&
                 (!namespaceRequired || reference.NamespaceName.Length == 0 || string.Equals(symbol.NamespaceName, reference.NamespaceName, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(symbol => symbol.NativeId, StringComparer.Ordinal).ToArray();
             return new ExpressionReferenceResolution(reference, candidates.Length == 1 ? ExpressionReferenceResolutionStatus.Resolved :

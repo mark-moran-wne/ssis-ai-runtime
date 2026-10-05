@@ -62,6 +62,7 @@ public sealed class ExpressionScopeResolverTests
         Assert.Null(result.ResolvedSymbol);
         Assert.Contains(result.Candidates, symbol => symbol.QualifiedName == "User::Counter");
         Assert.Contains(result.Candidates, symbol => symbol.QualifiedName == "Other::Counter");
+        Assert.Contains(result.Candidates, symbol => symbol.QualifiedName == "System::Counter");
     }
 
     [Fact]
