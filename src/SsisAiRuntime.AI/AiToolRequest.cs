@@ -1,0 +1,36 @@
+using System;
+using SsisAiRuntime.Inspectors;
+
+namespace SsisAiRuntime.AI
+{
+    public sealed class AiToolRequest
+    {
+        public AiToolRequest(string toolName, string query = null, SemanticObjectKind? kind = null,
+            string taskId = null, bool predecessors = false, bool recursive = false,
+            string flowId = null, string componentId = null, string columnId = null, bool upstream = false)
+        {
+            if (string.IsNullOrWhiteSpace(toolName)) throw new ArgumentException("A tool name is required.", nameof(toolName));
+            ToolName = toolName;
+            Query = query ?? string.Empty;
+            Kind = kind;
+            TaskId = taskId ?? string.Empty;
+            Predecessors = predecessors;
+            Recursive = recursive;
+            FlowId = flowId ?? string.Empty;
+            ComponentId = componentId ?? string.Empty;
+            ColumnId = columnId ?? string.Empty;
+            Upstream = upstream;
+        }
+
+        public string ToolName { get; }
+        public string Query { get; }
+        public SemanticObjectKind? Kind { get; }
+        public string TaskId { get; }
+        public bool Predecessors { get; }
+        public bool Recursive { get; }
+        public string FlowId { get; }
+        public string ComponentId { get; }
+        public string ColumnId { get; }
+        public bool Upstream { get; }
+    }
+}

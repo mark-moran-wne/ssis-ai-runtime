@@ -30,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SsisAiRuntime.Core\SsisAiRuntime.Core.csproj" />
     <ProjectReference Include="..\..\src\SsisAiRuntime.Inspectors\SsisAiRuntime.Inspectors.csproj" />
+    <ProjectReference Include="..\..\src\SsisAiRuntime.AI\SsisAiRuntime.AI.csproj" />
   </ItemGroup>
 
 </Project>
