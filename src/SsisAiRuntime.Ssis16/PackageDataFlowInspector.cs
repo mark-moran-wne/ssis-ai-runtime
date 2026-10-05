@@ -192,7 +192,8 @@ namespace SsisAiRuntime.Ssis16
                         taskHost.ID,
                         taskHost.Name,
                         taskHost.CreationName,
-                        "The native pipeline component or path collections could not be inspected."));
+                        "The native pipeline component or path collections could not be inspected.",
+                        UnsupportedItem.ReadFailureCode));
                 }
             }
         }
@@ -240,7 +241,8 @@ namespace SsisAiRuntime.Ssis16
                     columnId.ToString(CultureInfo.InvariantCulture),
                     property.Name,
                     component.ComponentClassID,
-                    "Column custom-property values are not inspected."));
+                    "Column custom-property values are not inspected.",
+                    UnsupportedItem.IntentionalOmissionCode));
             }
         }
 
@@ -260,7 +262,8 @@ namespace SsisAiRuntime.Ssis16
                         component.ID.ToString(CultureInfo.InvariantCulture),
                         property.Name,
                         component.ComponentClassID,
-                        "This custom property value is not in the safe data-flow settings allowlist."));
+                        "This custom property value is not in the safe data-flow settings allowlist.",
+                        UnsupportedItem.IntentionalOmissionCode));
                     continue;
                 }
 
@@ -277,7 +280,8 @@ namespace SsisAiRuntime.Ssis16
                         component.ID.ToString(CultureInfo.InvariantCulture),
                         property.Name,
                         component.ComponentClassID,
-                        "This custom property value type is not supported."));
+                        "This custom property value type is not supported.",
+                        UnsupportedItem.UnsupportedMetadataCode));
                     continue;
                 }
 

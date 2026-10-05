@@ -16,6 +16,11 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliRunner.cs" Link="Cli\CliRunner.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliInspection.cs" Link="Cli\CliInspection.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliSummary.cs" Link="Cli\CliSummary.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliInspectionBatch.cs" Link="Cli\CliInspectionBatch.cs" />
   </ItemGroup>
 
   <ItemGroup>

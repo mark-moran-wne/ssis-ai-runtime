@@ -71,7 +71,8 @@ namespace SsisAiRuntime.Ssis16
                         taskHost.ID,
                         taskHost.Name,
                         taskHost.CreationName,
-                        "The SQL task statement source is not exposed by its runtime object."));
+                        "The SQL task statement source is not exposed by its runtime object.",
+                        UnsupportedItem.UnsupportedMetadataCode));
                     continue;
                 }
 
@@ -92,7 +93,8 @@ namespace SsisAiRuntime.Ssis16
                         taskHost.ID,
                         taskHost.Name,
                         taskHost.CreationName,
-                        "The SQL task connection reference could not be resolved to a package connection."));
+                        "The SQL task connection reference could not be resolved to a package connection.",
+                        UnsupportedItem.ReadFailureCode));
                 }
 
                 if (bindings != null && !bindingCount.HasValue)
@@ -101,7 +103,8 @@ namespace SsisAiRuntime.Ssis16
                         taskHost.ID,
                         taskHost.Name,
                         taskHost.CreationName,
-                        "The SQL task parameter binding count could not be read."));
+                        "The SQL task parameter binding count could not be read.",
+                        UnsupportedItem.ReadFailureCode));
                 }
 
                 statements.Add(new SqlStatementOverview(

@@ -56,7 +56,8 @@ namespace SsisAiRuntime.Ssis16
                     expression.ObjectId,
                     expression.ObjectName,
                     expression.CreationName,
-                    "The adapter reports expression presence but does not expose property association or expression text."));
+                    "The adapter reports expression presence but does not expose property association or expression text.",
+                    UnsupportedItem.IntentionalOmissionCode));
             }
 
             return new InspectionResult<ExpressionOverview>(expressions, unsupportedItems);

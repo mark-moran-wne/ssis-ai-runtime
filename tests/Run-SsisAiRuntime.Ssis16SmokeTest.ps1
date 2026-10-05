@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $solutionPath = Join-Path $repositoryRoot 'SsisAiRuntime.sln'
 $outputRoot = Join-Path $env:TEMP "SsisAiRuntimeSmoke-$([Guid]::NewGuid().ToString('N'))\"
+$packageHashBefore = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash
 
 & dotnet build $solutionPath -c $Configuration "-p:BaseOutputPath=$outputRoot"
 if ($LASTEXITCODE -ne 0) {
@@ -181,6 +182,57 @@ try {
     $result | Format-List
     if ($jobState -ne 'Completed') {
         throw "Smoke test failed in the isolated process (state: $jobState)."
+    }
+
+    $cliPath = Join-Path $outputRoot "$Configuration\net48\SsisAiRuntime.Cli.exe"
+    foreach ($command in @('overview', 'sql', 'lineage', 'configuration')) {
+        $json = & $cliPath $command (Resolve-Path -LiteralPath $PackagePath).Path
+        $exitCode = $LASTEXITCODE
+        $report = ($json -join "`n") | ConvertFrom-Json
+        $expectedExitCode = if ($report.isComplete) { 0 } else { 5 }
+        if ($report.schemaVersion -ne '1.0' -or $report.command -ne $command -or
+            -not $report.succeeded -or $exitCode -ne $expectedExitCode -or
+            $report.exitCode -ne $exitCode -or -not $report.redaction.applied -or
+            -not $report.redaction.sqlTextOmitted -or -not $report.redaction.settingValuesOmitted) {
+            throw "CLI $command contract check failed (exit: $exitCode)."
+        }
+
+        if (($json -join "`n") -match '"(statementText|value|description)"\s*:') {
+            throw "CLI $command emitted a value-bearing property."
+        }
+
+        $count = switch ($command) {
+            'overview' { $report.results.connectionCount }
+            'sql' { @($report.results.sqlStatements).Count }
+            'lineage' { @($report.results.dataFlows).Count }
+            'configuration' { @($report.results.connections).Count }
+        }
+        $expectedCount = switch ($command) {
+            'overview' { $result.ConnectionCount }
+            'sql' { $result.SqlTaskCount }
+            'lineage' { $result.DataFlowCount }
+            'configuration' { $result.ConfigurationContextConnectionCount }
+        }
+        if ($count -ne $expectedCount) {
+            throw "CLI $command count did not match direct inspection."
+        }
+
+        [pscustomobject]@{
+            CliCommand = $command
+            ExitCode = $exitCode
+            IsComplete = $report.isComplete
+            ItemCount = $count
+            UnsupportedCount = @($report.unsupportedItems).Count
+            RedactionPolicy = $report.redaction.policy
+        } | Format-List
+    }
+
+    $null = & $cliPath execute $PackagePath
+    if ($LASTEXITCODE -ne 2) { throw 'CLI accepted an unsupported execution command.' }
+    $null = & $cliPath overview (Join-Path $outputRoot 'missing.dtsx')
+    if ($LASTEXITCODE -ne 3) { throw 'CLI did not report a missing package.' }
+    if ((Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash -ne $packageHashBefore) {
+        throw 'The inspected package changed during the smoke test.'
     }
 }
 finally {
