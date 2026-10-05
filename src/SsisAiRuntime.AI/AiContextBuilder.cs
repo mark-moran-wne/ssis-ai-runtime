@@ -12,9 +12,26 @@ namespace SsisAiRuntime.AI
         {
             if (result == null) throw new ArgumentNullException(nameof(result));
             if (itemLimit < 1 || itemLimit > 200) throw new ArgumentOutOfRangeException(nameof(itemLimit));
+            var facts = CreateFacts(result, itemLimit, out var potentialFacts);
+            return new AiContext(result.ToolName, result.Succeeded, result.IsComplete,
+                facts, result.ErrorCode, result.ErrorMessage, Math.Max(0, potentialFacts - facts.Count));
+        }
+
+        private static List<AiFact> CreateFacts(AiToolResult result, int itemLimit, out int potentialFacts)
+        {
             var facts = new List<AiFact>();
-            if (!result.Succeeded)
-                return new AiContext(result.ToolName, false, false, facts, result.ErrorCode, result.ErrorMessage, 0);
+            var totalFacts = 0;
+            potentialFacts = 0;
+            if (!result.Succeeded) { return facts; }
+
+            void AddFacts(IEnumerable<AiFact> values)
+            {
+                foreach (var fact in values)
+                {
+                    totalFacts++;
+                    if (facts.Count < itemLimit) { facts.Add(fact); }
+                }
+            }
 
             if (result.Result is PackageIntelligenceSummary summary)
             {
@@ -32,47 +49,53 @@ namespace SsisAiRuntime.AI
                     new AiFact("counts", "expressionOwners", summary.ExpressionOwnerCount.ToString()),
                     new AiFact("counts", "coverageGaps", summary.CoverageGapCount.ToString())
                 };
-                facts.AddRange(summaryFacts.Take(itemLimit));
-                var remaining = Math.Max(0, itemLimit - facts.Count);
-                facts.AddRange(summary.Connections.Take(remaining).Select(item => new AiFact("connection", item.Name, item.NativeId)));
-                remaining = Math.Max(0, itemLimit - facts.Count);
-                facts.AddRange(summary.Tasks.Take(remaining).Select(item => new AiFact("task", item.Name, item.NativeId)));
+                AddFacts(summaryFacts);
+                AddFacts(summary.Connections.Select(item => new AiFact("connection", item.Name, item.NativeId)));
+                AddFacts(summary.Tasks.Select(item => new AiFact("task", item.Name, item.NativeId)));
             }
             else if (result.Result is PackageSearchResult search)
             {
-                facts.AddRange(search.Matches.Take(itemLimit).Select(match => new AiFact(match.Reference.Handle.Kind.ToString(),
+                AddFacts(search.Matches.Select(match => new AiFact(match.Reference.Handle.Kind.ToString(),
                     match.Reference.Name, match.Reference.Handle.Value)));
+                totalFacts += search.MatchesOmitted;
             }
             else if (result.Result is PackageControlFlow control)
             {
-                facts.AddRange(control.Graph.Nodes.Take(itemLimit).Select(node => new AiFact("task", node.Name, node.NativeId)));
-                facts.AddRange(control.Graph.Edges.Take(Math.Max(0, itemLimit - facts.Count)).Select(edge =>
+                AddFacts(control.Graph.Nodes.Select(node => new AiFact("task", node.Name, node.NativeId)));
+                AddFacts(control.Graph.Edges.Select(edge =>
                     new AiFact("precedence", edge.From.Value, edge.To.Value)));
             }
             else if (result.Result is PackageColumnTrace trace)
             {
-                facts.AddRange(trace.Trace.Columns.Take(itemLimit).Select(column =>
+                AddFacts(trace.Trace.Columns.Select(column =>
                     new AiFact("column", column.Name, column.ComponentId + ":" + column.Id)));
-                facts.AddRange(trace.Trace.Links.Take(Math.Max(0, itemLimit - facts.Count)).Select(link =>
+                AddFacts(trace.Trace.Links.Select(link =>
                     new AiFact("lineage." + link.Kind, link.Source.ComponentId + ":" + link.Source.Id,
                         link.Target.ComponentId + ":" + link.Target.Id)));
+            }
+            else if (result.Result is PackageDependencyGraph graph)
+            {
+                AddFacts(graph.Nodes.Select(node => new AiFact("dependencyNode." + node.Kind, node.Name, node.Key)));
+                AddFacts(graph.Edges.Select(edge => new AiFact("dependencyEdge." + edge.Kind, edge.From, edge.To)));
+            }
+            else if (result.Result is ImpactAnalysisResult impact)
+            {
+                AddFacts(new[] { new AiFact("impactRoot." + impact.Root.Kind, impact.Root.Name, impact.Root.Key) });
+                AddFacts(impact.ImpactedNodes.Select(node => new AiFact("impacted." + node.Kind, node.Name, node.Key)));
+                AddFacts(impact.Paths.Select(edge => new AiFact("impactPath." + edge.Kind, edge.From, edge.To)));
+            }
+            else if (result.Result is QuestionPlan plan)
+            {
+                AddFacts(new[] { new AiFact("questionIntent", plan.Intent.ToString(), plan.ToolName) });
+                AddFacts(plan.RequiredSelectors.Select(selector => new AiFact("requiredSelector", selector, string.Empty)));
             }
             else
             {
                 throw new ArgumentException("The result type is not supported for AI context.", nameof(result));
             }
 
-            var omitted = Math.Max(0, CountPotentialFacts(result.Result) - facts.Count);
-            return new AiContext(result.ToolName, true, result.IsComplete, facts, string.Empty, string.Empty, omitted);
-        }
-
-        private static int CountPotentialFacts(object result)
-        {
-            if (result is PackageIntelligenceSummary summary) return 11 + summary.Connections.Count + summary.Tasks.Count;
-            if (result is PackageSearchResult search) return search.TotalMatches;
-            if (result is PackageControlFlow control) return control.Graph.Nodes.Count + control.Graph.Edges.Count;
-            if (result is PackageColumnTrace trace) return trace.Trace.Columns.Count + trace.Trace.Links.Count;
-            return 0;
+            potentialFacts = totalFacts;
+            return facts;
         }
     }
 

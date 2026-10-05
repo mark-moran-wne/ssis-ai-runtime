@@ -99,28 +99,36 @@ namespace SsisAiRuntime.Inspectors
             {
                 var key = Key(SemanticObjectKind.Executable, executable.Id);
                 Add(nodes, new DependencyNode(key, SemanticObjectKind.Executable, executable.Name, executable.Id, executable.ParentId));
-                edges.Add(new DependencyEdge(string.IsNullOrEmpty(executable.ParentId)
+            }
+            foreach (var executable in executables)
+            {
+                AddEdge(nodes, edges, unsupported, new DependencyEdge(string.IsNullOrEmpty(executable.ParentId)
                     ? packageKey
-                    : Key(SemanticObjectKind.Executable, executable.ParentId), key, DependencyKind.ContainsTask));
+                    : Key(SemanticObjectKind.Executable, executable.ParentId), Key(SemanticObjectKind.Executable, executable.Id),
+                    DependencyKind.ContainsTask), executable.Id, executable.Name);
             }
 
             foreach (var edge in controlFlow.Edges.Where(edge => edge.Kind == ControlFlowEdgeKind.Precedence))
             {
                 var from = controlFlow.Nodes.FirstOrDefault(node => node.Handle.Equals(edge.From));
                 var to = controlFlow.Nodes.FirstOrDefault(node => node.Handle.Equals(edge.To));
-                if (from != null && to != null)
+                if (from == null || to == null)
                 {
-                    edges.Add(new DependencyEdge(Key(SemanticObjectKind.Executable, from.NativeId),
-                        Key(SemanticObjectKind.Executable, to.NativeId), DependencyKind.DependsOnTask));
+                    AddGap(unsupported, "PrecedenceConstraint", "A dependency endpoint could not be resolved.");
+                    continue;
                 }
+                AddEdge(nodes, edges, unsupported, new DependencyEdge(Key(SemanticObjectKind.Executable, from.NativeId),
+                    Key(SemanticObjectKind.Executable, to.NativeId), DependencyKind.DependsOnTask),
+                    string.Empty, edge.ConstraintName);
             }
 
             foreach (var statement in sqlStatements ?? throw new ArgumentNullException(nameof(sqlStatements)))
             {
                 if (!string.IsNullOrWhiteSpace(statement.ConnectionManagerId))
                 {
-                    edges.Add(new DependencyEdge(Key(SemanticObjectKind.Executable, statement.TaskId),
-                        Key(SemanticObjectKind.Connection, statement.ConnectionManagerId), DependencyKind.UsesConnection, "ExecuteSqlTask"));
+                    AddEdge(nodes, edges, unsupported, new DependencyEdge(Key(SemanticObjectKind.Executable, statement.TaskId),
+                        Key(SemanticObjectKind.Connection, statement.ConnectionManagerId), DependencyKind.UsesConnection, "ExecuteSqlTask"),
+                        statement.TaskId, statement.TaskName);
                 }
             }
 
@@ -128,35 +136,39 @@ namespace SsisAiRuntime.Inspectors
             {
                 var flowKey = Key(SemanticObjectKind.DataFlow, flow.ExecutableId);
                 Add(nodes, new DependencyNode(flowKey, SemanticObjectKind.DataFlow, flow.ExecutableName, flow.ExecutableId));
-                edges.Add(new DependencyEdge(Key(SemanticObjectKind.Executable, flow.ExecutableId), flowKey, DependencyKind.ContainsDataFlow));
+                AddEdge(nodes, edges, unsupported,
+                    new DependencyEdge(Key(SemanticObjectKind.Executable, flow.ExecutableId), flowKey, DependencyKind.ContainsDataFlow),
+                    flow.ExecutableId, flow.ExecutableName);
                 foreach (var component in flow.Components)
                 {
                     var componentKey = ScopedKey(SemanticObjectKind.DataFlowComponent, flow.ExecutableId, component.Id);
                     Add(nodes, new DependencyNode(componentKey, SemanticObjectKind.DataFlowComponent,
                         component.Name, component.Id, flow.ExecutableId));
-                    edges.Add(new DependencyEdge(flowKey, componentKey, DependencyKind.ContainsComponent));
+                    AddEdge(nodes, edges, unsupported, new DependencyEdge(flowKey, componentKey, DependencyKind.ContainsComponent),
+                        component.Id, component.Name);
                     foreach (var runtimeConnection in component.RuntimeConnections.Where(item => !string.IsNullOrWhiteSpace(item.ConnectionManagerId)))
                     {
-                        edges.Add(new DependencyEdge(componentKey, Key(SemanticObjectKind.Connection, runtimeConnection.ConnectionManagerId),
-                            DependencyKind.UsesConnection, runtimeConnection.Name));
+                        AddEdge(nodes, edges, unsupported, new DependencyEdge(componentKey,
+                            Key(SemanticObjectKind.Connection, runtimeConnection.ConnectionManagerId),
+                            DependencyKind.UsesConnection, runtimeConnection.Name), runtimeConnection.Id, runtimeConnection.Name);
                     }
                     foreach (var column in component.InputColumns)
                     {
-                        AddColumn(nodes, edges, flow.ExecutableId, component.Id, componentKey, column,
+                        AddColumn(nodes, edges, unsupported, flow.ExecutableId, component.Id, componentKey, column,
                             SemanticObjectKind.InputColumn, DependencyKind.ReadsColumn);
                     }
                     foreach (var column in component.OutputColumns)
                     {
-                        AddColumn(nodes, edges, flow.ExecutableId, component.Id, componentKey, column,
+                        AddColumn(nodes, edges, unsupported, flow.ExecutableId, component.Id, componentKey, column,
                             SemanticObjectKind.OutputColumn, DependencyKind.WritesColumn);
                     }
                 }
 
                 foreach (var path in flow.Paths)
                 {
-                    edges.Add(new DependencyEdge(ScopedKey(SemanticObjectKind.DataFlowComponent, flow.ExecutableId, path.SourceComponentId),
+                    AddEdge(nodes, edges, unsupported, new DependencyEdge(ScopedKey(SemanticObjectKind.DataFlowComponent, flow.ExecutableId, path.SourceComponentId),
                         ScopedKey(SemanticObjectKind.DataFlowComponent, flow.ExecutableId, path.TargetComponentId),
-                        DependencyKind.ConnectsComponent, path.Id));
+                        DependencyKind.ConnectsComponent, path.Id), path.Id, path.Name);
                 }
             }
 
@@ -166,13 +178,29 @@ namespace SsisAiRuntime.Inspectors
         }
 
         private static void AddColumn(IDictionary<string, DependencyNode> nodes, ICollection<DependencyEdge> edges,
+            ICollection<UnsupportedItem> unsupported,
             string flowId, string componentId, string componentKey, DataFlowColumnOverview column,
             SemanticObjectKind objectKind, DependencyKind dependencyKind)
         {
             var key = ScopedKey(objectKind, flowId + ":" + componentId, column.Id);
             Add(nodes, new DependencyNode(key, objectKind, column.Name, column.Id, componentId));
-            edges.Add(new DependencyEdge(componentKey, key, dependencyKind));
+            AddEdge(nodes, edges, unsupported, new DependencyEdge(componentKey, key, dependencyKind), column.Id, column.Name);
         }
+
+        private static void AddEdge(IDictionary<string, DependencyNode> nodes, ICollection<DependencyEdge> edges,
+            ICollection<UnsupportedItem> unsupported, DependencyEdge edge, string id, string name)
+        {
+            if (!nodes.ContainsKey(edge.From) || !nodes.ContainsKey(edge.To))
+            {
+                AddGap(unsupported, id, name);
+                return;
+            }
+            edges.Add(edge);
+        }
+
+        private static void AddGap(ICollection<UnsupportedItem> unsupported, string id, string name) =>
+            unsupported.Add(new UnsupportedItem(id, name, "DependencyGraph", "A dependency endpoint could not be resolved.",
+                UnsupportedItem.UnsupportedMetadataCode));
 
         private static void Add(IDictionary<string, DependencyNode> nodes, DependencyNode node)
         {

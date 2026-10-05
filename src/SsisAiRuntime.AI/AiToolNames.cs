@@ -6,5 +6,9 @@ namespace SsisAiRuntime.AI
         public const string MetadataSearch = "metadata.search";
         public const string TaskDependencies = "task.dependencies";
         public const string ColumnTrace = "column.trace";
+        public const string DependencyGraph = "dependency.graph";
+        public const string DependencyQuery = "dependency.query";
+        public const string ImpactAnalysis = "impact.analysis";
+        public const string QuestionPlan = "question.plan";
     }
 }

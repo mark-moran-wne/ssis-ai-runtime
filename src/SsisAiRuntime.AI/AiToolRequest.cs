@@ -7,7 +7,8 @@ namespace SsisAiRuntime.AI
     {
         public AiToolRequest(string toolName, string query = null, SemanticObjectKind? kind = null,
             string taskId = null, bool predecessors = false, bool recursive = false,
-            string flowId = null, string componentId = null, string columnId = null, bool upstream = false)
+            string flowId = null, string componentId = null, string columnId = null, bool upstream = false,
+            string nodeKey = null, bool incoming = true, string question = null)
         {
             if (string.IsNullOrWhiteSpace(toolName)) throw new ArgumentException("A tool name is required.", nameof(toolName));
             ToolName = toolName;
@@ -20,6 +21,9 @@ namespace SsisAiRuntime.AI
             ComponentId = componentId ?? string.Empty;
             ColumnId = columnId ?? string.Empty;
             Upstream = upstream;
+            NodeKey = nodeKey ?? string.Empty;
+            Incoming = incoming;
+            Question = question ?? string.Empty;
         }
 
         public string ToolName { get; }
@@ -32,5 +36,8 @@ namespace SsisAiRuntime.AI
         public string ComponentId { get; }
         public string ColumnId { get; }
         public bool Upstream { get; }
+        public string NodeKey { get; }
+        public bool Incoming { get; }
+        public string Question { get; }
     }
 }

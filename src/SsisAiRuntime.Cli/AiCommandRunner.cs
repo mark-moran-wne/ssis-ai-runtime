@@ -32,8 +32,8 @@ namespace SsisAiRuntime.Cli
                     {
                         return WriteError(output, tool, 2, "ai.usage", UsageMessage);
                     }
-                    var plan = new QuestionPlanner().Plan(args[2]);
-                    return Write(output, tool, 0, Project(plan), Array.Empty<UnsupportedItem>());
+                    return Emit(output, new PackageAnalysisEngine().Plan(
+                        new AiToolRequest(AiToolNames.QuestionPlan, question: args[2])));
                 }
 
                 if (!IsPackageTool(tool) || args.Length < 3 || string.IsNullOrWhiteSpace(args[2]))
@@ -67,52 +67,29 @@ namespace SsisAiRuntime.Cli
                     }
 
                     var snapshot = snapshotResult.Items[0];
-                    var unsupported = snapshot.UnsupportedItems;
-                    JObject results;
+                    AiToolRequest request;
                     switch (tool)
                     {
                         case "package.summary":
-                            var summary = new PackageAnalysisEngine().Execute(snapshot,
-                                new AiToolRequest(AiToolNames.PackageSummary));
-                            if (!summary.Succeeded)
-                            {
-                                return WriteError(output, tool, 4, "ai.summary.failed",
-                                    "The package summary could not be created.");
-                            }
-                            results = Project(new AiContextBuilder().Build(summary, ResultItemLimit));
-                            unsupported = summary.UnsupportedItems;
+                            request = new AiToolRequest(AiToolNames.PackageSummary);
                             break;
                         case "dependency.graph":
-                            results = Project(snapshot.Dependencies);
-                            unsupported = snapshot.Dependencies.UnsupportedItems;
+                            request = new AiToolRequest(AiToolNames.DependencyGraph);
                             break;
                         case "dependency.query":
                             TryGetNode(args, true, out var queryNode, out var recursive);
-                            var query = new DependencyQuery().Find(snapshot.Dependencies, queryNode, true, recursive);
-                            if (query.Items.Count != 1)
-                            {
-                                return WriteError(output, tool, 4, "ai.dependency.selection_invalid",
-                                    "The dependency node was missing or ambiguous.");
-                            }
-                            results = Project(query.Items[0]);
-                            unsupported = query.UnsupportedItems;
+                            request = new AiToolRequest(AiToolNames.DependencyQuery, nodeKey: queryNode,
+                                incoming: true, recursive: recursive);
                             break;
                         case "impact.analysis":
                             TryGetNode(args, false, out var impactNode, out _);
-                            var impact = new ImpactAnalysisQuery().Analyze(snapshot.Dependencies, impactNode);
-                            if (impact.Items.Count != 1)
-                            {
-                                return WriteError(output, tool, 4, "ai.impact.selection_invalid",
-                                    "The impact node was missing or ambiguous.");
-                            }
-                            results = Project(impact.Items[0]);
-                            unsupported = impact.UnsupportedItems;
+                            request = new AiToolRequest(AiToolNames.ImpactAnalysis, nodeKey: impactNode);
                             break;
                         default:
                             return WriteError(output, null, 2, "ai.usage", UsageMessage);
                     }
 
-                    return Write(output, tool, unsupported.Count == 0 ? 0 : 5, results, unsupported);
+                    return Emit(output, new PackageAnalysisEngine().Execute(snapshot, request));
                 }
                 finally
                 {
@@ -172,6 +149,28 @@ namespace SsisAiRuntime.Cli
             ["requiredSelectors"] = new JArray(plan.RequiredSelectors)
         };
 
+        private static int Emit(TextWriter output, AiToolResult result)
+        {
+            if (!result.Succeeded)
+            {
+                return WriteError(output, result.ToolName, 4, result.ErrorCode, result.ErrorMessage);
+            }
+
+            var projected = result.Result is PackageIntelligenceSummary
+                ? Project(new AiContextBuilder().Build(result, ResultItemLimit))
+                : Project(result.Result);
+            return Write(output, result.ToolName, result.IsComplete ? 0 : 5, projected, result.UnsupportedItems);
+        }
+
+        private static JObject Project(object result)
+        {
+            if (result is AiContext context) { return Project(context); }
+            if (result is PackageDependencyGraph graph) { return Project(graph); }
+            if (result is ImpactAnalysisResult impact) { return Project(impact); }
+            if (result is QuestionPlan plan) { return Project(plan); }
+            throw new ArgumentException("The AI tool result type is not supported.", nameof(result));
+        }
+
         private static JObject Project(AiContext context) => new JObject
         {
             ["succeeded"] = context.Succeeded,
@@ -186,27 +185,52 @@ namespace SsisAiRuntime.Cli
             ["factsOmitted"] = context.FactsOmitted
         };
 
-        private static JObject Project(PackageDependencyGraph graph) => new JObject
+        private static JObject Project(PackageDependencyGraph graph)
         {
-            ["isComplete"] = graph.IsComplete,
-            ["nodeCount"] = graph.Nodes.Count,
-            ["edgeCount"] = graph.Edges.Count,
-            ["nodesOmitted"] = Math.Max(0, graph.Nodes.Count - ResultItemLimit),
-            ["edgesOmitted"] = Math.Max(0, graph.Edges.Count - ResultItemLimit),
-            ["nodes"] = new JArray(graph.Nodes.Take(ResultItemLimit).Select(Project)),
-            ["edges"] = new JArray(graph.Edges.Take(ResultItemLimit).Select(Project))
-        };
+            var nodes = graph.Nodes.Take(ResultItemLimit).ToList();
+            var eligibleEdges = BoundedEdges(graph.Edges, nodes.Select(node => node.Key));
+            var returnedEdges = eligibleEdges.Take(ResultItemLimit).ToList();
+            return new JObject
+            {
+                ["isComplete"] = graph.IsComplete,
+                ["nodeCount"] = graph.Nodes.Count,
+                ["edgeCount"] = graph.Edges.Count,
+                ["returnedNodeCount"] = nodes.Count,
+                ["returnedEdgeCount"] = returnedEdges.Count,
+                ["nodesOmitted"] = Math.Max(0, graph.Nodes.Count - nodes.Count),
+                ["edgesOmitted"] = graph.Edges.Count - returnedEdges.Count,
+                ["edgesOmittedForMissingEndpoint"] = graph.Edges.Count - eligibleEdges.Count,
+                ["nodes"] = new JArray(nodes.Select(Project)),
+                ["edges"] = new JArray(returnedEdges.Select(Project))
+            };
+        }
 
-        private static JObject Project(ImpactAnalysisResult impact) => new JObject
+        private static JObject Project(ImpactAnalysisResult impact)
         {
-            ["root"] = Project(impact.Root),
-            ["impactedNodeCount"] = impact.ImpactedNodes.Count,
-            ["pathCount"] = impact.Paths.Count,
-            ["nodesOmitted"] = Math.Max(0, impact.ImpactedNodes.Count - ResultItemLimit),
-            ["pathsOmitted"] = Math.Max(0, impact.Paths.Count - ResultItemLimit),
-            ["impactedNodes"] = new JArray(impact.ImpactedNodes.Take(ResultItemLimit).Select(Project)),
-            ["paths"] = new JArray(impact.Paths.Take(ResultItemLimit).Select(Project))
-        };
+            var nodes = impact.ImpactedNodes.Take(ResultItemLimit).ToList();
+            var keys = new HashSet<string>(nodes.Select(node => node.Key), StringComparer.Ordinal) { impact.Root.Key };
+            var eligiblePaths = impact.Paths.Where(edge => keys.Contains(edge.From) && keys.Contains(edge.To)).ToList();
+            var returnedPaths = eligiblePaths.Take(ResultItemLimit).ToList();
+            return new JObject
+            {
+                ["root"] = Project(impact.Root),
+                ["impactedNodeCount"] = impact.ImpactedNodes.Count,
+                ["pathCount"] = impact.Paths.Count,
+                ["returnedNodeCount"] = nodes.Count,
+                ["returnedPathCount"] = returnedPaths.Count,
+                ["nodesOmitted"] = Math.Max(0, impact.ImpactedNodes.Count - nodes.Count),
+                ["pathsOmitted"] = impact.Paths.Count - returnedPaths.Count,
+                ["pathsOmittedForMissingEndpoint"] = impact.Paths.Count - eligiblePaths.Count,
+                ["impactedNodes"] = new JArray(nodes.Select(Project)),
+                ["paths"] = new JArray(returnedPaths.Select(Project))
+            };
+        }
+
+        private static List<DependencyEdge> BoundedEdges(IEnumerable<DependencyEdge> edges, IEnumerable<string> nodeKeys)
+        {
+            var keys = new HashSet<string>(nodeKeys, StringComparer.Ordinal);
+            return edges.Where(edge => keys.Contains(edge.From) && keys.Contains(edge.To)).ToList();
+        }
 
         private static JObject Project(DependencyNode node) => new JObject
         {

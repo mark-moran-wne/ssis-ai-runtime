@@ -7,6 +7,17 @@ namespace SsisAiRuntime.AI
 {
     public sealed class PackageAnalysisEngine
     {
+        public AiToolResult Plan(AiToolRequest request)
+        {
+            if (request == null) { throw new ArgumentNullException(nameof(request)); }
+            if (request.ToolName != AiToolNames.QuestionPlan)
+            {
+                return AiToolResult.Failure(request.ToolName, "ai.tool.unsupported",
+                    "Only question planning is available without a package snapshot.");
+            }
+            return BuildQuestionPlan(request);
+        }
+
         public AiToolResult Execute(PackageAnalysisSnapshot snapshot, AiToolRequest request)
         {
             if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
@@ -24,6 +35,14 @@ namespace SsisAiRuntime.AI
                         return TaskDependencies(snapshot, request);
                     case AiToolNames.ColumnTrace:
                         return ColumnTrace(snapshot, request);
+                    case AiToolNames.DependencyGraph:
+                        return Success(request, snapshot.Dependencies, snapshot.Dependencies.UnsupportedItems);
+                    case AiToolNames.DependencyQuery:
+                        return Dependency(snapshot, request);
+                    case AiToolNames.ImpactAnalysis:
+                        return Impact(snapshot, request);
+                    case AiToolNames.QuestionPlan:
+                        return BuildQuestionPlan(request);
                     default:
                         return AiToolResult.Failure(request.ToolName, "ai.tool.unsupported", "The requested read-only tool is not supported.");
                 }
@@ -70,6 +89,39 @@ namespace SsisAiRuntime.AI
             var unsupported = snapshot.UnsupportedItems.Where(item => item.ReasonCode == UnsupportedItem.ReadFailureCode)
                 .Concat(trace.UnsupportedItems).Distinct(new UnsupportedItemComparer()).ToArray();
             return Success(request, new PackageColumnTrace(snapshot.Package, trace.Items[0]), unsupported);
+        }
+
+        private static AiToolResult Dependency(PackageAnalysisSnapshot snapshot, AiToolRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.NodeKey))
+            {
+                return AiToolResult.Failure(request.ToolName, "ai.dependency.node_required", "A dependency node key is required.");
+            }
+            var query = new DependencyQuery().Find(snapshot.Dependencies, request.NodeKey, request.Incoming, request.Recursive);
+            return query.Items.Count == 1
+                ? Success(request, query.Items[0], query.UnsupportedItems)
+                : AiToolResult.Failure(request.ToolName, "ai.dependency.selection_invalid", "The dependency node was missing or ambiguous.");
+        }
+
+        private static AiToolResult Impact(PackageAnalysisSnapshot snapshot, AiToolRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.NodeKey))
+            {
+                return AiToolResult.Failure(request.ToolName, "ai.impact.node_required", "An impact node key is required.");
+            }
+            var query = new ImpactAnalysisQuery().Analyze(snapshot.Dependencies, request.NodeKey);
+            return query.Items.Count == 1
+                ? Success(request, query.Items[0], query.UnsupportedItems)
+                : AiToolResult.Failure(request.ToolName, "ai.impact.selection_invalid", "The impact node was missing or ambiguous.");
+        }
+
+        private static AiToolResult BuildQuestionPlan(AiToolRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Question))
+            {
+                return AiToolResult.Failure(request.ToolName, "ai.question.required", "A question is required.");
+            }
+            return Success(request, new QuestionPlanner().Plan(request.Question), Array.Empty<UnsupportedItem>());
         }
 
         private static AiToolResult Success(AiToolRequest request, object result, IEnumerable<UnsupportedItem> unsupported) =>
