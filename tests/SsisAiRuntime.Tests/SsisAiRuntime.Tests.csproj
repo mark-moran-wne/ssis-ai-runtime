@@ -21,6 +21,10 @@
     <Compile Include="..\..\src\SsisAiRuntime.Cli\CliInspection.cs" Link="Cli\CliInspection.cs" />
     <Compile Include="..\..\src\SsisAiRuntime.Cli\CliSummary.cs" Link="Cli\CliSummary.cs" />
     <Compile Include="..\..\src\SsisAiRuntime.Cli\CliInspectionBatch.cs" Link="Cli\CliInspectionBatch.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliTraceRequest.cs" Link="Cli\CliTraceRequest.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliTaskRequest.cs" Link="Cli\CliTaskRequest.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliSearchRequest.cs" Link="Cli\CliSearchRequest.cs" />
+    <Compile Include="..\..\src\SsisAiRuntime.Cli\CliInspectionRequest.cs" Link="Cli\CliInspectionRequest.cs" />
   </ItemGroup>
 
   <ItemGroup>

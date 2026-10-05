@@ -123,6 +123,31 @@ namespace SsisAiRuntime.Inspectors
             return new SemanticHandleResolution(SemanticHandleResolutionStatus.Ambiguous, null, candidates);
         }
 
+        public IReadOnlyList<SemanticObjectReference> Search(string query, SemanticObjectKind? kind = null)
+        {
+            if (string.IsNullOrWhiteSpace(query) || query.Length > 256)
+            {
+                throw new ArgumentException("A metadata query of 1 to 256 characters is required.", nameof(query));
+            }
+            var nativeMatches = new HashSet<string>(_byNativeId.Where(mapping =>
+                    mapping.Key.Substring(mapping.Key.IndexOf(':') + 1).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                .SelectMany(mapping => mapping.Value).Select(entry => entry.Handle.Value), StringComparer.Ordinal);
+            return new ReadOnlyCollection<SemanticObjectReference>(Entries.Where(entry =>
+                (!kind.HasValue || entry.Handle.Kind == kind.Value) &&
+                (entry.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 entry.CreationName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 entry.Handle.Value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 || nativeMatches.Contains(entry.Handle.Value)))
+                .OrderBy(entry => entry.Handle.Value, StringComparer.Ordinal).ToList());
+        }
+
+        public IReadOnlyList<string> GetNativeIds(SemanticHandle handle)
+        {
+            if (handle == null) { throw new ArgumentNullException(nameof(handle)); }
+            return new ReadOnlyCollection<string>(_byNativeId.Where(mapping => mapping.Value.Any(entry => entry.Handle.Equals(handle)))
+                .Select(mapping => mapping.Key.Substring(mapping.Key.IndexOf(':') + 1))
+                .Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToList());
+        }
+
         internal SemanticHandleResolution ResolveNativeId(SemanticObjectKind kind, string nativeId)
         {
             if (string.IsNullOrWhiteSpace(nativeId)

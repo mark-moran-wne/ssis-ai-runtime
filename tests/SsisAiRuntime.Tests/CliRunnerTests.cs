@@ -265,6 +265,114 @@ public class CliRunnerTests
         });
     }
 
+    [Fact]
+    public void TraceDispatchesTypedSelectionAndWritesBoundedOutput()
+    {
+        WithPackage(path =>
+        {
+            var runner = new CliRunner((command, actualPath, request) =>
+            {
+                Assert.Equal("trace", command);
+                Assert.Equal(path, actualPath);
+                Assert.NotNull(request);
+                Assert.Equal("flow", request.FlowId);
+                Assert.Equal("component", request.ComponentId);
+                Assert.Equal("column", request.ColumnId);
+                Assert.True(request.Upstream);
+                return Success(new PackageColumnTrace(Package(), new ColumnLineageTrace("flow", "Flow", "Upstream",
+                    Array.Empty<DataFlowColumnOverview>(), Array.Empty<ColumnLineageLink>())));
+            });
+            var output = new StringWriter();
+            Assert.Equal(0, runner.Run(new[] { "trace", path, "--flow", "flow", "--component", "component", "--column", "column", "--direction", "upstream", "--summary" }, output));
+            Assert.Equal("Upstream", (string)JObject.Parse(output.ToString())["results"]!["counts"]!["direction"]!);
+        });
+    }
+
+    [Theory]
+    [InlineData("--flow", "flow")]
+    [InlineData("--flow", "flow", "--component", "component", "--column", "column", "--direction", "sideways")]
+    [InlineData("--flow", "flow", "--component", "component", "--column", "column", "--flow", "duplicate")]
+    public void InvalidTraceSelectionNeverInvokesServices(params string[] options)
+    {
+        var runner = new CliRunner((_, _, _) => throw new InvalidOperationException("secret"));
+        var output = new StringWriter();
+        Assert.Equal(2, runner.Run(new[] { "trace", "package.dtsx" }.Concat(options).ToArray(), output));
+        Assert.DoesNotContain("secret", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("predecessors")]
+    [InlineData("successors")]
+    public void TaskQueriesDispatchTypedSelectionAndUseSummaryEnvelope(string operation)
+    {
+        WithPackage(path =>
+        {
+            var runner = new CliRunner((command, actualPath, trace, task) =>
+            {
+                Assert.Equal(operation, command);
+                Assert.Equal(path, actualPath);
+                Assert.Null(trace);
+                Assert.NotNull(task);
+                Assert.Equal("task-id", task.TaskId);
+                Assert.True(task.Recursive);
+                return Success(new PackageControlFlow(Package(), new ControlFlowGraph(Array.Empty<ControlFlowNode>(),
+                    Array.Empty<ControlFlowEdge>(), Array.Empty<UnsupportedItem>())));
+            });
+            var output = new StringWriter();
+            Assert.Equal(0, runner.Run(new[] { operation, path, "--task", "task-id", "--recursive", "--summary" }, output));
+            Assert.Equal(0, (int)JObject.Parse(output.ToString())["results"]!["counts"]!["precedenceEdges"]!);
+        });
+    }
+
+    [Theory]
+    [InlineData("--recursive")]
+    [InlineData("--task")]
+    [InlineData("--task", "task-id", "--task", "duplicate")]
+    [InlineData("--task", "task-id", "--recursive", "--recursive")]
+    public void InvalidTaskQueryOptionsNeverInvokeServices(params string[] options)
+    {
+        var runner = new CliRunner((_, _, _, _) => throw new InvalidOperationException("secret"));
+        var output = new StringWriter();
+        Assert.Equal(2, runner.Run(new[] { "successors", "package.dtsx" }.Concat(options).ToArray(), output));
+        Assert.DoesNotContain("secret", output.ToString());
+    }
+
+    [Fact]
+    public void SearchDispatchesTypedCriteriaAndNeverEchoesQueryText()
+    {
+        WithPackage(path =>
+        {
+            var runner = new CliRunner(invocation =>
+            {
+                Assert.Equal("search", invocation.Command);
+                Assert.NotNull(invocation.Search);
+                Assert.Equal("query-secret", invocation.Search.Query);
+                Assert.Equal(SemanticObjectKind.Executable, invocation.Search.Kind);
+                var package = Package();
+                var catalog = new SemanticHandleCatalogBuilder().Build(package, Array.Empty<ConnectionOverview>(),
+                    Array.Empty<VariableOverview>(), Array.Empty<ParameterOverview>(), Array.Empty<ExecutableOverview>(), Array.Empty<DataFlowOverview>());
+                return Success(new PackageSearchResult(package, catalog, invocation.Search.Query, invocation.Search.Kind));
+            });
+            var output = new StringWriter();
+            Assert.Equal(0, runner.Run(new[] { "search", path, "--query", "query-secret", "--kind", "executable", "--summary" }, output));
+            Assert.Equal(0, (int)JObject.Parse(output.ToString())["results"]!["counts"]!["totalMatches"]!);
+            Assert.DoesNotContain("query-secret", output.ToString());
+        });
+    }
+
+    [Theory]
+    [InlineData("--query")]
+    [InlineData("--query", "text", "--kind", "0")]
+    [InlineData("--query", "text", "--query", "duplicate")]
+    [InlineData("--query", "text", "--kind", "unknown")]
+    public void InvalidSearchOptionsNeverLoadAPackage(params string[] options)
+    {
+        var runner = new CliRunner(invocation => throw new InvalidOperationException("secret"));
+        var output = new StringWriter();
+        Assert.Equal(2, runner.Run(new[] { "search", "package.dtsx" }.Concat(options).ToArray(), output));
+        Assert.DoesNotContain("secret", output.ToString());
+    }
+
     private static CliInspection Success(object? results = null, UnsupportedItem[]? unsupported = null) =>
         new(results ?? new { packageName = "Demo" }, new RuntimeDiagnostics("16", "x64", Array.Empty<RuntimeDiagnostic>()),
             unsupported ?? Array.Empty<UnsupportedItem>());

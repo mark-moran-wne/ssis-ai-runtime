@@ -1,3 +1,5 @@
+using System;
+
 namespace SsisAiRuntime.Inspectors
 {
     public sealed class DataFlowColumnOverview
@@ -17,7 +19,20 @@ namespace SsisAiRuntime.Inspectors
             int lineageId,
             int externalMetadataColumnId,
             string usageType)
+            : this(componentId, portId, portName, direction, id, name, dataType, length, precision, scale,
+                codePage, lineageId, externalMetadataColumnId, usageType, null)
         {
+        }
+
+        public DataFlowColumnOverview(
+            string componentId, string portId, string portName, string direction, string id, string name,
+            string dataType, int length, int precision, int scale, int codePage, int lineageId,
+            int externalMetadataColumnId, string usageType, int? sourceInputLineageId)
+        {
+            if (sourceInputLineageId.HasValue && sourceInputLineageId.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sourceInputLineageId));
+            }
             ComponentId = componentId ?? string.Empty;
             PortId = portId ?? string.Empty;
             PortName = portName ?? string.Empty;
@@ -32,6 +47,7 @@ namespace SsisAiRuntime.Inspectors
             LineageId = lineageId;
             ExternalMetadataColumnId = externalMetadataColumnId;
             UsageType = usageType ?? string.Empty;
+            SourceInputLineageId = sourceInputLineageId;
         }
 
         public string ComponentId { get; }
@@ -61,5 +77,7 @@ namespace SsisAiRuntime.Inspectors
         public int ExternalMetadataColumnId { get; }
 
         public string UsageType { get; }
+
+        public int? SourceInputLineageId { get; }
     }
 }

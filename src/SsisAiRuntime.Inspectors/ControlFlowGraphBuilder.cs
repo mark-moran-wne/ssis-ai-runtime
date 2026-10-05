@@ -50,7 +50,8 @@ namespace SsisAiRuntime.Inspectors
                     executable.Name,
                     executable.CreationName,
                     executable.Depth,
-                    executable.IsContainer));
+                    executable.IsContainer,
+                    executable.Id));
             }
 
             foreach (var executable in executableList)

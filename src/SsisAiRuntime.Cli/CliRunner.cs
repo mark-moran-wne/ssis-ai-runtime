@@ -13,9 +13,27 @@ namespace SsisAiRuntime.Cli
 {
     public sealed class CliRunner
     {
-        private readonly Func<string, string, CliInspection> inspect;
+        private readonly Func<CliInspectionRequest, CliInspection> inspect;
 
         public CliRunner(Func<string, string, CliInspection> inspect)
+        {
+            if (inspect == null) { throw new ArgumentNullException(nameof(inspect)); }
+            this.inspect = invocation => inspect(invocation.Command, invocation.PackagePath);
+        }
+
+        public CliRunner(Func<string, string, CliTraceRequest?, CliInspection> inspect)
+        {
+            if (inspect == null) { throw new ArgumentNullException(nameof(inspect)); }
+            this.inspect = invocation => inspect(invocation.Command, invocation.PackagePath, invocation.Trace);
+        }
+
+        public CliRunner(Func<string, string, CliTraceRequest?, CliTaskRequest?, CliInspection> inspect)
+        {
+            if (inspect == null) { throw new ArgumentNullException(nameof(inspect)); }
+            this.inspect = invocation => inspect(invocation.Command, invocation.PackagePath, invocation.Trace, invocation.Task);
+        }
+
+        public CliRunner(Func<CliInspectionRequest, CliInspection> inspect)
         {
             this.inspect = inspect ?? throw new ArgumentNullException(nameof(inspect));
         }
@@ -26,12 +44,20 @@ namespace SsisAiRuntime.Cli
             var summary = args != null && args.Length == 3 && args[2] == "--summary";
             try
             {
-                if (args == null || (args.Length != 2 && !summary) ||
-                    (!CliInspectionBatch.Operations.Contains(args[0]) && args[0] != "all") ||
-                    string.IsNullOrWhiteSpace(args[1]))
+                CliTraceRequest? request = null;
+                CliTaskRequest? taskRequest = null;
+                CliSearchRequest? searchRequest = null;
+                var trace = args != null && args.Length >= 2 && args[0] == "trace";
+                var taskQuery = args != null && args.Length >= 2 && (args[0] == "predecessors" || args[0] == "successors");
+                var search = args != null && args.Length >= 2 && args[0] == "search";
+                var valid = search ? CliSearchRequest.TryParse(args!, out searchRequest, out summary) : trace ? CliTraceRequest.TryParse(args!, out request, out summary) : taskQuery ?
+                    CliTaskRequest.TryParse(args!, out taskRequest, out summary) :
+                    args != null && (args.Length == 2 || summary) &&
+                    (CliInspectionBatch.Operations.Contains(args[0]) || args[0] == "all" || args[0] == "control-flow");
+                if (!valid || args == null || string.IsNullOrWhiteSpace(args[1]))
                 {
                     return Write(output, null, 2, null, new JArray(Diagnostic("cli.usage", "Error",
-                        "Usage: SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|all> <package.dtsx> [--summary]")), new JArray());
+                        "Usage: SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|all|control-flow> <package.dtsx> [--summary]; trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--summary]; <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--summary]; search <package.dtsx> --query <text> [--kind <object-kind>] [--summary]")), new JArray());
                 }
 
                 command = args[0];
@@ -41,7 +67,7 @@ namespace SsisAiRuntime.Cli
                         "The package file is missing or inaccessible. The path is omitted.")), new JArray());
                 }
 
-                var inspection = inspect(command, args[1]);
+                var inspection = inspect(new CliInspectionRequest(command, args[1], request, taskRequest, searchRequest));
                 var envelope = command == "all" && inspection.Results is CliInspectionBatch batch && !inspection.Diagnostics.HasErrors
                     ? BuildBatch(batch, summary)
                     : BuildOperation(command, inspection, summary);

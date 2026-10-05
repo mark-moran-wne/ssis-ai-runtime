@@ -66,6 +66,55 @@ Commands accept a command and a package path, optionally followed by `--summary`
 
 Use `--summary` for terminal and agent consumption. The executable checks the typed result and returns package identity plus `counts`, with at most eight coverage groups, five unsupported examples, and eight diagnostics. Summary metadata text is capped at 120 characters. `outputMode` is `summary`, and `coverage` contains exact `unsupportedCount`, `groupCount`, `reasonCounts`, `diagnosticCount`, and omitted group/example/diagnostic counts. The bounded `unsupportedItems` array contains examples, not the full coverage total. For `all --summary`, each operation has its own summary envelope and the outer `coverage` aggregates totals; the outer `unsupportedItems` is empty to avoid duplicating examples. Omit `--summary` to receive full redacted projections and coverage entries.
 
+### Column Tracing
+
+Use detailed `lineage` output to select a data flow's `executableId`, a component's `id`, and an input/output column's `id`. These are native metadata IDs, not names or the numeric `lineageId`. Then invoke the executable directly:
+
+```powershell
+& $cli trace 'C:\path\to\Package.dtsx' --flow 'flow-executable-id' --component 'component-id' --column 'column-id' --direction downstream
+& $cli trace 'C:\path\to\Package.dtsx' --flow 'flow-executable-id' --component 'component-id' --column 'column-id' --direction upstream --summary
+```
+
+Direction defaults to `downstream`. Detailed results contain `package` and `trace`; the trace includes reached `columns` and `links`, with the selected column first. Link kinds are `Path` for a projected pipeline path, `ProjectedIdentity` for an explicitly projected same-lineage relationship inside a component, and `SynchronousPassThrough` for a proven buffer-column relationship through an output's declared synchronous input. Synchronous links retain the `synchronousOutputId`. Summary mode returns package identity and counts for flow ID, direction, columns, and links.
+
+Components also expose `outputs` (including `synchronousInputId` and `isErrorOutput`) and runtime `virtualInputColumns`. Virtual columns describe available input-buffer metadata, including columns the component does not select for use. Their `id` is a projection key, `virtual:<input-port-id>:<lineage-id>`, not a fabricated SSIS native column ID. Pass the complete key to `--column`; when the same port/lineage is already a selected input, tracing uses that canonical input node. Buffer presence does not prove that a component consumes the value or writes it to a destination. Output relationships must match the projected ports and lineage; unresolved synchronous references remain gaps, and no metadata refresh or package validation is performed to resolve them. Known outputs with no downstream path are terminal rather than an assumed transformation gap.
+
+Tracing matches positive lineage IDs and exact component/port endpoints, not column names. It follows branches and protects against cycles. If a transformation's column mapping, a path's matching column, or a valid lineage ID is not exposed, it stops that branch and reports `coverage.unsupported_metadata` with exit `5`. It never invents mappings between differently numbered columns or reconstructs expressions. Missing or ambiguous flow/column selections return exit `4` with `lineage.selection.invalid` and no echoed selector values.
+
+Built-in Data Conversion output columns can expose `sourceInputLineageId`, taken only from their unencrypted, positive integer `SourceInputColumnLineageID` property. The adapter recognises the component through the installed runtime's creation names and registered class IDs, not its package display name. A uniquely resolved source creates an `ExplicitMapping` link even when the output has a different name, type, or lineage ID. Missing or ambiguous sources stay incomplete; an invalid explicit source cannot fall back to a coincidentally matching lineage ID. Successful numeric mapping properties are no longer counted as omitted configuration values.
+
+This is a limited computed-column mapping implementation: Derived Column expressions, arbitrary custom components, and other transformation-specific contracts are not parsed or inferred. Expression text remains omitted. The mapping query is covered by C# tests, and the native reader builds against SSIS 16. The existing WebProd and Paycom2 samples contain no Data Conversion components, so native mapping verification still needs a representative package.
+
+Trace completeness applies only to the selected projected relationships, not to unrelated configuration omissions or execution validity. `all` continues to return the four overview/SQL/lineage/configuration contexts; a selected-column trace is a separate operation.
+
+### Control-Flow Queries
+
+Inspect the native executable hierarchy and precedence graph, then select a task by its `nativeId` from `results.graph.nodes`:
+
+```powershell
+& $cli control-flow 'C:\path\to\Package.dtsx'
+& $cli predecessors 'C:\path\to\Package.dtsx' --task 'task-native-id' --summary
+& $cli successors 'C:\path\to\Package.dtsx' --task 'task-native-id' --recursive
+```
+
+Detailed results contain `package` and `graph`, with semantic-handle-backed `nodes`, `edges`, and `isComplete`. The full graph contains both `Containment` and `Precedence` edges. Predecessor/successor results include the selected task first and follow only precedence edges: immediate neighbours by default, transitively with `--recursive`. Cycles are bounded by a visited set; duplicate task names do not affect ID selection. Missing or ambiguous task IDs return exit `4` with `controlflow.selection.invalid`, without echoing the supplied selector.
+
+Summary mode returns package identity and counts for `nodes`, `precedenceEdges`, and `containmentEdges`. Node counts include the selected task. Use native IDs between CLI invocations; semantic handles remain session-scoped. Queries preserve graph coverage gaps rather than hiding unresolved endpoints. They describe potential precedence relationships, not actual execution order: expressions, constraint conditions, loops, disabled tasks, and parallel execution are not evaluated. Expression text, task-specific values, and package secrets remain omitted. The `all` command retains its existing four focused operations; control-flow queries are separate.
+
+### Metadata Search
+
+```powershell
+& $cli search 'C:\path\to\Package.dtsx' --query 'load'
+& $cli search 'C:\path\to\Package.dtsx' --query 'warehouse' --kind Connection --summary
+& $cli search 'C:\path\to\Package.dtsx' --query 'task-native-id' --kind Executable
+```
+
+Search uses case-insensitive literal substrings, not regular expressions, over catalog object names, creation names, semantic handle values, and available native IDs. The query must contain 1 to 256 characters. Optional `--kind` accepts a `SemanticObjectKind` name, such as `Connection`, `Executable`, `DataFlowComponent`, or `OutputColumn`; numeric enum values are rejected. Duplicate names return all matching objects rather than choosing one.
+
+Detailed results contain `package`, exact `totalMatches`, `matchesOmitted`, and up to 50 deterministic `matches`, each with a semantic `reference` and available `nativeIds`. Some kinds have no catalogued native ID; data-flow component/column IDs also need their containing flow context. Use executable native IDs with task-query commands; handles remain session-scoped. Summary mode returns match counts rather than match details. The query text is not returned as a report field, and a zero-match search is successful.
+
+The index covers catalogued package, connection, variable, parameter, task, data-flow component, selected input/output/external column, path, and runtime-connection metadata. It does not search SQL or expression text, descriptions, connection strings, variable/parameter/setting values, or unselected virtual-buffer columns. A missing match means no indexed metadata match, not proof that a value or object is absent from every package detail. Metadata read failures remain coverage gaps. `all` does not include a search operation.
+
 Every invocation writes one JSON document to stdout, including errors. Schema `1.0` uses camelCase property names, string enum values, and these stable envelope fields:
 
 ```json

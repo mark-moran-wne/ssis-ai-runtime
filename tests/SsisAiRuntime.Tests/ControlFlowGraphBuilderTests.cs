@@ -73,6 +73,62 @@ public class ControlFlowGraphBuilderTests
         Assert.Contains(graph.UnsupportedItems, item => item.Reason.Contains("could not be resolved"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RelatedTasksUsePrecedenceNotContainmentAndSupportRecursiveQueries(bool predecessors)
+    {
+        var package = CreatePackageOverview();
+        var executables = new[]
+        {
+            new ExecutableOverview("parent", "", "Parent", "Sequence", "", 0, true, false),
+            new ExecutableOverview("first", "parent", "Same name", "Task", "", 1, false, false),
+            new ExecutableOverview("second", "parent", "Same name", "Task", "", 1, false, false),
+            new ExecutableOverview("third", "parent", "Third", "Task", "", 1, false, false)
+        };
+        var constraints = new[]
+        {
+            Constraint("first", "second"), Constraint("second", "third")
+        };
+        var graph = new ControlFlowGraphBuilder().Build(executables,
+            InspectionResult<PrecedenceConstraintOverview>.Complete(constraints), BuildCatalog(package, executables));
+        var query = new ControlFlowQuery();
+        var selected = predecessors ? "third" : "first";
+        var direct = query.FindRelated(graph, selected, predecessors);
+        var recursive = query.FindRelated(graph, selected, predecessors, true);
+        Assert.True(direct.IsComplete);
+        Assert.Equal(2, direct.Items[0].Nodes.Count);
+        Assert.Single(direct.Items[0].Edges);
+        Assert.Equal(3, recursive.Items[0].Nodes.Count);
+        Assert.Equal(2, recursive.Items[0].Edges.Count);
+        Assert.DoesNotContain(recursive.Items[0].Nodes, node => node.NativeId == "parent");
+        Assert.All(recursive.Items[0].Edges, edge => Assert.Equal(ControlFlowEdgeKind.Precedence, edge.Kind));
+    }
+
+    [Fact]
+    public void RelatedTasksStopCyclesAndRejectAmbiguousNativeIds()
+    {
+        var package = CreatePackageOverview();
+        var executables = new[]
+        {
+            new ExecutableOverview("first", "", "First", "Task", "", 0, false, false),
+            new ExecutableOverview("second", "", "Second", "Task", "", 0, false, false)
+        };
+        var graph = new ControlFlowGraphBuilder().Build(executables,
+            InspectionResult<PrecedenceConstraintOverview>.Complete(new[] { Constraint("first", "second"), Constraint("second", "first") }),
+            BuildCatalog(package, executables));
+        var query = new ControlFlowQuery();
+        var result = query.FindRelated(graph, "first", false, true);
+        Assert.Equal(2, result.Items[0].Nodes.Count);
+        Assert.Equal(2, result.Items[0].Edges.Count);
+        Assert.Empty(query.FindRelated(graph, "missing", false).Items);
+        var duplicated = new ControlFlowGraph(graph.Nodes.Concat(new[] { graph.Nodes[0] }), graph.Edges, Array.Empty<UnsupportedItem>());
+        Assert.Empty(query.FindRelated(duplicated, "first", false).Items);
+    }
+
+    private static PrecedenceConstraintOverview Constraint(string from, string to) =>
+        new(from + "-" + to, "On success", from, from, to, to, "Constraint", "Success", true, false);
+
     private static SemanticHandleCatalog BuildCatalog(PackageOverview package, IEnumerable<ExecutableOverview> executables)
     {
         return new SemanticHandleCatalogBuilder().Build(

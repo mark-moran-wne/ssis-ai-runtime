@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Linq;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Inspectors;
 using DtsPipeline = Microsoft.SqlServer.Dts.Pipeline.Wrapper;
@@ -11,6 +12,9 @@ namespace SsisAiRuntime.Ssis16
 {
     public sealed class PackageDataFlowInspector : IPackageDataFlowInspector<DtsRuntime.Package>
     {
+        private const string SourceLineageProperty = "SourceInputColumnLineageID";
+        private static readonly Lazy<HashSet<string>> DataConversionClassIds = new Lazy<HashSet<string>>(FindDataConversionClasses);
+
         private static readonly HashSet<string> SafeSettings = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "AccessMode",
@@ -76,7 +80,9 @@ namespace SsisAiRuntime.Ssis16
                     foreach (DtsPipeline.IDTSComponentMetaData100 component in pipeline.ComponentMetaDataCollection)
                     {
                         var inputColumns = new List<DataFlowColumnOverview>();
+                        var virtualInputColumns = new List<DataFlowColumnOverview>();
                         var outputColumns = new List<DataFlowColumnOverview>();
+                        var outputs = new List<DataFlowOutputOverview>();
                         var externalMetadataColumns = new List<DataFlowColumnOverview>();
                         var runtimeConnections = new List<DataFlowRuntimeConnectionOverview>();
                         var settings = new List<DataFlowSettingOverview>();
@@ -91,6 +97,22 @@ namespace SsisAiRuntime.Ssis16
 
                         foreach (DtsPipeline.IDTSInput100 input in component.InputCollection)
                         {
+                            try
+                            {
+                                foreach (DtsPipeline.IDTSVirtualInputColumn100 column in input.GetVirtualInput().VirtualInputColumnCollection)
+                                {
+                                    virtualInputColumns.Add(new DataFlowColumnOverview(
+                                        component.ID.ToString(CultureInfo.InvariantCulture), input.ID.ToString(CultureInfo.InvariantCulture),
+                                        input.Name, "VirtualInput", "virtual:" + input.ID.ToString(CultureInfo.InvariantCulture) + ":" + column.LineageID.ToString(CultureInfo.InvariantCulture),
+                                        column.Name, column.DataType.ToString(), column.Length, column.Precision, column.Scale,
+                                        column.CodePage, column.LineageID, 0, column.UsageType.ToString()));
+                                }
+                            }
+                            catch (Exception)
+                            {
+                                unsupportedItems.Add(new UnsupportedItem(taskHost.ID, input.Name, component.ComponentClassID,
+                                    "The virtual input column metadata could not be read.", UnsupportedItem.ReadFailureCode));
+                            }
                             foreach (DtsPipeline.IDTSInputColumn100 column in input.InputColumnCollection)
                             {
                                 inputColumns.Add(new DataFlowColumnOverview(
@@ -124,8 +146,16 @@ namespace SsisAiRuntime.Ssis16
 
                         foreach (DtsPipeline.IDTSOutput100 output in component.OutputCollection)
                         {
+                            outputs.Add(new DataFlowOutputOverview(
+                                output.ID.ToString(CultureInfo.InvariantCulture), output.Name,
+                                output.SynchronousInputID > 0 ? output.SynchronousInputID.ToString(CultureInfo.InvariantCulture) : string.Empty,
+                                output.IsErrorOut));
                             foreach (DtsPipeline.IDTSOutputColumn100 column in output.OutputColumnCollection)
                             {
+                                var handlesSourceMapping = !output.IsErrorOut && DataConversionClassIds.Value.Contains(component.ComponentClassID);
+                                var sourceLineage = handlesSourceMapping
+                                    ? ReadSourceLineage(taskHost.ID, component, column, unsupportedItems)
+                                    : null;
                                 outputColumns.Add(new DataFlowColumnOverview(
                                     component.ID.ToString(CultureInfo.InvariantCulture),
                                     output.ID.ToString(CultureInfo.InvariantCulture),
@@ -140,8 +170,9 @@ namespace SsisAiRuntime.Ssis16
                                     column.CodePage,
                                     column.LineageID,
                                     column.ExternalMetadataColumnID,
-                                    string.Empty));
-                                AddUnsupportedColumnProperties(component, column.ID, column.CustomPropertyCollection, unsupportedItems);
+                                    string.Empty,
+                                    sourceLineage));
+                                AddUnsupportedColumnProperties(component, column.ID, column.CustomPropertyCollection, unsupportedItems, handlesSourceMapping);
                             }
 
                             AddExternalMetadataColumns(
@@ -167,7 +198,9 @@ namespace SsisAiRuntime.Ssis16
                             outputColumns,
                             externalMetadataColumns,
                             runtimeConnections,
-                            settings));
+                            settings,
+                            outputs,
+                            virtualInputColumns));
                     }
 
                     var paths = new List<DataFlowPathOverview>();
@@ -229,14 +262,69 @@ namespace SsisAiRuntime.Ssis16
             }
         }
 
+        private static HashSet<string> FindDataConversionClasses()
+        {
+            var classes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Microsoft.DataConvert" };
+            try
+            {
+                foreach (DtsRuntime.PipelineComponentInfo info in new DtsRuntime.Application().PipelineComponentInfos)
+                {
+                    if (string.Equals(info.CreationName, "Microsoft.DataConvert", StringComparison.OrdinalIgnoreCase) ||
+                        info.CreationName.StartsWith("DTSTransform.DataConvert.", StringComparison.OrdinalIgnoreCase))
+                    {
+                        classes.Add(info.CreationName);
+                        classes.Add(info.ID);
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                return classes;
+            }
+            return classes;
+        }
+
+        private static int? ReadSourceLineage(string flowId, DtsPipeline.IDTSComponentMetaData100 component,
+            DtsPipeline.IDTSOutputColumn100 column, ICollection<UnsupportedItem> unsupportedItems)
+        {
+            try
+            {
+                var properties = column.CustomPropertyCollection.Cast<DtsPipeline.IDTSCustomProperty100>()
+                    .Where(property => string.Equals(property.Name, SourceLineageProperty, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (properties.Count == 1 && !properties[0].EncryptionRequired)
+                {
+                    var value = properties[0].Value;
+                    if (value is int sourceLineage && sourceLineage > 0)
+                    {
+                        return sourceLineage;
+                    }
+                }
+                var encrypted = properties.Count == 1 && properties[0].EncryptionRequired;
+                unsupportedItems.Add(new UnsupportedItem(column.ID.ToString(CultureInfo.InvariantCulture), column.Name,
+                    component.ComponentClassID, "The explicit source-lineage mapping is unavailable or unsupported.",
+                    encrypted ? UnsupportedItem.IntentionalOmissionCode : UnsupportedItem.UnsupportedMetadataCode));
+            }
+            catch (Exception)
+            {
+                unsupportedItems.Add(new UnsupportedItem(flowId, column.Name, component.ComponentClassID,
+                    "The explicit source-lineage mapping could not be read.", UnsupportedItem.ReadFailureCode));
+            }
+            return null;
+        }
+
         private static void AddUnsupportedColumnProperties(
             DtsPipeline.IDTSComponentMetaData100 component,
             int columnId,
             DtsPipeline.IDTSCustomPropertyCollection100 properties,
-            ICollection<UnsupportedItem> unsupportedItems)
+            ICollection<UnsupportedItem> unsupportedItems,
+            bool sourceMappingHandled = false)
         {
             foreach (DtsPipeline.IDTSCustomProperty100 property in properties)
             {
+                if (sourceMappingHandled && string.Equals(property.Name, SourceLineageProperty, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
                 unsupportedItems.Add(new UnsupportedItem(
                     columnId.ToString(CultureInfo.InvariantCulture),
                     property.Name,

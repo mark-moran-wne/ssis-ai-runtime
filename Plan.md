@@ -28,8 +28,10 @@ Evolve the repository into a headless AI tool backed by the native SSIS runtime.
 
 ## Next Actions
 
-1. Add data-flow lineage queries over the projected column lineage IDs and paths.
-2. Add predecessor/successor, dependency, and package-search services over the handle-backed graphs.
+1. Extend data-flow lineage queries beyond the implemented projected-identity traversal: component-specific computed-column mappings and richer dependency queries remain. `ColumnLineageQuery` and the read-only CLI `trace` command now traverse explicit port/lineage relationships upstream or downstream, with branching, cycle protection, and incomplete-coverage reporting. Synchronous output associations and runtime virtual-buffer metadata are projected; proven pass-through links and virtual-column aliases are supported, while unresolved references remain incomplete. Native synchronous pass-through tracing is verified on Paycom2 in both directions with exit 0 and no gaps; the package SHA-256 was unchanged.
+	Explicit positive numeric source mappings for registered built-in Data Conversion components are now projected and traversed as `ExplicitMapping` links, with missing/ambiguous sources and invalid fallback covered by C# tests. Native mapping verification needs another representative package; WebProd and Paycom2 have no Data Conversion components. Expression-derived mappings and other component contracts remain open.
+2. Predecessor/successor queries and the CLI `control-flow`, `predecessors`, and `successors` commands are implemented over the handle-backed graph, with native-ID selection, precedence-only traversal, optional recursion, cycle protection, and incomplete-coverage reporting. WebProd native graph and neighbour checks passed without package modification. Dependency and package-search services remain open. Expression-derived column dependencies remain deferred: the installed expression evaluator examined here exposes evaluation/type checks, not a column-reference discovery method.
+	Metadata-only CLI `search` is now implemented over the semantic catalog, with literal case-insensitive matching, kind filters, available native IDs, duplicate-name results, exact totals, and a 50-match cap. WebProd text/native-ID/no-match checks passed with an unchanged package hash. Value/text search and richer dependency queries remain outside this implementation.
 3. Expand the Windows smoke corpus and automate it in CI where SSIS 16 is available.
 
 ## Phase 1: Runtime Foundation

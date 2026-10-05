@@ -36,6 +36,37 @@ namespace SsisAiRuntime.Cli
                     ["rootPrecedenceConstraints"] = package.PrecedenceConstraintCount
                 };
             }
+            else if (command == "search" && results is PackageSearchResult search)
+            {
+                package = search.Package;
+                counts = new JObject
+                {
+                    ["totalMatches"] = search.TotalMatches,
+                    ["returnedMatches"] = search.Matches.Count,
+                    ["matchesOmitted"] = search.MatchesOmitted
+                };
+            }
+            else if ((command == "control-flow" || command == "predecessors" || command == "successors") && results is PackageControlFlow controlFlow)
+            {
+                package = controlFlow.Package;
+                counts = new JObject
+                {
+                    ["nodes"] = controlFlow.Graph.Nodes.Count,
+                    ["precedenceEdges"] = controlFlow.Graph.Edges.Count(edge => edge.Kind == ControlFlowEdgeKind.Precedence),
+                    ["containmentEdges"] = controlFlow.Graph.Edges.Count(edge => edge.Kind == ControlFlowEdgeKind.Containment)
+                };
+            }
+            else if (command == "trace" && results is PackageColumnTrace columnTrace)
+            {
+                package = columnTrace.Package;
+                counts = new JObject
+                {
+                    ["flowId"] = LimitText(columnTrace.Trace.FlowId),
+                    ["direction"] = columnTrace.Trace.Direction,
+                    ["columns"] = columnTrace.Trace.Columns.Count,
+                    ["links"] = columnTrace.Trace.Links.Count
+                };
+            }
             else if (results is PackageContext context &&
                 string.Equals(context.Kind.ToString(), command, StringComparison.OrdinalIgnoreCase))
             {

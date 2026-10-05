@@ -4,6 +4,291 @@ namespace SsisAiRuntime.Tests;
 
 public class DataFlowOverviewTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ColumnTraceFollowsPortsAndLineageRatherThanNames(bool upstream)
+    {
+        var source = Column("source", "out", "s", "Output", 42, "Original");
+        var destination = Column("target", "in", "t", "Input", 42, "Renamed");
+        var wrongPort = Column("target", "other-in", "other", "Input", 42, "Original");
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { source }),
+            Component("target", new[] { destination, wrongPort }, Array.Empty<DataFlowColumnOverview>())
+        }, new[] { new DataFlowPathOverview("path", "Path", "source", "out", "target", "in") });
+        var result = new ColumnLineageQuery().Trace(flow, upstream ? "target" : "source", upstream ? "t" : "s", upstream);
+        Assert.True(result.IsComplete);
+        Assert.Equal(2, Assert.Single(result.Items).Columns.Count);
+        Assert.Equal("path", Assert.Single(result.Items[0].Links).PathId);
+        Assert.DoesNotContain(wrongPort, result.Items[0].Columns);
+    }
+
+    [Fact]
+    public void ColumnTraceStopsAtOpaqueTransformationWithoutMatchingByName()
+    {
+        var input = Column("transform", "in", "i", "Input", 42, "SameName");
+        var output = Column("transform", "out", "o", "Output", 43, "SameName");
+        var flow = new DataFlowOverview("flow", "Flow", new[] { Component("transform", new[] { input }, new[] { output }) }, Array.Empty<DataFlowPathOverview>());
+        var result = new ColumnLineageQuery().Trace(flow, "transform", "i");
+        Assert.False(result.IsComplete);
+        Assert.Single(result.Items[0].Columns);
+        Assert.Empty(result.Items[0].Links);
+        Assert.Equal(UnsupportedItem.UnsupportedMetadataCode, Assert.Single(result.UnsupportedItems).ReasonCode);
+    }
+
+    [Fact]
+    public void ColumnTraceHandlesBranchesAndCyclesAndRejectsMissingSelection()
+    {
+        var input = Column("component", "in", "i", "Input", 42, "Value");
+        var output = Column("component", "out", "o", "Output", 42, "Value");
+        var branch = Column("target", "in", "t", "Input", 42, "Value");
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("component", new[] { input }, new[] { output }),
+            Component("target", new[] { branch }, Array.Empty<DataFlowColumnOverview>())
+        }, new[]
+        {
+            new DataFlowPathOverview("cycle", "Cycle", "component", "out", "component", "in"),
+            new DataFlowPathOverview("branch", "Branch", "component", "out", "target", "in")
+        });
+        var result = new ColumnLineageQuery().Trace(flow, "component", "o");
+        Assert.Equal(3, result.Items[0].Columns.Count);
+        Assert.Equal(3, result.Items[0].Links.Count);
+        Assert.Empty(new ColumnLineageQuery().Trace(flow, "component", "missing").Items);
+    }
+
+    [Fact]
+    public void ColumnTraceReportsAnUnmappedBranchEvenWhenAnotherBranchMatches()
+    {
+        var source = Column("source", "out", "s", "Output", 42, "Value");
+        var matched = Column("target", "in", "t", "Input", 42, "Value");
+        var unmapped = Column("other", "in", "u", "Input", 43, "Value");
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { source }),
+            Component("target", new[] { matched }, Array.Empty<DataFlowColumnOverview>()),
+            Component("other", new[] { unmapped }, Array.Empty<DataFlowColumnOverview>())
+        }, new[]
+        {
+            new DataFlowPathOverview("matched", "Matched", "source", "out", "target", "in"),
+            new DataFlowPathOverview("unmapped", "Unmapped", "source", "out", "other", "in")
+        });
+        var result = new ColumnLineageQuery().Trace(flow, "source", "s");
+        Assert.False(result.IsComplete);
+        Assert.Equal(2, result.Items[0].Columns.Count);
+        Assert.Single(result.Items[0].Links);
+        Assert.Single(result.UnsupportedItems);
+    }
+
+    [Fact]
+    public void ColumnTraceRejectsAmbiguousSelectionsAndNeverLinksZeroLineage()
+    {
+        var input = Column("component", "in", "duplicate", "Input", 42, "Value");
+        var output = Column("component", "out", "duplicate", "Output", 42, "Value");
+        var ambiguous = new DataFlowOverview("flow", "Flow", new[] { Component("component", new[] { input }, new[] { output }) }, Array.Empty<DataFlowPathOverview>());
+        Assert.Empty(new ColumnLineageQuery().Trace(ambiguous, "component", "duplicate").Items);
+
+        var source = Column("source", "out", "s", "Output", 0, "Value");
+        var target = Column("target", "in", "t", "Input", 0, "Value");
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { source }),
+            Component("target", new[] { target }, Array.Empty<DataFlowColumnOverview>())
+        }, new[] { new DataFlowPathOverview("path", "Path", "source", "out", "target", "in") });
+        var result = new ColumnLineageQuery().Trace(flow, "source", "s");
+        Assert.False(result.IsComplete);
+        Assert.Single(result.Items[0].Columns);
+        Assert.Empty(result.Items[0].Links);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ColumnTraceFollowsExplicitSynchronousOutputWithoutInventingColumns(bool upstream)
+    {
+        var source = Column("source", "out", "s", "Output", 42, "Value");
+        var input = Column("transform", "in", "i", "Input", 42, "Value");
+        var target = Column("target", "in", "t", "Input", 42, "Value");
+        var transform = new DataFlowComponentOverview("transform", "Transform", "Vendor.Transform", "", 1, 1,
+            new[] { input }, Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("sync-out", "Output", "in", false) });
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { source }),
+            transform,
+            Component("target", new[] { target }, Array.Empty<DataFlowColumnOverview>())
+        }, new[]
+        {
+            new DataFlowPathOverview("before", "Before", "source", "out", "transform", "in"),
+            new DataFlowPathOverview("after", "After", "transform", "sync-out", "target", "in")
+        });
+        var result = new ColumnLineageQuery().Trace(flow, upstream ? "target" : "source", upstream ? "t" : "s", upstream);
+        Assert.True(result.IsComplete);
+        Assert.Equal(3, result.Items[0].Columns.Count);
+        Assert.Equal(2, result.Items[0].Links.Count);
+        var bridge = Assert.Single(result.Items[0].Links, link => link.Kind == "SynchronousPassThrough");
+        Assert.Same(input, bridge.Source);
+        Assert.Same(target, bridge.Target);
+        Assert.Equal("sync-out", bridge.SynchronousOutputId);
+    }
+
+    [Fact]
+    public void ColumnTraceTreatsAnUnconnectedKnownErrorOutputAsATerminalPort()
+    {
+        var input = Column("target", "in", "t", "Input", 42, "Value");
+        var target = new DataFlowComponentOverview("target", "Target", "Vendor.Target", "", 1, 1,
+            new[] { input }, Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("error-out", "Error", "in", true) });
+        var flow = new DataFlowOverview("flow", "Flow", new[] { target }, Array.Empty<DataFlowPathOverview>());
+        Assert.True(new ColumnLineageQuery().Trace(flow, "target", "t").IsComplete);
+    }
+
+    [Fact]
+    public void ColumnTraceDoesNotInferPassThroughForAnAsynchronousOutput()
+    {
+        var input = Column("transform", "in", "i", "Input", 42, "Value");
+        var targetColumn = Column("target", "in", "t", "Input", 42, "Value");
+        var transform = new DataFlowComponentOverview("transform", "Transform", "Vendor.Transform", "", 1, 1,
+            new[] { input }, Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("async-out", "Output", "", false) });
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            transform,
+            Component("target", new[] { targetColumn }, Array.Empty<DataFlowColumnOverview>())
+        }, new[] { new DataFlowPathOverview("path", "Path", "transform", "async-out", "target", "in") });
+        var result = new ColumnLineageQuery().Trace(flow, "transform", "i");
+        Assert.False(result.IsComplete);
+        Assert.Single(result.Items[0].Columns);
+        Assert.Empty(result.Items[0].Links);
+    }
+
+    [Fact]
+    public void ColumnTraceIncludesUnselectedVirtualBufferColumns()
+    {
+        var source = Column("source", "out", "s", "Output", 42, "Value");
+        var buffer = Column("transform", "in", "virtual:in:42", "VirtualInput", 42, "Value");
+        var target = Column("target", "in", "t", "Input", 42, "Value");
+        var transform = new DataFlowComponentOverview("transform", "Transform", "Vendor.Transform", "", 1, 1,
+            Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("sync-out", "Output", "in", false) }, new[] { buffer });
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { source }), transform,
+            Component("target", new[] { target }, Array.Empty<DataFlowColumnOverview>())
+        }, new[]
+        {
+            new DataFlowPathOverview("before", "Before", "source", "out", "transform", "in"),
+            new DataFlowPathOverview("after", "After", "transform", "sync-out", "target", "in")
+        });
+        var result = new ColumnLineageQuery().Trace(flow, "source", "s");
+        Assert.True(result.IsComplete);
+        Assert.Contains(buffer, result.Items[0].Columns);
+        Assert.Equal(3, result.Items[0].Columns.Count);
+    }
+
+    [Fact]
+    public void ColumnTraceResolvesVirtualAliasesToSelectedInputColumns()
+    {
+        var selected = Column("component", "in", "selected", "Input", 42, "Value");
+        var buffer = Column("component", "in", "virtual:in:42", "VirtualInput", 42, "Value");
+        var component = new DataFlowComponentOverview("component", "Component", "Vendor.Component", "", 1, 0,
+            new[] { selected }, Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            Array.Empty<DataFlowOutputOverview>(), new[] { buffer });
+        var flow = new DataFlowOverview("flow", "Flow", new[] { component }, Array.Empty<DataFlowPathOverview>());
+        var result = new ColumnLineageQuery().Trace(flow, "component", buffer.Id);
+        Assert.True(result.IsComplete);
+        Assert.Same(selected, Assert.Single(result.Items[0].Columns));
+    }
+
+    [Fact]
+    public void ColumnTraceReportsDanglingSynchronousInputReferences()
+    {
+        var input = Column("transform", "in", "i", "Input", 42, "Value");
+        var target = Column("target", "in", "t", "Input", 42, "Value");
+        var transform = new DataFlowComponentOverview("transform", "Transform", "Vendor.Transform", "", 1, 1,
+            new[] { input }, Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("out", "Output", "missing-input", false) });
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            transform, Component("target", new[] { target }, Array.Empty<DataFlowColumnOverview>())
+        }, new[] { new DataFlowPathOverview("path", "Path", "transform", "out", "target", "in") });
+        var result = new ColumnLineageQuery().Trace(flow, "transform", "i");
+        Assert.False(result.IsComplete);
+        Assert.Empty(result.Items[0].Links);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ColumnTraceFollowsExplicitMappingsAcrossChangedLineage(bool upstream)
+    {
+        var source = Column("convert", "in", "s", "Input", 42, "Original");
+        var converted = new DataFlowColumnOverview("convert", "out", "Output", "Output", "c", "DifferentName", "String",
+            30, 0, 0, 0, 73, 0, "", 42);
+        var target = Column("target", "in", "t", "Input", 73, "Destination");
+        var component = new DataFlowComponentOverview("convert", "Convert", "Vendor.Convert", "", 1, 1,
+            new[] { source }, new[] { converted }, Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("out", "Output", "in", false) });
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            component, Component("target", new[] { target }, Array.Empty<DataFlowColumnOverview>())
+        }, new[] { new DataFlowPathOverview("path", "Path", "convert", "out", "target", "in") });
+        var result = new ColumnLineageQuery().Trace(flow, upstream ? "target" : "convert", upstream ? "t" : "s", upstream);
+        Assert.True(result.IsComplete);
+        Assert.Equal(3, result.Items[0].Columns.Count);
+        Assert.Equal(2, result.Items[0].Links.Count);
+        var mapping = Assert.Single(result.Items[0].Links, link => link.Kind == "ExplicitMapping");
+        Assert.Same(source, mapping.Source);
+        Assert.Same(converted, mapping.Target);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ColumnTraceDoesNotGuessMissingOrAmbiguousMappingSources(bool ambiguous)
+    {
+        var first = Column("convert", "in", "first", "Input", ambiguous ? 42 : 99, "Value");
+        var second = Column("convert", "other", "second", "Input", 42, "Value");
+        var converted = new DataFlowColumnOverview("convert", "out", "Output", "Output", "c", "Value", "String",
+            30, 0, 0, 0, 73, 0, "", 42);
+        var component = Component("convert", ambiguous ? new[] { first, second } : new[] { first }, new[] { converted });
+        var flow = new DataFlowOverview("flow", "Flow", new[] { component }, Array.Empty<DataFlowPathOverview>());
+        var result = new ColumnLineageQuery().Trace(flow, "convert", "c", true);
+        Assert.False(result.IsComplete);
+        Assert.Empty(result.Items[0].Links);
+        Assert.Single(result.Items[0].Columns);
+    }
+
+    [Fact]
+    public void InvalidExplicitMappingCannotFallBackToCoincidentalLineageIdentity()
+    {
+        var source = Column("convert", "in", "s", "Input", 42, "Value");
+        var converted = new DataFlowColumnOverview("convert", "out", "Output", "Output", "c", "Value", "String",
+            30, 0, 0, 0, 42, 0, "", 99);
+        var flow = new DataFlowOverview("flow", "Flow", new[] { Component("convert", new[] { source }, new[] { converted }) }, Array.Empty<DataFlowPathOverview>());
+        var result = new ColumnLineageQuery().Trace(flow, "convert", "c", true);
+        Assert.False(result.IsComplete);
+        Assert.Empty(result.Items[0].Links);
+        Assert.Single(result.Items[0].Columns);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DataFlowColumnOverview("", "", "", "Output", "", "", "",
+            0, 0, 0, 0, 0, 0, "", 0));
+    }
+
+    private static DataFlowColumnOverview Column(string component, string port, string id, string direction, int lineage, string name) =>
+        new(component, port, port, direction, id, name, "Int32", 4, 0, 0, 0, lineage, 0, "");
+
+    private static DataFlowComponentOverview Component(string id, DataFlowColumnOverview[] inputs, DataFlowColumnOverview[] outputs) =>
+        new(id, id, "Vendor.Component", "", inputs.Length == 0 ? 0 : 1, outputs.Length == 0 ? 0 : 1,
+            inputs, outputs, Array.Empty<DataFlowColumnOverview>(), Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>());
+
     [Fact]
     public void OverviewRetainsComponentAndPathTopology()
     {

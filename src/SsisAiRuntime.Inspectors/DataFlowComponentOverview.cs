@@ -40,6 +40,35 @@ namespace SsisAiRuntime.Inspectors
             IEnumerable<DataFlowColumnOverview> externalMetadataColumns,
             IEnumerable<DataFlowRuntimeConnectionOverview> runtimeConnections,
             IEnumerable<DataFlowSettingOverview> settings)
+            : this(id, name, componentClassId, description, inputCount, outputCount, inputColumns,
+                outputColumns, externalMetadataColumns, runtimeConnections, settings, Array.Empty<DataFlowOutputOverview>())
+        {
+        }
+
+        public DataFlowComponentOverview(
+            string id,
+            string name,
+            string componentClassId,
+            string description,
+            int inputCount,
+            int outputCount,
+            IEnumerable<DataFlowColumnOverview> inputColumns,
+            IEnumerable<DataFlowColumnOverview> outputColumns,
+            IEnumerable<DataFlowColumnOverview> externalMetadataColumns,
+            IEnumerable<DataFlowRuntimeConnectionOverview> runtimeConnections,
+            IEnumerable<DataFlowSettingOverview> settings,
+            IEnumerable<DataFlowOutputOverview> outputs)
+            : this(id, name, componentClassId, description, inputCount, outputCount, inputColumns,
+                outputColumns, externalMetadataColumns, runtimeConnections, settings, outputs, Array.Empty<DataFlowColumnOverview>())
+        {
+        }
+
+        public DataFlowComponentOverview(
+            string id, string name, string componentClassId, string description, int inputCount, int outputCount,
+            IEnumerable<DataFlowColumnOverview> inputColumns, IEnumerable<DataFlowColumnOverview> outputColumns,
+            IEnumerable<DataFlowColumnOverview> externalMetadataColumns,
+            IEnumerable<DataFlowRuntimeConnectionOverview> runtimeConnections, IEnumerable<DataFlowSettingOverview> settings,
+            IEnumerable<DataFlowOutputOverview> outputs, IEnumerable<DataFlowColumnOverview> virtualInputColumns)
         {
             Id = id ?? string.Empty;
             Name = name ?? string.Empty;
@@ -52,6 +81,8 @@ namespace SsisAiRuntime.Inspectors
             ExternalMetadataColumns = new ReadOnlyCollection<DataFlowColumnOverview>(new List<DataFlowColumnOverview>(externalMetadataColumns));
             RuntimeConnections = new ReadOnlyCollection<DataFlowRuntimeConnectionOverview>(new List<DataFlowRuntimeConnectionOverview>(runtimeConnections));
             Settings = new ReadOnlyCollection<DataFlowSettingOverview>(new List<DataFlowSettingOverview>(settings));
+            Outputs = new ReadOnlyCollection<DataFlowOutputOverview>(new List<DataFlowOutputOverview>(outputs));
+            VirtualInputColumns = new ReadOnlyCollection<DataFlowColumnOverview>(new List<DataFlowColumnOverview>(virtualInputColumns));
         }
 
         public string Id { get; }
@@ -75,5 +106,8 @@ namespace SsisAiRuntime.Inspectors
         public IReadOnlyList<DataFlowRuntimeConnectionOverview> RuntimeConnections { get; }
 
         public IReadOnlyList<DataFlowSettingOverview> Settings { get; }
+
+        public IReadOnlyList<DataFlowOutputOverview> Outputs { get; }
+        public IReadOnlyList<DataFlowColumnOverview> VirtualInputColumns { get; }
     }
 }
