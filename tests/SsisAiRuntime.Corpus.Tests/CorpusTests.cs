@@ -1,11 +1,11 @@
-using SsisAiRuntime.AI;
-using SsisAiRuntime.Inspectors;
-using SsisAiRuntime.Cli;
 using Newtonsoft.Json.Linq;
+using SsisAiRuntime.AI;
+using SsisAiRuntime.Corpus;
+using SsisAiRuntime.Inspectors;
 
-namespace SsisAiRuntime.Tests;
+namespace SsisAiRuntime.Corpus.Tests;
 
-public sealed class CorpusToolTests
+public sealed class CorpusTests
 {
     [Fact]
     public void SnapshotBuilderProjectsDependencyEvidenceAndCoverage()
@@ -26,9 +26,7 @@ public sealed class CorpusToolTests
             new UnsupportedItem("x", "Expr", "Task", "coverage", "expression.reference_not_found")
         });
 
-        var snapshot = AnalysisSnapshot(package, graph);
-
-        var corpus = new CorpusSnapshotBuilder().Build(snapshot);
+        var corpus = new CorpusSnapshotBuilder().Build(AnalysisSnapshot(package, graph));
 
         Assert.Equal(CorpusSchema.CurrentVersion, corpus.SchemaVersion);
         Assert.Equal(2, corpus.Nodes.Count);
@@ -41,13 +39,12 @@ public sealed class CorpusToolTests
     }
 
     [Fact]
-    public void DiffEngineReportsNodeEdgeAndCoverageDeltas()
+    public void ComparerReportsNodeEdgeAndCoverageDeltas()
     {
         var baseline = new CorpusSnapshot(CorpusSchema.CurrentVersion, "p", "Demo",
             new[] { new CorpusNode("Package:p", SemanticObjectKind.Package, "Demo", "p", "") },
             new[] { new CorpusEdge("Executable:a", "Connection:c", DependencyKind.UsesConnection, "ParsedSchemaObject") },
             new[] { new CorpusCoverageGap("sql.dynamic_sql", 1) });
-
         var candidate = new CorpusSnapshot(CorpusSchema.CurrentVersion, "p", "Demo",
             new[]
             {
@@ -57,9 +54,9 @@ public sealed class CorpusToolTests
             new[] { new CorpusEdge("Executable:a", "Connection:c", DependencyKind.UsesConnection, "ParsedExecuteTarget") },
             new[] { new CorpusCoverageGap("sql.dynamic_sql", 3), new CorpusCoverageGap("sql.parse_failed", 1) });
 
-        var diff = new CorpusDiffEngine().Diff(baseline, candidate);
+        var diff = new CorpusComparer().Compare(baseline, candidate);
 
-        Assert.False(diff.IsMatch);
+        Assert.True(diff.Changed);
         Assert.Equal(new[] { "Executable:a" }, diff.AddedNodes);
         Assert.Empty(diff.RemovedNodes);
         Assert.Single(diff.AddedEdges);
@@ -70,7 +67,7 @@ public sealed class CorpusToolTests
     }
 
     [Fact]
-    public void DiffDetectsChangedNodeAndPackageMetadata()
+    public void ComparerDetectsChangedNodeAndPackageMetadata()
     {
         var baseline = new CorpusSnapshot(CorpusSchema.CurrentVersion, "p", "Demo",
             new[] { new CorpusNode("Package:p", SemanticObjectKind.Package, "Demo", "p", "") },
@@ -79,32 +76,42 @@ public sealed class CorpusToolTests
             new[] { new CorpusNode("Package:p", SemanticObjectKind.Package, "Renamed", "p", "parent") },
             Array.Empty<CorpusEdge>(), Array.Empty<CorpusCoverageGap>());
 
-        var diff = new CorpusDiffEngine().Diff(baseline, candidate);
+        var diff = new CorpusComparer().Compare(baseline, candidate);
 
-        Assert.False(diff.IsMatch);
+        Assert.True(diff.Changed);
         Assert.True(diff.PackageChanged);
         Assert.Equal(new[] { "Package:p" }, diff.ChangedNodes);
     }
 
     [Fact]
-    public void SystemVariableRuntimeIdsDoNotCauseCorpusDrift()
+    public void TransientSystemVariableIdsDoNotCauseCorpusDrift()
     {
         var package = Package();
-        var first = SystemVariableGraph("{runtime-id-one}");
-        var second = SystemVariableGraph("{runtime-id-two}");
+        var baseline = new CorpusSnapshotBuilder().Build(AnalysisSnapshot(package, SystemVariableGraph("{runtime-id-one}")));
+        var candidate = new CorpusSnapshotBuilder().Build(AnalysisSnapshot(package, SystemVariableGraph("{runtime-id-two}")));
 
-        var baseline = new CorpusSnapshotBuilder().Build(AnalysisSnapshot(package, first));
-        var candidate = new CorpusSnapshotBuilder().Build(AnalysisSnapshot(package, second));
-        var diff = new CorpusDiffEngine().Diff(baseline, candidate);
+        var diff = new CorpusComparer().Compare(baseline, candidate);
 
-        Assert.True(diff.IsMatch);
+        Assert.False(diff.Changed);
         var variable = Assert.Single(baseline.Nodes, node => node.Name == "System::StartTime");
         Assert.Empty(variable.NativeId);
         Assert.Contains(baseline.Edges, edge => edge.To == variable.Key);
     }
 
+    [Theory]
+    [InlineData("1.0", true)]
+    [InlineData("1.7", true)]
+    [InlineData("2.0", false)]
+    [InlineData("1.x", false)]
+    [InlineData("1.0.1", false)]
+    [InlineData("", false)]
+    public void SchemaCompatibilityIsMajorVersionBased(string version, bool expected)
+    {
+        Assert.Equal(expected, CorpusSchema.IsCompatible(version));
+    }
+
     [Fact]
-    public void BaselineReaderRejectsIncompatibleEmbeddedVersionAndUnknownEnums()
+    public void BaselineReaderRejectsIncompatibleVersionsAndUnknownEnums()
     {
         var snapshot = new CorpusSnapshot(CorpusSchema.CurrentVersion, "p", "Demo",
             new[] { new CorpusNode("Package:p", SemanticObjectKind.Package, "Demo", "p", "") },
@@ -162,18 +169,6 @@ public sealed class CorpusToolTests
             graph, new SemanticHandleCatalogBuilder().Build(package, Array.Empty<ConnectionOverview>(),
                 Array.Empty<VariableOverview>(), Array.Empty<ParameterOverview>(), Array.Empty<ExecutableOverview>(),
                 Array.Empty<DataFlowOverview>()), graph.UnsupportedItems);
-
-    [Theory]
-    [InlineData("1.0", true)]
-    [InlineData("1.7", true)]
-    [InlineData("2.0", false)]
-    [InlineData("1.x", false)]
-    [InlineData("1.0.1", false)]
-    [InlineData("", false)]
-    public void SchemaCompatibilityIsMajorVersionBased(string version, bool expected)
-    {
-        Assert.Equal(expected, CorpusSchema.IsCompatible(version));
-    }
 
     private static PackageOverview Package() => new(Guid.NewGuid(), "Demo", "p", "", DateTime.UnixEpoch,
         1, 0, 0, "DontSaveSensitive", "Default", 0, 0, 0, 0, 0, false);

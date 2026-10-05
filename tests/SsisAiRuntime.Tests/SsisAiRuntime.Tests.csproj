@@ -25,7 +25,6 @@
     <Compile Include="..\..\src\SsisAiRuntime.Cli\CliTaskRequest.cs" Link="Cli\CliTaskRequest.cs" />
     <Compile Include="..\..\src\SsisAiRuntime.Cli\CliSearchRequest.cs" Link="Cli\CliSearchRequest.cs" />
     <Compile Include="..\..\src\SsisAiRuntime.Cli\CliInspectionRequest.cs" Link="Cli\CliInspectionRequest.cs" />
-    <Compile Include="..\..\src\SsisAiRuntime.Cli\CorpusBaselineStore.cs" Link="Cli\CorpusBaselineStore.cs" />
   </ItemGroup>
 
   <ItemGroup>

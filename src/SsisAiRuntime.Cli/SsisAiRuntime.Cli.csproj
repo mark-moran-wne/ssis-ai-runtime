@@ -14,6 +14,7 @@
     <ProjectReference Include="..\SsisAiRuntime.Core\SsisAiRuntime.Core.csproj" />
     <ProjectReference Include="..\SsisAiRuntime.Inspectors\SsisAiRuntime.Inspectors.csproj" />
     <ProjectReference Include="..\SsisAiRuntime.AI\SsisAiRuntime.AI.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.Corpus\SsisAiRuntime.Corpus.csproj" />
     <ProjectReference Include="..\SsisAiRuntime.Ssis16\SsisAiRuntime.Ssis16.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />

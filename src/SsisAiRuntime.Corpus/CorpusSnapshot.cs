@@ -2,9 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using SsisAiRuntime.AI;
 using SsisAiRuntime.Inspectors;
 
-namespace SsisAiRuntime.AI
+namespace SsisAiRuntime.Corpus
 {
     public static class CorpusSchema
     {
@@ -18,8 +19,8 @@ namespace SsisAiRuntime.AI
             var currentParts = CurrentVersion.Split('.');
             if (parts.Length != 2 || currentParts.Length != 2) { return false; }
             int major;
-            int currentMajor;
             int minor;
+            int currentMajor;
             return int.TryParse(parts[0], out major) && int.TryParse(parts[1], out minor) &&
                 int.TryParse(currentParts[0], out currentMajor) && major >= 0 && minor >= 0 && major == currentMajor;
         }
@@ -137,89 +138,5 @@ namespace SsisAiRuntime.AI
 
         private static string StableSystemVariableKey(DependencyNode node) =>
             "Variable:SystemVariable:" + Uri.EscapeDataString(node.ParentId) + ":" + Uri.EscapeDataString(node.Name);
-    }
-
-    public sealed class CorpusDiffResult
-    {
-        public CorpusDiffResult(IEnumerable<string> addedNodes, IEnumerable<string> removedNodes,
-            IEnumerable<string> addedEdges, IEnumerable<string> removedEdges,
-            IEnumerable<string> changedNodes, bool packageChanged,
-            IEnumerable<CorpusCoverageGap> addedCoverageGaps, IEnumerable<CorpusCoverageGap> removedCoverageGaps)
-        {
-            AddedNodes = ReadOnly(addedNodes, nameof(addedNodes));
-            RemovedNodes = ReadOnly(removedNodes, nameof(removedNodes));
-            AddedEdges = ReadOnly(addedEdges, nameof(addedEdges));
-            RemovedEdges = ReadOnly(removedEdges, nameof(removedEdges));
-            ChangedNodes = ReadOnly(changedNodes, nameof(changedNodes));
-            PackageChanged = packageChanged;
-            AddedCoverageGaps = ReadOnly(addedCoverageGaps, nameof(addedCoverageGaps));
-            RemovedCoverageGaps = ReadOnly(removedCoverageGaps, nameof(removedCoverageGaps));
-        }
-
-        public IReadOnlyList<string> AddedNodes { get; }
-        public IReadOnlyList<string> RemovedNodes { get; }
-        public IReadOnlyList<string> AddedEdges { get; }
-        public IReadOnlyList<string> RemovedEdges { get; }
-        public IReadOnlyList<string> ChangedNodes { get; }
-        public bool PackageChanged { get; }
-        public IReadOnlyList<CorpusCoverageGap> AddedCoverageGaps { get; }
-        public IReadOnlyList<CorpusCoverageGap> RemovedCoverageGaps { get; }
-        public bool IsMatch => !PackageChanged && AddedNodes.Count == 0 && RemovedNodes.Count == 0 && ChangedNodes.Count == 0 &&
-            AddedEdges.Count == 0 && RemovedEdges.Count == 0 &&
-            AddedCoverageGaps.Count == 0 && RemovedCoverageGaps.Count == 0;
-
-        private static IReadOnlyList<T> ReadOnly<T>(IEnumerable<T> values, string name)
-        {
-            if (values == null) { throw new ArgumentNullException(name); }
-            return new ReadOnlyCollection<T>(new List<T>(values));
-        }
-    }
-
-    public sealed class CorpusDiffEngine
-    {
-        public CorpusDiffResult Diff(CorpusSnapshot baseline, CorpusSnapshot candidate)
-        {
-            if (baseline == null) { throw new ArgumentNullException(nameof(baseline)); }
-            if (candidate == null) { throw new ArgumentNullException(nameof(candidate)); }
-
-            var baselineNodes = baseline.Nodes.GroupBy(node => node.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-            var candidateNodes = candidate.Nodes.GroupBy(node => node.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-            var baselineEdges = new HashSet<string>(baseline.Edges.Select(Signature), StringComparer.Ordinal);
-            var candidateEdges = new HashSet<string>(candidate.Edges.Select(Signature), StringComparer.Ordinal);
-            var baselineGaps = baseline.CoverageGaps.ToDictionary(gap => gap.ReasonCode, gap => gap.Count, StringComparer.Ordinal);
-            var candidateGaps = candidate.CoverageGaps.ToDictionary(gap => gap.ReasonCode, gap => gap.Count, StringComparer.Ordinal);
-
-            var addedNodes = candidateNodes.Keys.Except(baselineNodes.Keys, StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal);
-            var removedNodes = baselineNodes.Keys.Except(candidateNodes.Keys, StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal);
-            var changedNodes = baselineNodes.Keys.Intersect(candidateNodes.Keys, StringComparer.Ordinal)
-                .Where(key => !Equivalent(baselineNodes[key], candidateNodes[key]))
-                .OrderBy(item => item, StringComparer.Ordinal);
-            var addedEdges = candidateEdges.Except(baselineEdges, StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal);
-            var removedEdges = baselineEdges.Except(candidateEdges, StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal);
-
-            var addedGaps = new List<CorpusCoverageGap>();
-            var removedGaps = new List<CorpusCoverageGap>();
-            foreach (var code in candidateGaps.Keys.Union(baselineGaps.Keys, StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal))
-            {
-                var baselineCount = baselineGaps.ContainsKey(code) ? baselineGaps[code] : 0;
-                var candidateCount = candidateGaps.ContainsKey(code) ? candidateGaps[code] : 0;
-                if (candidateCount > baselineCount) { addedGaps.Add(new CorpusCoverageGap(code, candidateCount - baselineCount)); }
-                if (baselineCount > candidateCount) { removedGaps.Add(new CorpusCoverageGap(code, baselineCount - candidateCount)); }
-            }
-
-            var packageChanged = !string.Equals(baseline.PackageId, candidate.PackageId, StringComparison.Ordinal) ||
-                !string.Equals(baseline.PackageName, candidate.PackageName, StringComparison.Ordinal);
-            return new CorpusDiffResult(addedNodes, removedNodes, addedEdges, removedEdges, changedNodes,
-                packageChanged, addedGaps, removedGaps);
-        }
-
-        private static bool Equivalent(CorpusNode left, CorpusNode right) => left.Kind == right.Kind &&
-            string.Equals(left.Name, right.Name, StringComparison.Ordinal) &&
-            string.Equals(left.NativeId, right.NativeId, StringComparison.Ordinal) &&
-            string.Equals(left.ParentId, right.ParentId, StringComparison.Ordinal);
-
-        private static string Signature(CorpusEdge edge) => edge.From + "\u001f" + edge.To + "\u001f" + edge.Kind + "\u001f" + edge.Evidence;
     }
 }

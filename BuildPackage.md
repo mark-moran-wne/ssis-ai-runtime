@@ -40,6 +40,7 @@ Run the runtime-neutral Core, inspector, query, and CLI-contract tests on any su
 
 ```console
 dotnet test .\tests\SsisAiRuntime.Tests\SsisAiRuntime.Tests.csproj -c Release
+dotnet test .\tests\SsisAiRuntime.Corpus.Tests\SsisAiRuntime.Corpus.Tests.csproj -c Release
 ```
 
 ## Native Integration Tests

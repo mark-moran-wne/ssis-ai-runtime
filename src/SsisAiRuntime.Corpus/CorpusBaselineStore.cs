@@ -1,16 +1,14 @@
 #nullable enable
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
-using SsisAiRuntime.AI;
 using SsisAiRuntime.Inspectors;
 
-namespace SsisAiRuntime.Cli
+namespace SsisAiRuntime.Corpus
 {
-    internal static class CorpusBaselineStore
+    public static class CorpusBaselineStore
     {
         public static bool TryRead(string path, out CorpusSnapshot snapshot, out string errorCode, out string errorMessage,
             out string baselineVersion)
@@ -21,10 +19,8 @@ namespace SsisAiRuntime.Cli
             baselineVersion = string.Empty;
             try
             {
-                var text = File.ReadAllText(path);
-                var root = JObject.Parse(text);
-                var kind = (string?)root["kind"] ?? string.Empty;
-                if (!string.Equals(kind, CorpusSchema.Kind, StringComparison.Ordinal))
+                var root = JObject.Parse(File.ReadAllText(path));
+                if (!string.Equals((string?)root["kind"], CorpusSchema.Kind, StringComparison.Ordinal))
                 {
                     errorCode = "corpus.baseline.invalid";
                     errorMessage = "The baseline file is not a recognized corpus baseline document.";
@@ -86,13 +82,9 @@ namespace SsisAiRuntime.Cli
             try
             {
                 var directory = Path.GetDirectoryName(path);
-                if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                var json = CreateDocument(snapshot, command, packagePath, previousVersion, upgraded);
-                File.WriteAllText(temporaryPath, json.ToString(Newtonsoft.Json.Formatting.Indented));
+                if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory)) { Directory.CreateDirectory(directory); }
+                File.WriteAllText(temporaryPath, CreateDocument(snapshot, command, packagePath, previousVersion, upgraded)
+                    .ToString(Newtonsoft.Json.Formatting.Indented));
                 if (File.Exists(path)) { File.Replace(temporaryPath, path, null); }
                 else { File.Move(temporaryPath, path); }
                 return true;
@@ -111,10 +103,7 @@ namespace SsisAiRuntime.Cli
             }
             finally
             {
-                try
-                {
-                    if (File.Exists(temporaryPath)) { File.Delete(temporaryPath); }
-                }
+                try { if (File.Exists(temporaryPath)) { File.Delete(temporaryPath); } }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
@@ -144,34 +133,23 @@ namespace SsisAiRuntime.Cli
             return new JObject
             {
                 ["schemaVersion"] = snapshot.SchemaVersion,
-                ["package"] = new JObject
-                {
-                    ["id"] = snapshot.PackageId,
-                    ["name"] = snapshot.PackageName
-                },
+                ["package"] = new JObject { ["id"] = snapshot.PackageId, ["name"] = snapshot.PackageName },
                 ["isComplete"] = snapshot.IsComplete,
                 ["nodeCount"] = snapshot.Nodes.Count,
                 ["edgeCount"] = snapshot.Edges.Count,
                 ["coverageGapCount"] = snapshot.CoverageGaps.Sum(gap => gap.Count),
                 ["nodes"] = new JArray(snapshot.Nodes.Select(node => new JObject
                 {
-                    ["key"] = node.Key,
-                    ["kind"] = node.Kind.ToString(),
-                    ["name"] = node.Name,
-                    ["nativeId"] = node.NativeId,
-                    ["parentId"] = node.ParentId
+                    ["key"] = node.Key, ["kind"] = node.Kind.ToString(), ["name"] = node.Name,
+                    ["nativeId"] = node.NativeId, ["parentId"] = node.ParentId
                 })),
                 ["edges"] = new JArray(snapshot.Edges.Select(edge => new JObject
                 {
-                    ["from"] = edge.From,
-                    ["to"] = edge.To,
-                    ["kind"] = edge.Kind.ToString(),
-                    ["evidence"] = edge.Evidence
+                    ["from"] = edge.From, ["to"] = edge.To, ["kind"] = edge.Kind.ToString(), ["evidence"] = edge.Evidence
                 })),
                 ["coverageGaps"] = new JArray(snapshot.CoverageGaps.Select(gap => new JObject
                 {
-                    ["reasonCode"] = gap.ReasonCode,
-                    ["count"] = gap.Count
+                    ["reasonCode"] = gap.ReasonCode, ["count"] = gap.Count
                 }))
             };
         }
@@ -179,51 +157,35 @@ namespace SsisAiRuntime.Cli
         private static CorpusSnapshot ParseSnapshot(JObject snapshot, string documentVersion)
         {
             var schemaVersion = RequiredString(snapshot, "schemaVersion");
-            if (!CorpusSchema.IsCompatible(schemaVersion) || !CorpusSchema.IsCompatible(documentVersion))
-            {
-                throw new InvalidDataException("The embedded corpus schema version is incompatible.");
-            }
-            if (!string.Equals(schemaVersion, documentVersion, StringComparison.Ordinal))
+            if (!CorpusSchema.IsCompatible(schemaVersion) || !string.Equals(schemaVersion, documentVersion, StringComparison.Ordinal))
             {
                 throw new InvalidDataException("The document and snapshot schema versions do not agree.");
             }
-
-            if (!(snapshot["package"] is JObject package))
-            {
-                throw new InvalidDataException("The package identity is missing.");
-            }
+            if (!(snapshot["package"] is JObject package)) { throw new InvalidDataException("The package identity is missing."); }
             var packageId = RequiredString(package, "id");
             var packageName = RequiredString(package, "name", true);
-            if (string.IsNullOrWhiteSpace(packageId)) { throw new InvalidDataException("The package identity is invalid."); }
 
             var nodes = RequiredArray(snapshot, "nodes").Select(token =>
             {
                 if (!(token is JObject node)) { throw new InvalidDataException("A node entry is invalid."); }
                 return new CorpusNode(RequiredString(node, "key"), RequiredEnum<SemanticObjectKind>(node, "kind"),
-                    RequiredString(node, "name", true), RequiredString(node, "nativeId", true),
-                    RequiredString(node, "parentId", true));
+                    RequiredString(node, "name", true), RequiredString(node, "nativeId", true), RequiredString(node, "parentId", true));
             }).ToArray();
             if (nodes.Select(node => node.Key).Distinct(StringComparer.Ordinal).Count() != nodes.Length)
-            {
-                throw new InvalidDataException("Node keys must be unique.");
-            }
+            { throw new InvalidDataException("Node keys must be unique."); }
 
             var edges = RequiredArray(snapshot, "edges").Select(token =>
             {
                 if (!(token is JObject edge)) { throw new InvalidDataException("An edge entry is invalid."); }
                 var evidence = RequiredString(edge, "evidence", true);
                 if (!string.Equals(evidence, DependencyEvidence.Safe(evidence), StringComparison.Ordinal))
-                {
-                    throw new InvalidDataException("The edge evidence value is unsupported.");
-                }
+                { throw new InvalidDataException("The edge evidence value is unsupported."); }
                 return new CorpusEdge(RequiredString(edge, "from"), RequiredString(edge, "to"),
                     RequiredEnum<DependencyKind>(edge, "kind"), evidence);
             }).ToArray();
-            var nodeKeys = new HashSet<string>(nodes.Select(node => node.Key), StringComparer.Ordinal);
+            var nodeKeys = new System.Collections.Generic.HashSet<string>(nodes.Select(node => node.Key), StringComparer.Ordinal);
             if (edges.Any(edge => !nodeKeys.Contains(edge.From) || !nodeKeys.Contains(edge.To)))
-            {
-                throw new InvalidDataException("An edge endpoint is missing from the node inventory.");
-            }
+            { throw new InvalidDataException("An edge endpoint is missing from the node inventory."); }
 
             var coverage = RequiredArray(snapshot, "coverageGaps").Select(token =>
             {
@@ -232,37 +194,21 @@ namespace SsisAiRuntime.Cli
                 var countToken = gap["count"];
                 if (countToken == null || countToken.Type != JTokenType.Integer ||
                     !int.TryParse(countToken.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count <= 0)
-                {
-                    throw new InvalidDataException("A coverage count is invalid.");
-                }
+                { throw new InvalidDataException("A coverage count is invalid."); }
                 new UnsupportedItem(string.Empty, string.Empty, string.Empty, string.Empty, reasonCode);
                 return new CorpusCoverageGap(reasonCode, count);
             }).ToArray();
             if (coverage.Select(gap => gap.ReasonCode).Distinct(StringComparer.Ordinal).Count() != coverage.Length)
-            {
-                throw new InvalidDataException("Coverage reason codes must be unique.");
-            }
+            { throw new InvalidDataException("Coverage reason codes must be unique."); }
 
             RequireCount(snapshot, "nodeCount", nodes.Length);
             RequireCount(snapshot, "edgeCount", edges.Length);
             RequireCount(snapshot, "coverageGapCount", coverage.Sum(gap => gap.Count));
             if (snapshot["isComplete"] == null || snapshot["isComplete"]!.Type != JTokenType.Boolean ||
                 snapshot["isComplete"]!.Value<bool>() != (coverage.Length == 0))
-            {
-                throw new InvalidDataException("The snapshot completeness summary is inconsistent.");
-            }
+            { throw new InvalidDataException("The snapshot completeness summary is inconsistent."); }
 
             return new CorpusSnapshot(schemaVersion, packageId, packageName, nodes, edges, coverage);
-        }
-
-        private static void RequireCount(JObject value, string property, int expected)
-        {
-            var token = value[property];
-            if (token == null || token.Type != JTokenType.Integer ||
-                !int.TryParse(token.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var actual) || actual != expected)
-            {
-                throw new InvalidDataException("A snapshot count is inconsistent.");
-            }
         }
 
         private static JArray RequiredArray(JObject value, string property)
@@ -274,15 +220,9 @@ namespace SsisAiRuntime.Cli
         private static string RequiredString(JObject value, string property, bool allowEmpty = false)
         {
             var token = value[property];
-            if (token == null || token.Type != JTokenType.String)
-            {
-                throw new InvalidDataException("A required baseline string is missing.");
-            }
+            if (token == null || token.Type != JTokenType.String) { throw new InvalidDataException("A required baseline string is missing."); }
             var text = token.Value<string>() ?? string.Empty;
-            if (!allowEmpty && string.IsNullOrWhiteSpace(text))
-            {
-                throw new InvalidDataException("A required baseline string is empty.");
-            }
+            if (!allowEmpty && string.IsNullOrWhiteSpace(text)) { throw new InvalidDataException("A required baseline string is empty."); }
             return text;
         }
 
@@ -290,10 +230,16 @@ namespace SsisAiRuntime.Cli
         {
             var text = RequiredString(value, property);
             if (!Enum.TryParse(text, false, out T result) || !Enum.IsDefined(typeof(T), result))
-            {
-                throw new InvalidDataException("A baseline enum value is unsupported.");
-            }
+            { throw new InvalidDataException("A baseline enum value is unsupported."); }
             return result;
+        }
+
+        private static void RequireCount(JObject value, string property, int expected)
+        {
+            var token = value[property];
+            if (token == null || token.Type != JTokenType.Integer ||
+                !int.TryParse(token.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var actual) || actual != expected)
+            { throw new InvalidDataException("A snapshot count is inconsistent."); }
         }
     }
 }

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using SsisAiRuntime.AI;
+using SsisAiRuntime.Corpus;
 using SsisAiRuntime.Inspectors;
 using SsisAiRuntime.Ssis16;
 
@@ -172,7 +173,7 @@ namespace SsisAiRuntime.Cli
                             return WriteError(output, tool, 4, diffErrorCode, diffErrorMessage);
                         }
 
-                        var diff = new CorpusDiffEngine().Diff(baseline, corpus);
+                        var diff = new CorpusComparer().Compare(baseline, corpus);
                         return Write(output, tool, corpus.IsComplete ? 0 : 5,
                             ProjectDiffResult(baselinePath, diff, corpus), analysis.UnsupportedItems);
                     case "corpus.verify":
@@ -182,8 +183,8 @@ namespace SsisAiRuntime.Cli
                             return WriteError(output, tool, 4, verifyErrorCode, verifyErrorMessage);
                         }
 
-                        var verifyDiff = new CorpusDiffEngine().Diff(verifyBaseline, corpus);
-                        if (!verifyDiff.IsMatch)
+                        var verifyDiff = new CorpusComparer().Compare(verifyBaseline, corpus);
+                        if (verifyDiff.Changed)
                         {
                             return Write(output, tool, 4, ProjectDiffResult(baselinePath, verifyDiff, corpus),
                                 analysis.UnsupportedItems, "corpus.verify.mismatch",
@@ -286,11 +287,11 @@ namespace SsisAiRuntime.Cli
             return baselineSpecified;
         }
 
-        private static JObject ProjectDiffResult(string baselinePath, CorpusDiffResult diff, CorpusSnapshot candidate) => new JObject
+        private static JObject ProjectDiffResult(string baselinePath, CorpusDiff diff, CorpusSnapshot candidate) => new JObject
         {
             ["baselinePath"] = Path.GetFileName(baselinePath),
             ["candidateSnapshot"] = CorpusBaselineStore.ProjectSnapshot(candidate),
-            ["isMatch"] = diff.IsMatch,
+            ["isMatch"] = !diff.Changed,
             ["packageChanged"] = diff.PackageChanged,
             ["changes"] = new JObject
             {
