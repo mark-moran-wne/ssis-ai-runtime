@@ -1,0 +1,64 @@
+# Build and Test SSIS AI Runtime
+
+This guide is for contributors building the executable and running verification. For runtime prerequisites, commands, JSON output, and safety limits, see [README.md](README.md).
+
+The built CLI runs on Windows with .NET Framework 4.8 and SSIS 16; running it does not require a modern .NET SDK. This guide builds the existing executable, not a ZIP or release bundle.
+
+## Build Prerequisites
+
+- .NET 10 SDK for the complete solution and the portable `net10.0` test project.
+- Windows with SSIS 16 installed to build and exercise the native adapter, CLI, and integration-test executable.
+- The adapter resolves `Microsoft.SQLServer.ManagedDTS.dll` and `Microsoft.SqlServer.DTSPipelineWrap.dll` from the standard `160\DTS\Binn` directory or the SSIS 16 .NET Framework GAC location. `Microsoft.SqlServer.DTSRuntimeWrap.dll` is also required for data-flow column metadata and may be in the .NET Framework GAC_32 directory.
+
+If the assemblies are installed elsewhere, provide their full paths through `SSIS16ManagedDtsPath`, `SSIS16PipelineWrapPath`, and `SSIS16RuntimeWrapPath`. The directory-based `SSIS16BinnPath` property is also supported. These are build-reference settings, not a replacement for installing the native runtime and required providers/components.
+
+Run the commands below from the repository root.
+
+## Build
+
+Build the complete solution on Windows with SSIS 16 installed:
+
+```powershell
+dotnet build .\SsisAiRuntime.sln -c Release
+```
+
+To use non-standard assembly locations, pass their full paths:
+
+```powershell
+dotnet build .\SsisAiRuntime.sln -c Release -p:SSIS16ManagedDtsPath="C:\path\to\Microsoft.SQLServer.ManagedDTS.dll" -p:SSIS16PipelineWrapPath="C:\path\to\Microsoft.SqlServer.DTSPipelineWrap.dll" -p:SSIS16RuntimeWrapPath="C:\path\to\Microsoft.SqlServer.DTSRuntimeWrap.dll"
+```
+
+The CLI output is `src/SsisAiRuntime.Cli/bin/Release/net48/SsisAiRuntime.Cli.exe`, together with its configuration and application dependencies. Invoke the executable directly as described in [README.md](README.md#usage).
+
+## Portable Tests
+
+Run the runtime-neutral Core, inspector, query, and CLI-contract tests on any supported .NET 10 SDK host. These tests do not require SSIS:
+
+```powershell
+dotnet test .\tests\SsisAiRuntime.Tests\SsisAiRuntime.Tests.csproj -c Release
+```
+
+## Native Integration Tests
+
+Run the native C# verification on Windows with SSIS 16 installed:
+
+```powershell
+dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
+```
+
+This separate x64 .NET Framework 4.8 test executable creates a fresh temporary package through the SSIS object model, configures only metadata for an integer-to-string Data Conversion, saves and reloads that scratch file, and checks the inspector, query, and actual CLI subprocess in both directions. It verifies redaction and an unchanged fixture hash after inspection, then removes the scratch directory. It never executes or validates a package, configures a database connection, or alters caller-supplied packages. Fixture creation is test-only; the production CLI remains strictly read-only and has no EzAPI dependency.
+
+The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` reference observer with synthetic expressions. Successful native name/lineage lookups are recorded as numeric column references; enumeration reads are not treated as dependencies, collection mutations are refused, and failed parses discard partial references. Controlled cases cover single/multiple/named/repeated columns, variable-driven conditionals, constants, quoted/escaped strings, and malformed syntax. A native Derived Column fixture additionally verifies per-output mapping, a literal-only output, original-value replacement semantics, task-scoped variable shadowing, and actual CLI redaction. All passed on this SSIS 16 host without a call to `Evaluate` or package execution/validation. The production adapter uses this reference observer; no syntax tree or handwritten expression parser is exposed.
+
+A `CS8012` warning can occur with the installed GAC_32 interop reference. The harness has been run successfully in x64 on this SSIS 16 host, but this does not certify other installations.
+
+## Package Smoke Test
+
+Run the repeatable Windows smoke test against a representative package:
+
+```powershell
+.\tests\Run-SsisAiRuntime.Ssis16SmokeTest.ps1 -PackagePath "C:\path\to\Package.dtsx"
+```
+
+The script builds into an isolated temporary directory, checks the direct inspectors in a fresh process, invokes all four overview/SQL/lineage/configuration CLI commands, compares counts, verifies JSON/redaction/error exits, and checks that the package's SHA-256 hash is unchanged. It never executes or saves the inspected package. Use 64-bit PowerShell compatible with the installed SSIS runtime.
