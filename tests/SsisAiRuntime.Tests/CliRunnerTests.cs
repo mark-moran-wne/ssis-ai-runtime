@@ -63,6 +63,11 @@ public class CliRunnerTests
     [InlineData("overview", " ")]
     [InlineData("overview", "package.dtsx", "--password=secret")]
     [InlineData("overview", "package.dtsx", "--summary")]
+    [InlineData("inspect", "package.dtsx", "--include")]
+    [InlineData("inspect", "package.dtsx", "--include", "unknown")]
+    [InlineData("inspect", "package.dtsx", "--include", "sql,,lineage")]
+    [InlineData("inspect", "package.dtsx", "--include", "sql", "--include", "sql")]
+    [InlineData("overview", "package.dtsx", "--include", "sql")]
     public void InvalidArgumentsNeverInvokeService(params string[] args)
     {
         var output = new StringWriter();
@@ -211,6 +216,39 @@ public class CliRunnerTests
             Assert.Equal(1, (int)json["coverage"]!["unsupportedCount"]!);
             Assert.Equal(1, (int)json["coverage"]!["examplesOmitted"]!);
             Assert.DoesNotContain("secret", output.ToString());
+        });
+    }
+
+    [Fact]
+    public void InspectCanIncludeSelectedReportsInCanonicalOrder()
+    {
+        WithPackage(path =>
+        {
+            var package = Package();
+            var builder = new PackageContextBuilder();
+            var reports = new Dictionary<string, CliInspection>
+            {
+                ["sql"] = Success(builder.BuildSql(package, InspectionResult<SqlStatementOverview>.Complete(Array.Empty<SqlStatementOverview>()))),
+                ["lineage"] = Success(builder.BuildLineage(package, InspectionResult<DataFlowOverview>.Complete(Array.Empty<DataFlowOverview>())))
+            };
+            var runner = new CliRunner(invocation =>
+            {
+                Assert.Equal("inspect", invocation.Command);
+                Assert.Equal(new[] { "sql", "lineage" }, invocation.IncludedOperations);
+                return Success(new CliInspectionBatch(reports));
+            });
+            var output = new StringWriter();
+
+            Assert.Equal(0, runner.Run(new[] { "inspect", path, "--include", " lineage ,SQL " }, output));
+            var json = JObject.Parse(output.ToString());
+            Assert.Equal(new[] { "sql", "lineage" }, json["completedOperations"]!.Values<string>());
+            Assert.Equal(new[] { "sql", "lineage" }, ((JObject)json["results"]!).Properties().Select(property => property.Name));
+            Assert.Null(json["results"]!["overview"]);
+            Assert.Null(json["results"]!["configuration"]);
+
+            output.GetStringBuilder().Clear();
+            Assert.Equal(0, runner.Run(new[] { "inspect", path, "--include", "lineage", "--include", "sql" }, output));
+            Assert.Equal(json["completedOperations"], JObject.Parse(output.ToString())["completedOperations"]);
         });
     }
 

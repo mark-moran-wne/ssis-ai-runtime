@@ -31,6 +31,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 stage = "fixture.creation";
                 Require(Environment.Is64BitProcess, "fixture.architecture");
                 CreateFixture(path);
+                stage = "inspect.selection";
+                var selectedReports = RunCli(new[] { "inspect", path, "--include", "lineage" }, 0, 5);
+                Require(((JArray)selectedReports["completedOperations"]).Values<string>().SequenceEqual(new[] { "lineage" }) &&
+                    ((JObject)selectedReports["results"]).Properties().Select(property => property.Name).SequenceEqual(new[] { "lineage" }) &&
+                    ((JArray)selectedReports["skippedOperations"]).Count == 0, "fixture.inspect.selection");
                 var before = Hash(path);
                 stage = "fixture.reload";
                 var load = new PackageLoader().Load(path);

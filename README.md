@@ -28,7 +28,9 @@ Running without arguments returns exit `2` and includes this usage in the `cli.u
 
 ```text
 Usage:
-	SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|inspect|control-flow> <package.dtsx> [--details]
+	  SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|control-flow> <package.dtsx> [--details]
+	  SsisAiRuntime.Cli.exe inspect <package.dtsx> [--include <overview|sql|lineage|configuration>[,...]]... [--details]
+	  Repeat --include or comma-separate report names; omit it to include all four reports.
 	SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]
 	SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]
 	SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]
@@ -39,6 +41,8 @@ Output defaults to a bounded summary. Use --details for the full redacted projec
 ```bat
 cd src\SsisAiRuntime.Cli\bin\Release\net48
 SsisAiRuntime.Cli.exe inspect "C:\path\to\Package.dtsx"
+SsisAiRuntime.Cli.exe inspect "C:\path\to\Package.dtsx" --include sql,lineage
+SsisAiRuntime.Cli.exe inspect "C:\path\to\Package.dtsx" --include sql --include configuration --details
 SsisAiRuntime.Cli.exe inspect "C:\path\to\Package.dtsx" --details
 SsisAiRuntime.Cli.exe overview "C:\path\to\Package.dtsx"
 SsisAiRuntime.Cli.exe sql "C:\path\to\Package.dtsx"
@@ -50,9 +54,9 @@ Run the first example from the repository root. The following examples assume th
 
 Commands accept a command and a package path. Every command returns a bounded summary by default; add `--details` to return the full redacted projection. The focused commands cover package overview, SQL-task metadata, data-flow lineage, and connections/variables/parameters/expressions. These are projections of the existing services, not a new DTSX parser. SQL text and setting values are deliberately omitted in v1, even when the adapter has sanitized them.
 
-`inspect` loads the package once, retains the four operation reports in memory, and returns them under `results.overview`, `results.sql`, `results.lineage`, and `results.configuration`. All reports share one session ID. Incomplete coverage does not stop later operations; a load or inspection failure does. `completedOperations` lists the operation reports produced, including a failed operation, and `skippedOperations` lists those not run. On an operation failure, the aggregate has `succeeded: false` but retains earlier reports in `results`. No wrapper is needed.
+`inspect` loads the package once and returns selected reports under their matching keys in `results`. By default it runs overview, SQL, lineage, and configuration; use repeatable `--include` options or a comma-separated list to select a subset, such as `--include sql,lineage`. The selected reports retain canonical order regardless of argument order. All reports share one session ID. Incomplete coverage does not stop later operations; a load or inspection failure does. `completedOperations` lists selected reports produced, including a failed report, and `skippedOperations` lists selected reports not run after a failure. On an operation failure, the aggregate has `succeeded: false` but retains earlier reports in `results`. No wrapper is needed.
 
-The executable checks the typed result and returns package identity plus `counts`, with at most eight coverage groups, five unsupported examples, and eight diagnostics. Summary metadata text is capped at 120 characters. `outputMode` is `summary`, and `coverage` contains exact `unsupportedCount`, `groupCount`, `reasonCounts`, `diagnosticCount`, and omitted group/example/diagnostic counts. The bounded `unsupportedItems` array contains examples, not the full coverage total. For `inspect`, each operation has its own summary envelope and the outer `coverage` aggregates totals; the outer `unsupportedItems` is empty to avoid duplicating examples. Add `--details` when you need full redacted projections and coverage entries.
+The executable checks the typed result and returns package identity plus `counts`, with at most eight coverage groups, five unsupported examples, and eight diagnostics. Summary metadata text is capped at 120 characters. `outputMode` is `summary`, and `coverage` contains exact `unsupportedCount`, `groupCount`, `reasonCounts`, `diagnosticCount`, and omitted group/example/diagnostic counts. The bounded `unsupportedItems` array contains examples, not the full coverage total. For `inspect`, each selected operation has its own summary envelope and the outer `coverage` aggregates only those selected reports; the outer `unsupportedItems` is empty to avoid duplicating examples. Add `--details` when you need full redacted projections and coverage entries.
 
 ### Column Tracing
 

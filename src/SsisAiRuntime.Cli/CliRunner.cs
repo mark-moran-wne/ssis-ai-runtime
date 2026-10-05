@@ -47,20 +47,42 @@ namespace SsisAiRuntime.Cli
                 CliTraceRequest? request = null;
                 CliTaskRequest? taskRequest = null;
                 CliSearchRequest? searchRequest = null;
+                IReadOnlyList<string>? includedOperations = null;
+                var inspectBatch = args != null && args.Length >= 2 && args[0] == "inspect";
                 var trace = args != null && args.Length >= 2 && args[0] == "trace";
                 var taskQuery = args != null && args.Length >= 2 && (args[0] == "predecessors" || args[0] == "successors");
                 var search = args != null && args.Length >= 2 && args[0] == "search";
-                if (args != null && args.Length == 3 && args[2] == "--details") { summary = false; }
-                var valid = search ? CliSearchRequest.TryParse(args!, out searchRequest, out summary) : trace ? CliTraceRequest.TryParse(args!, out request, out summary) : taskQuery ?
-                    CliTaskRequest.TryParse(args!, out taskRequest, out summary) :
-                    args != null && (args.Length == 2 || args.Length == 3 && args[2] == "--details") &&
-                    (CliInspectionBatch.Operations.Contains(args[0]) || args[0] == "inspect" || args[0] == "control-flow");
+                var valid = false;
+                if (inspectBatch)
+                {
+                    valid = TryParseInspectArguments(args!, out includedOperations, out summary);
+                }
+                else if (search)
+                {
+                    valid = CliSearchRequest.TryParse(args!, out searchRequest, out summary);
+                }
+                else if (trace)
+                {
+                    valid = CliTraceRequest.TryParse(args!, out request, out summary);
+                }
+                else if (taskQuery)
+                {
+                    valid = CliTaskRequest.TryParse(args!, out taskRequest, out summary);
+                }
+                else
+                {
+                    summary = args == null || args.Length != 3 || args[2] != "--details";
+                    valid = args != null && (args.Length == 2 || args.Length == 3 && args[2] == "--details") &&
+                        (CliInspectionBatch.Operations.Contains(args[0]) || args[0] == "control-flow");
+                }
                 if (!valid || args == null || string.IsNullOrWhiteSpace(args[1]))
                 {
                     var usage = string.Join(Environment.NewLine, new[]
                     {
                         "Usage:",
-                        "  SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|inspect|control-flow> <package.dtsx> [--details]",
+                        "  SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|control-flow> <package.dtsx> [--details]",
+                        "  SsisAiRuntime.Cli.exe inspect <package.dtsx> [--include <overview|sql|lineage|configuration>[,...]]... [--details]",
+                        "  Repeat --include or comma-separate report names; omit it to include all four reports.",
                         "  SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]",
                         "  SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]",
                         "  SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]",
@@ -78,9 +100,9 @@ namespace SsisAiRuntime.Cli
                         "The package file is missing or inaccessible. The path is omitted.")), new JArray());
                 }
 
-                var inspection = inspect(new CliInspectionRequest(command, args[1], request, taskRequest, searchRequest));
+                var inspection = inspect(new CliInspectionRequest(command, args[1], request, taskRequest, searchRequest, includedOperations));
                 var envelope = command == "inspect" && inspection.Results is CliInspectionBatch batch && !inspection.Diagnostics.HasErrors
-                    ? BuildBatch(batch, summary)
+                    ? BuildBatch(batch, summary, includedOperations ?? CliInspectionBatch.Operations)
                     : BuildOperation(command, inspection, summary);
                 output.WriteLine(envelope.ToString(Formatting.None));
                 return (int)envelope["exitCode"]!;
@@ -90,6 +112,45 @@ namespace SsisAiRuntime.Cli
                 return Write(output, command, 4, null, new JArray(Diagnostic("cli.inspection.failed", "Error",
                     "Inspection failed. Runtime dependencies may be unavailable. Exception details are omitted.")), new JArray());
             }
+        }
+
+        private static bool TryParseInspectArguments(string[] args, out IReadOnlyList<string>? includedOperations, out bool summary)
+        {
+            includedOperations = null;
+            summary = true;
+            var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var detailsSpecified = false;
+            for (var index = 2; index < args.Length; index++)
+            {
+                if (args[index] == "--details")
+                {
+                    if (detailsSpecified) { return false; }
+                    summary = false;
+                    detailsSpecified = true;
+                }
+                else if (args[index] == "--include")
+                {
+                    if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]) || args[index + 1].StartsWith("--"))
+                    {
+                        return false;
+                    }
+                    foreach (var value in args[++index].Split(','))
+                    {
+                        var operation = value.Trim();
+                        if (operation.Length == 0 || !CliInspectionBatch.Operations.Contains(operation, StringComparer.OrdinalIgnoreCase) ||
+                            !selected.Add(operation)) { return false; }
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            if (selected.Count > 0)
+            {
+                includedOperations = CliInspectionBatch.Operations.Where(selected.Contains).ToArray();
+            }
+            return true;
         }
 
         private static JObject BuildOperation(string command, CliInspection inspection, bool summary)
@@ -133,14 +194,14 @@ namespace SsisAiRuntime.Cli
             }
         }
 
-        private static JObject BuildBatch(CliInspectionBatch batch, bool summary)
+        private static JObject BuildBatch(CliInspectionBatch batch, bool summary, IReadOnlyList<string> operations)
         {
             var reports = new JObject();
             var unsupported = new List<UnsupportedItem>();
             var diagnostics = new JArray();
             var skipped = new JArray();
             var exitCode = 0;
-            foreach (var operation in CliInspectionBatch.Operations)
+            foreach (var operation in operations)
             {
                 if (exitCode == 3 || exitCode == 4)
                 {

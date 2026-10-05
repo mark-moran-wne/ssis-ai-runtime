@@ -137,7 +137,7 @@ namespace SsisAiRuntime.Cli
                 }
 
                 var reports = new Dictionary<string, CliInspection>(StringComparer.Ordinal);
-                foreach (var operation in CliInspectionBatch.Operations)
+                foreach (var operation in invocation.IncludedOperations ?? CliInspectionBatch.Operations)
                 {
                     var inspection = InspectOperation(operation);
                     reports.Add(operation, inspection);
