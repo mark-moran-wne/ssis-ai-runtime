@@ -98,6 +98,42 @@ public sealed class CorpusTests
         Assert.Contains(baseline.Edges, edge => edge.To == variable.Key);
     }
 
+    [Fact]
+    public void FingerprintIsDeterministicAcrossCollectionOrder()
+    {
+        var first = FingerprintSnapshot(reverse: false);
+        var reordered = FingerprintSnapshot(reverse: true);
+        var provider = new CorpusFingerprintProvider();
+
+        var fingerprint = provider.Create(first);
+        var reorderedFingerprint = provider.Create(reordered);
+
+        Assert.Equal(CorpusSchema.CurrentVersion, fingerprint.SchemaVersion);
+        Assert.Equal(fingerprint.Sha256, reorderedFingerprint.Sha256);
+        Assert.Equal(64, fingerprint.Sha256.Length);
+        Assert.False(fingerprint.IsComplete);
+    }
+
+    [Fact]
+    public void FingerprintChangesWithEvidenceAndCoverage()
+    {
+        var original = FingerprintSnapshot(reverse: false);
+        var changedEvidence = new CorpusSnapshot(CorpusSchema.CurrentVersion, original.PackageId, original.PackageName,
+            original.Nodes, new[]
+            {
+                new CorpusEdge("Executable:a", "Connection:c", DependencyKind.UsesConnection, "ParsedExecuteTarget")
+            }, original.CoverageGaps);
+        var changedCoverage = new CorpusSnapshot(CorpusSchema.CurrentVersion, original.PackageId, original.PackageName,
+            original.Nodes, original.Edges, new[] { new CorpusCoverageGap("sql.dynamic_sql", 1) });
+        var provider = new CorpusFingerprintProvider();
+        var expected = provider.Create(original);
+
+        Assert.NotEqual(expected.Sha256, provider.Create(changedEvidence).Sha256);
+        var incomplete = provider.Create(changedCoverage);
+        Assert.NotEqual(expected.Sha256, incomplete.Sha256);
+        Assert.False(incomplete.IsComplete);
+    }
+
     [Theory]
     [InlineData("1.0", true)]
     [InlineData("1.7", true)]
@@ -160,6 +196,35 @@ public sealed class CorpusTests
         new DependencyEdge("Executable:scope", "Variable:SystemVariable:" + Uri.EscapeDataString(runtimeId),
             DependencyKind.UsesVariable, "LexicalAndScopeResolved")
     }, Array.Empty<UnsupportedItem>());
+
+    private static CorpusSnapshot FingerprintSnapshot(bool reverse)
+    {
+        var nodes = new[]
+        {
+            new CorpusNode("Connection:c", SemanticObjectKind.Connection, "Warehouse", "c", ""),
+            new CorpusNode("Executable:a", SemanticObjectKind.Executable, "Load", "a", ""),
+            new CorpusNode("Variable:v", SemanticObjectKind.Variable, "Flag", "v", "a"),
+            new CorpusNode("Variable:v", SemanticObjectKind.Variable, "Counter", "v", "a")
+        };
+        var edges = new[]
+        {
+            new CorpusEdge("Executable:a", "Connection:c", DependencyKind.UsesConnection, "ParsedSchemaObject"),
+            new CorpusEdge("Executable:a", "Variable:v", DependencyKind.UsesVariable, "LexicalAndScopeResolved")
+        };
+        var coverage = new[]
+        {
+            new CorpusCoverageGap("sql.dynamic_sql", 1),
+            new CorpusCoverageGap("expression.reference_not_found", 2),
+            new CorpusCoverageGap("sql.dynamic_sql", 3)
+        };
+        if (reverse)
+        {
+            Array.Reverse(nodes);
+            Array.Reverse(edges);
+            Array.Reverse(coverage);
+        }
+        return new CorpusSnapshot(CorpusSchema.CurrentVersion, "package", "Demo", nodes, edges, coverage);
+    }
 
     private static PackageAnalysisSnapshot AnalysisSnapshot(PackageOverview package, PackageDependencyGraph graph) =>
         new(package, Array.Empty<ConnectionOverview>(), Array.Empty<VariableOverview>(),
