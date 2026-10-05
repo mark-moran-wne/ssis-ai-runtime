@@ -1,31 +1,17 @@
 # Plan: Headless SSIS AI Runtime
 
-Evolve the repository into a headless AI tool backed by the native SSIS runtime. SSIS 16 is the first supported runtime; SSIS 15 should be addable as a separate adapter. Build deterministic application services first, expose them through a CLI, then add a read-only AI skill. Defer mutation until inspection, diagnostics, and semantic diffs are dependable. The legacy WinForms project and solution have been removed at the user's request.
+Evolve the repository into a headless AI tool backed by the native SSIS runtime. SSIS 16 is the first supported runtime; SSIS 15 should be addable as a separate adapter. Build deterministic application services first, expose them through a CLI, then add a read-only AI skill. Defer mutation until inspection, diagnostics, and semantic diffs are dependable. Completed milestones and investigation results are recorded in [HISTORY.md](HISTORY.md).
 
-## Implementation Status (2026-10-05)
+## Current Status
 
-- Phase 1 foundation is implemented: `SsisAiRuntime.sln`, `netstandard2.0` Core, a `net48` SSIS 16 adapter, and `net10.0` Core tests.
-- Core defines `PackageSession<TPackage>`, `IPackageLoader<TPackage>`, `PackageLoadResult<TPackage>`, and immutable runtime diagnostics. The native SSIS package remains available on the session.
-- The SSIS 16 adapter uses `Application.LoadPackage` and avoids exposing exception messages or package paths in load-failure diagnostics.
-- Windows Release solution build succeeds without a path override. The project resolves ManagedDTS and pipeline wrappers from `160\DTS\Binn` first, then their v16 GAC locations (including `DTSRuntimeWrap` in GAC_32), and supports explicit full-path overrides.
-- A Windows smoke test loaded a local `.dtsx` package through `PackageLoader`: runtime assembly `16.0.0.0`, process architecture `x64`, zero diagnostics.
-- Core tests pass on Windows: 4 passed, 0 failed. Earlier macOS Core test results were also 4 passed, 0 failed.
-- On this Windows host, the v16 assembly is in the GAC, not in `160\DTS\Binn` or `160\SDK\Assemblies`. The project now has a GAC fallback and an explicit full-DLL-path override; both the default no-override build and the earlier explicit-path build succeeded.
-- The native package API exposes overview candidates including `Name`, `ID`, `Description`, `CreationDate`, creator metadata, version fields, `ProtectionLevel`, `PackageType`, `Connections`, `Variables`, `Executables`, `PrecedenceConstraints`, and `Parameters`.
-- Phase 2 read-only inspectors are implemented: `SsisAiRuntime.Inspectors` defines runtime-neutral immutable projections and completeness/unsupported reporting; the SSIS 16 adapter projects package metadata without exposing package paths or live native objects.
-- The `PackageOverviewInspector` passed a manual x64 smoke test against the user's WebProd Integration `Package.dtsx`: 9 connections, 25 variables, 2 executables, 1 precedence constraint, and no package execution.
-- Read-only connection and variable inspectors are implemented. Their DTOs omit connection strings, variable values, and expression text; the SSIS 16 package exposes no variable sensitivity flag, so values are omitted unconditionally.
-- The connection and variable inspectors passed a fresh-process smoke test against WebProd Integration `Package.dtsx`: 9 connections and 25 variables, matching native collection counts; all omission assertions passed and the package was not executed.
-- A recursive executable inspector is implemented using SSIS metadata interfaces. It preserves native identity, creation name, description, hierarchy, container status, and expression-presence metadata, including for unknown task types.
-- The executable inspector passed a fresh-process smoke test against WebProd Integration `Package.dtsx`: all 21 native executables were represented, with 2 roots and 2 sequence containers; no parent or creation-name metadata was missing. The package was not executed.
-- `InspectionResult<T>` exposes completeness and unsupported items; task, SQL, expression, and data-flow projections use it to make partial coverage explicit.
-- Parameter, SQL task, expression-presence, and data-flow inspectors are implemented. Parameters and variables omit values; SQL comments/literals and encrypted data-flow settings are redacted. Data-flow projections include column lineage/type/mapping metadata, runtime connection references, and an allowlist of source/destination settings; remaining custom properties are reported unsupported.
-- Earlier WebProd smoke checks passed with 9 connections, 25 variables, 0 parameters, 21 executables, 9 SQL tasks, 9 data flows, 18 components, 9 paths, 18 runtime connections, 122 input columns, 284 output columns, 246 external metadata columns, and 180 settings (1 redacted). Repeatable package checks now live in the native C# integration executable, with no script wrapper or package execution.
-- Runtime-neutral focused context builders produce separate SQL, lineage, and configuration contexts from safe projections and propagate unsupported coverage.
-- Session-scoped hierarchical semantic handles and a resolver are implemented. Handles use escaped names/hierarchy/ordinals rather than native IDs; duplicate-name lookups return candidate lists with `Ambiguous` status.
-- A precedence inspector and handle-backed control-flow graph are implemented with containment and precedence edges. Unresolved endpoints are reported unsupported rather than guessed.
-- The native integration build succeeds without an assembly-path override, and the current portable suite passes 143 tests. The Windows SSIS 16 native verifier passes scratch Data Conversion/Derived Column and heuristic expression-scope fixtures with CLI checks. Data-flow lineage, control-flow, metadata search, dependency graphs/queries, selector resolution, classified impact, and the read-only CLI are implemented. `SsisAiRuntime.AI` provides deterministic read-only tools and snapshot-based analysis; it does not call an LLM. The personal package-inspection skill is user-level and is not registered in this repository.
-- Native SSIS 16 expression binding investigation is complete. `IDTSExpressionEvaluatorEx100.Parse` validates expressions and can expose column references through column observers, but it does not expose variable or parameter bindings. `Package.FindReferencedObjects` is present in the API but throws `NotImplementedException` on this runtime. Continue using the native parser for column lineage; add an ANTLR-based expression reference parser for variable and parameter dependency discovery, resolve references against package/container scope using executable hierarchy metadata, and mark resulting dependency edges as heuristic rather than native. The test-only probe does not evaluate or modify the package.
+- Runtime foundation and read-only inspectors are implemented over the native SSIS 16 package model, with immutable redacted projections and explicit coverage reporting.
+- Handles, control-flow, column lineage, metadata search, dependency queries, selector resolution, and classified impact are implemented.
+- The CLI and deterministic AI snapshot services are implemented; they do not execute packages or call an LLM.
+- Variable/parameter discovery uses ANTLR lexical candidates and native-metadata scope resolution. Its edges are explicitly heuristic; native column observation remains separate and authoritative for column lineage.
+- Expression grammar and owner coverage are bounded. Arbitrary custom-component contracts and automatic project-metadata discovery remain unsupported.
+- Repository-registered skills, CI on an SSIS-enabled host, SSIS 15 compatibility, and mutation/save workflows remain follow-on work.
+
+Recorded verification totals and native-binding evidence are in [HISTORY.md](HISTORY.md).
 
 ## Next Actions
 
@@ -39,7 +25,7 @@ Evolve the repository into a headless AI tool backed by the native SSIS runtime.
 1. Create `SsisAiRuntime.sln`, `SsisAiRuntime.Core`, an SSIS 16 adapter, and Core tests. Keep Core independent of versioned Microsoft SSIS assemblies. Confirm target framework compatibility and SSIS 16 assembly resolution on Windows.
 2. Define `PackageSession`, `IPackageLoader`, `PackageLoadResult`, and `RuntimeDiagnostics`. Keep the native runtime `Package` authoritative and available to runtime operations; session identity/path and projections must not become a parallel serialization model. Load through `Application.LoadPackage` and report failures explicitly.
 3. Include environment facts determinable at load time: runtime assembly version, process architecture, package format/protection information when exposed, load warnings, and missing-component errors. Do not claim a package is editable merely because it loads or its XML is readable.
-4. Test Core with fakes on macOS and run a real package-load smoke test on Windows with SSIS 16. The Windows build and package-load smoke test have passed, and the project resolves the known Binn/GAC layouts without a machine-specific override. Automate repeatable Windows package-load validation when the test corpus is established. The legacy UI/solution cleanup and README replacement are complete.
+4. Keep portable Core tests independent of SSIS and automate repeatable Windows package-load validation when the test corpus is established. Preserve standard Binn/GAC resolution and explicit path overrides for non-standard installations.
 
 ## Phase 2: Read-Only Inspectors
 
@@ -71,7 +57,7 @@ Pipeline: native expression owner and scope ID -> ANTLR candidates -> scope reso
 
 ### Expression Dependency Acceptance Tests
 
-Portable parser/resolver/analyzer/graph tests pass. Native save/reload fixtures prove declaration ownership, package/task/nested shadowing, loop assignments, event handlers, constraints, package parameters, Derived Column variable references, CLI evidence/redaction, failed-catalog coverage, and unchanged hashes. Project inventory resolution is tested with explicit projections, not a project-backed SSIS fixture.
+Retain these gates as grammar and owner coverage expand. Completed fixture results and syntax observations are in [HISTORY.md](HISTORY.md#native-binding-investigation).
 
 1. Parser: wrapped/unwrapped variables, system variables, package/project parameters, literals containing reference-like text, casts, functions, conditionals, repeated positioned references, constants, malformed syntax with no provisional references, and length limits.
 2. Catalog/resolver: package/task owners, task and nested-container shadowing, parent fallback, same-scope duplicates, missing parents, cycles, missing symbols, namespace isolation, ambiguous unwrapped names, package-only parameter lookup, available/unavailable project context, and explicitly projected system variables. Catalog validation rejects invalid topology; defensive resolver handling reports unsupported topology rather than guessing.
@@ -112,7 +98,7 @@ Portable parser/resolver/analyzer/graph tests pass. Native save/reload fixtures 
 
 ## Verification
 
-1. Core, inspector, AI, and CLI contract tests build without loading SSIS packages; the current portable suite passes 112 tests. The native C# verifier passes scratch Data Conversion/Derived Column fixtures and actual CLI subprocess checks. CI automation remains to be configured on an SSIS-enabled Windows host.
+1. Run the full portable Core, inspector, AI, and CLI contract suite without loading SSIS packages, then run native scratch fixtures and actual CLI subprocess checks on an SSIS-enabled Windows host. Commands are in [BuildPackage.md](BuildPackage.md); record dated results in [HISTORY.md](HISTORY.md). CI automation remains to be configured.
 2. Inspector/context tests cover completeness, unknown components, redaction, compact projections, and focused `sql`/`lineage`/`configuration` output; graph tests cover ambiguous handles and expected relationships.
 3. CLI and AI tool tests verify structured output, deterministic diagnostics, exit codes, selector ambiguity, bounded graph/impact results, and no secret leakage. The personal skill invokes CLI operations and remains read-only.
 4. Mutation/save integration checks use copies of representative packages: validation failure leaves originals untouched; successful saves reload; semantic diff contains intended changes and flags unexpected ones.
@@ -122,7 +108,7 @@ Portable parser/resolver/analyzer/graph tests pass. Native save/reload fixtures 
 
 - Native SSIS runtime owns authoritative loading, mutation, saving, and validation; XML is supplemental read-only evidence only. Do not implement normal-path DTSX XML mutation.
 - SSIS 16 first; keep Core version-neutral and add SSIS 15 through a separate adapter/reference set. Do not promise side-by-side runtime loading without isolation tests.
-- Forms, the legacy Explorer project, and the old solution were removed at the user's request before Windows runtime validation; preserve the existing `LICENSE`.
+- Keep the project headless and preserve the existing `LICENSE`; legacy desktop UI must not return through follow-on work.
 - Use read-only extraction first, CLI before the AI skill/protocol, and mutations last. The recommended initial AI integration is a skill wrapping CLI services; MCP can follow without embedding SSIS logic in the protocol layer.
 - Stable semantic handles are session-scoped; ambiguous names must return candidates, never guess.
 - Redact sensitive values by default, including logs. Mutation inputs may carry secrets, but outputs must not disclose them.
@@ -130,6 +116,6 @@ Portable parser/resolver/analyzer/graph tests pass. Native save/reload fixtures 
 
 ## Further Considerations
 
-1. Confirm Core/CLI target frameworks and adapter bitness/assembly resolution on the Windows SSIS 16 host. Core is portable; the Windows adapter build and x64 package-load smoke test have been verified on this host. The project defaults to the standard Binn location, falls back to the v16 GAC path, and accepts `SSIS16ManagedDtsPath` for other layouts.
+1. Confirm adapter bitness and assembly resolution on additional Windows SSIS 16 installations; a successful check on one host is not a compatibility guarantee. Preserve portable Core and standard Binn/GAC resolution with full-path overrides.
 2. Set a representative package corpus and permitted credentials/components for Windows integration tests; do not commit secrets or unredacted connection strings.
 3. If a repository-local Copilot skill is desired, define its host/format and keep it as a read-only client of the CLI; MCP remains deferred.

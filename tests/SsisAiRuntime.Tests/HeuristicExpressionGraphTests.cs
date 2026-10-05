@@ -7,6 +7,37 @@ namespace SsisAiRuntime.Tests;
 public sealed class HeuristicExpressionGraphTests
 {
     [Fact]
+    public void ProjectParameterEdgesRequireExplicitProjectMetadata()
+    {
+        var graph = new PackageDependencyGraph(new[] {
+            new DependencyNode("Executable:task", SemanticObjectKind.Executable, "Task", "task") },
+            Array.Empty<DependencyEdge>(), Array.Empty<UnsupportedItem>());
+        var packageParameter = new ExpressionSymbol("package-size", "package", ExpressionSymbolKind.PackageParameter, "$Package", "Size");
+        var projectParameter = new ExpressionSymbol("project-size", "package", ExpressionSymbolKind.ProjectParameter, "$Project", "Size");
+        ExpressionScope[] Scopes(params ExpressionSymbol[] symbols) => new[] {
+            new ExpressionScope("package", "", "Package", ExpressionScopeKind.Package, symbols),
+            new ExpressionScope("task", "package", "Task", ExpressionScopeKind.Task, Array.Empty<ExpressionSymbol>()) };
+        var standalone = new ExpressionScopeCatalog(Scopes(packageParameter));
+        var missingContext = new ExpressionDependencyGraphBuilder().Enrich(graph, standalone,
+            new[] { Analyze(standalone, "@[$Project::Size]") }, Array.Empty<UnsupportedItem>());
+        Assert.DoesNotContain(missingContext.Edges, edge => edge.Kind == DependencyKind.UsesParameter);
+        Assert.Contains(missingContext.UnsupportedItems, gap => gap.ReasonCode == "expression.project_context_unavailable");
+        Assert.Throws<ExpressionScopeCatalogException>(() => new ExpressionScopeCatalog(Scopes(projectParameter)));
+        var reference = new ExpressionReferenceParser().Analyze("@[$Project::Size]").References.Single();
+        var unprojected = new ExpressionDependencyAnalysis("task", "PropertyExpression", new[] {
+            new ExpressionReferenceResolution(reference, ExpressionReferenceResolutionStatus.Resolved, new[] { projectParameter }) }, true, "task");
+        var absentTarget = new ExpressionDependencyGraphBuilder().Enrich(graph, standalone, new[] { unprojected }, Array.Empty<UnsupportedItem>());
+        Assert.DoesNotContain(absentTarget.Edges, edge => edge.Kind == DependencyKind.UsesParameter);
+        Assert.Contains(absentTarget.UnsupportedItems, gap => gap.ReasonCode == "expression.target_not_projected");
+        var explicitContext = new ExpressionScopeCatalog(Scopes(packageParameter, projectParameter), true);
+        var resolved = new ExpressionDependencyGraphBuilder().Enrich(graph, explicitContext,
+            new[] { Analyze(explicitContext, "@[$Project::Size]") }, Array.Empty<UnsupportedItem>());
+        var edge = Assert.Single(resolved.Edges, edge => edge.Kind == DependencyKind.UsesParameter);
+        Assert.Equal(projectParameter.NativeId, resolved.Nodes.Single(node => node.Key == edge.To).NativeId);
+        Assert.Equal("LexicalAndScopeResolved", edge.Evidence);
+    }
+
+    [Fact]
     public void OnlyUniqueScopeResolvedReferencesCreateHeuristicEdges()
     {
         var catalog = Catalog();

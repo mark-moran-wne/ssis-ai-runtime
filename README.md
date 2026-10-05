@@ -19,7 +19,7 @@ A personal package-inspection skill exists outside this repository; a repository
 - SSIS 16 installed, with the providers and custom components needed by the inspected package. Only SSIS 16 x64 has been verified.
 - The built CLI and its application dependencies kept together.
 
-Contributor documentation: [BuildPackage.md](BuildPackage.md).
+Contributor documentation: [BuildPackage.md](BuildPackage.md). Investigation results and dated verification: [HISTORY.md](HISTORY.md).
 
 ## Usage
 
@@ -77,6 +77,8 @@ Selector resolution checks exact keys, exact native IDs, exact names, then bound
 
 Variable resolution stops at the nearest matching scope; same-scope duplicates and unwrapped names matching multiple namespaces remain ambiguous. Package parameters resolve only in the package inventory. Project parameters require explicitly supplied project metadata through the hosting API; standalone CLI loads report `expression.project_context_unavailable`. Parse failures, missing owners/targets, invalid topology, and ambiguous/missing references remain redacted `expression.*` coverage gaps without guessed edges or echoed reference tokens. The grammar is bounded, not a claim of complete SSIS language compatibility. Expression text and values never enter CLI output or AI context.
 
+Supported unwrapped variable candidates use simple names such as `@Counter`. Use wrapped forms for namespaces and parameters, such as `@[User::Value]` and `@[$Package::X]`; extended unwrapped forms are unsupported. The broader column/function identifier token does not imply broader unwrapped-variable syntax. Native probe evidence is in [HISTORY.md](HISTORY.md#unwrapped-syntax-probe).
+
 Commands accept a command and a package path. Every command returns a bounded summary by default; add `--details` to return the full redacted projection. The focused commands cover package overview, SQL-task metadata, data-flow lineage, and connections/variables/parameters/expressions. These are projections of the existing services, not a new DTSX parser. SQL text and setting values are deliberately omitted in v1, even when the adapter has sanitized them.
 
 `inspect` loads the package once and returns selected reports under their matching keys in `results`. By default it runs overview, SQL, lineage, and configuration; use repeatable `--include` options or a comma-separated list to select a subset, such as `--include sql,lineage`. The selected reports retain canonical order regardless of argument order. All reports share one session ID. Incomplete coverage does not stop later operations; a load or inspection failure does. `completedOperations` lists selected reports produced, including a failed report, and `skippedOperations` lists selected reports not run after a failure. On an operation failure, the aggregate has `succeeded: false` but retains earlier reports in `results`. No wrapper is needed.
@@ -104,7 +106,7 @@ Recognised built-in Derived Column outputs expose `expressionDependencies`, cont
 
 In-place replacements appear as distinct output-stage projections with `isReplacement: true` and an ID of `replaced:<native-input-column-id>:<output-port-id>`. Pass that complete key to `--column` to trace the computed replacement. Expression edges originate from original input nodes, including when an expression references the column being replaced; the old value is never silently passed through as the new one. Both ordinary and constant replacements are covered. Other expressions in the same component still reference original inputs, not another replacement's computed value.
 
-This remains a bounded implementation: arbitrary custom component expression contracts are not exposed. Variable/parameter references in registered Derived Column expressions are separately projected into the package dependency graph using heuristic lexical-and-scope evidence; column tracing continues to use only native column observations. Data Conversion and Derived Column behavior are covered by portable C# tests and isolated native SSIS 16 fixtures. Paycom2 additionally verified 23 resolved Derived Column outputs with no raw-expression fields and an unchanged package hash. No package validation, execution, or metadata refresh is used for extraction.
+This remains a bounded implementation: arbitrary custom component expression contracts are not exposed. Variable/parameter references in registered Derived Column expressions are separately projected into the package dependency graph using heuristic lexical-and-scope evidence; column tracing continues to use only native column observations. No package validation, execution, or metadata refresh is used for extraction. Fixture and package verification results are in [HISTORY.md](HISTORY.md).
 
 Trace completeness applies only to the selected projected relationships, not to unrelated configuration omissions or execution validity. `inspect` returns the four overview/SQL/lineage/configuration contexts; a selected-column trace is a separate operation.
 

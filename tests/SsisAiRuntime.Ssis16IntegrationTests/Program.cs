@@ -137,6 +137,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 package.Variables.Add("Flag", false, "User", false);
                 package.Parameters.Add("Toggle", TypeCode.Boolean).Value = false;
                 package.SetExpression("Disable", "@[User::Flag]");
+                package.SetExpression("DelayValidation", "@[$Package::Toggle]");
+                package.Variables.Add("FixturePath", false, "User", Path.Combine(directory, "unused.txt"));
+                var connection = package.Connections.Add("FILE");
+                connection.Name = "ConnectionOwner";
+                connection.SetExpression("ConnectionString", "@[User::FixturePath]");
                 var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
                 task.Name = "TaskOwner";
                 task.Variables.Add("Flag", false, "User", true);
@@ -164,7 +169,9 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 constraint.Expression = "@[User::Flag]";
                 var handler = (DtsEventHandler)task.EventHandlers.Add("OnError");
                 handler.Variables.Add("HandlerFlag", false, "User", false);
-                handler.SetExpression("Disable", "@[User::HandlerFlag]");
+                handler.Variables.Add("Flag", false, "User", false);
+                handler.SetExpression("Disable", "@[User::Flag]");
+                handler.SetExpression("DelayValidation", "@[$Package::Toggle]");
                 package.Variables.Add("Number", false, "User", 1);
                 var expressionVariable = package.Variables.Add("Calculated", false, "User", 0);
                 expressionVariable.Expression = "@[User::Number] + 1";
@@ -202,6 +209,21 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(report.Catalog.Scopes.Any(scope => scope.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionScopeKind.EventHandler &&
                     scope.Symbols.Any(symbol => symbol.Name == "HandlerFlag")), "heuristic.handler");
                 var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var handler = task.EventHandlers.Cast<DtsEventHandler>().Single();
+                var connection = package.Connections.Cast<ConnectionManager>().Single();
+                VerifyExpressionOwner(report, snapshot.Dependencies, package.Variables["User::Calculated"].ID, package.ID,
+                    "Number", package.Variables["User::Number"].ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, task.ID, task.ID,
+                    "Flag", task.Variables["User::Flag"].ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, connection.ID, package.ID,
+                    "FixturePath", package.Variables["User::FixturePath"].ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, handler.ID, handler.ID,
+                    "Flag", handler.Variables["User::Flag"].ID, DependencyKind.UsesVariable);
+                foreach (var owner in new[] { package.ID, task.ID, handler.ID })
+                {
+                    VerifyExpressionOwner(report, snapshot.Dependencies, owner, owner,
+                        "Toggle", package.Parameters["Toggle"].ID, DependencyKind.UsesParameter);
+                }
                 var eventScope = report.Catalog.Scopes.Single(scope => scope.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionScopeKind.EventHandler);
                 Require(snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
                     edge.From == "Executable:" + task.ID && edge.To == "Executable:" + eventScope.Id), "heuristic.handler.containment");
@@ -222,6 +244,18 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Console.WriteLine("Heuristic expression verification: PASS; native declaration IDs, nearest-scope shadowing, package parameters, redaction, CLI evidence, and unchanged hash; no execution or validation.");
             }
             finally { loaded.Session.Package.Dispose(); }
+        }
+
+        private static void VerifyExpressionOwner(SsisAiRuntime.Inspectors.Expressions.ExpressionDependencyInspection report,
+            PackageDependencyGraph graph, string ownerId, string scopeId, string referenceName, string targetId, DependencyKind kind)
+        {
+            var resolutions = report.Analyses.Items.Where(item => item.OwnerNativeId == ownerId && item.OwnerScopeId == scopeId)
+                .SelectMany(item => item.Resolutions).Where(item => item.Reference.Name == referenceName).ToArray();
+            Require(resolutions.Length > 0 && resolutions.All(item => item.ResolvedSymbol != null && item.ResolvedSymbol.NativeId == targetId), "heuristic.owner.resolution");
+            var owner = graph.Nodes.Single(node => node.NativeId == ownerId && node.Kind != SemanticObjectKind.DataFlow);
+            var target = graph.Nodes.Single(node => node.NativeId == targetId);
+            Require(graph.Edges.Any(edge => edge.From == owner.Key && edge.To == target.Key && edge.Kind == kind &&
+                edge.Evidence == "LexicalAndScopeResolved"), "heuristic.owner.edge");
         }
 
         private static void CreateFixture(string path)
@@ -402,6 +436,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                         "; resolvedReferences=" + (parsed ? observed.BindingLineageIds.Count : 0) + "; collectionChanged=False.");
                 }
                 ProbeVariableParameterBindings(package, taskHost, columns, parser);
+                ProbeUnwrappedReferenceSyntax(package, columns, parser);
             }
             finally
             {
@@ -409,6 +444,38 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 {
                     System.Runtime.InteropServices.Marshal.ReleaseComObject(evaluator);
                 }
+            }
+        }
+
+        private static void ProbeUnwrappedReferenceSyntax(Package package, IDTSInputColumnCollection100 columns, IDTSExpressionEvaluatorEx100 parser)
+        {
+            stage = "expression.unwrapped.syntax";
+            var candidates = new[]
+            {
+                new { Label = "simple", Text = "@ParserFlag", Expected = true },
+                new { Label = "dot", Text = "@User.ParserFlag", Expected = false },
+                new { Label = "namespace", Text = "@User::ParserFlag", Expected = false },
+                new { Label = "package-namespace", Text = "@Package::ProbeParameter", Expected = false },
+                new { Label = "package-dollar", Text = "@$Package::ProbeParameter", Expected = false },
+                new { Label = "dollar", Text = "@Parser$Flag", Expected = false },
+                new { Label = "hash", Text = "@Parser#Flag", Expected = false },
+                new { Label = "wrapped-variable", Text = "@[User::ParserFlag]", Expected = true },
+                new { Label = "wrapped-parameter", Text = "@[$Package::ProbeParameter]", Expected = true }
+            };
+            foreach (var candidate in candidates)
+            {
+                var parsed = false;
+                try
+                {
+                    parser.Parse(candidate.Text, DtsConvert.GetExtendedInterface(package.VariableDispenser), new NativeExpressionInputColumns(columns));
+                    parsed = true;
+                }
+                catch { }
+                var lexical = new SsisAiRuntime.Inspectors.Expressions.ExpressionReferenceParser().Analyze(candidate.Text);
+                Require(parsed == candidate.Expected && lexical.Succeeded == candidate.Expected &&
+                    lexical.References.Count == (candidate.Expected ? 1 : 0), "expression.unwrapped.syntax." + candidate.Label);
+                Console.WriteLine("Native unwrapped syntax " + candidate.Label + ": parsed=" + parsed +
+                    "; lexicalParsed=" + lexical.Succeeded + "; candidates=" + lexical.References.Count + "; bindingNotProven=True.");
             }
         }
 

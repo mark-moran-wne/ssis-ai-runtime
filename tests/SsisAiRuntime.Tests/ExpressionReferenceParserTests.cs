@@ -45,6 +45,12 @@ public sealed class ExpressionReferenceParserTests
     [InlineData("\"unterminated")]
     [InlineData("")]
     [InlineData("@[ ]")]
+    [InlineData("@User.Value")]
+    [InlineData("@User::Value")]
+    [InlineData("@Package::X")]
+    [InlineData("@$Package::X")]
+    [InlineData("@Value$Suffix")]
+    [InlineData("@Value#Suffix")]
     public void FailureDiscardsCandidatesAndRawMessages(string text)
     {
         var result = new ExpressionReferenceParser().Analyze(text);
