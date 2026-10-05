@@ -282,6 +282,65 @@ public class DataFlowOverviewTests
             0, 0, 0, 0, 0, 0, "", 0));
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void ExpressionTracesDistinguishResolvedReferencesConstantsAndFailures(bool resolved, bool constant)
+    {
+        var first = Column("derive", "in", "first", "Input", 42, "First");
+        var second = Column("derive", "in", "second", "Input", 43, "Second");
+        var ids = resolved && !constant ? new[] { 42, 43 } : Array.Empty<int>();
+        var output = new DataFlowColumnOverview("derive", "out", "Output", "Output", "derived", "Derived", "Int32",
+            4, 0, 0, 0, 70, 0, "", null, new DataFlowExpressionDependencies(resolved, ids));
+        var flow = new DataFlowOverview("flow", "Flow", new[] { Component("derive", new[] { first, second }, new[] { output }) }, Array.Empty<DataFlowPathOverview>());
+        var result = new ColumnLineageQuery().Trace(flow, "derive", "derived", true);
+        Assert.Equal(resolved, result.IsComplete);
+        Assert.Equal(resolved && !constant ? 3 : 1, result.Items[0].Columns.Count);
+        Assert.Equal(resolved && !constant ? 2 : 0, result.Items[0].Links.Count);
+        Assert.All(result.Items[0].Links, link => Assert.Equal("ExpressionResolved", link.Kind));
+    }
+
+    [Fact]
+    public void PartialExpressionResolutionNeverClaimsCompleteCoverage()
+    {
+        var source = Column("derive", "in", "source", "Input", 42, "Source");
+        var output = new DataFlowColumnOverview("derive", "out", "Output", "Output", "derived", "Derived", "Int32",
+            4, 0, 0, 0, 70, 0, "", null, new DataFlowExpressionDependencies(true, new[] { 42, 99 }));
+        var flow = new DataFlowOverview("flow", "Flow", new[] { Component("derive", new[] { source }, new[] { output }) }, Array.Empty<DataFlowPathOverview>());
+        var result = new ColumnLineageQuery().Trace(flow, "derive", "derived", true);
+        Assert.False(result.IsComplete);
+        Assert.Single(result.Items[0].Links);
+        Assert.Throws<ArgumentException>(() => new DataFlowExpressionDependencies(false, new[] { 42 }));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReplacementTracesUseOriginalInputsAndDoNotInventSelfReferences(bool constant)
+    {
+        var original = Column("derive", "in", "original", "Input", 42, "Value");
+        var adjustment = Column("derive", "in", "adjustment", "Input", 43, "Adjustment");
+        var replacement = new DataFlowColumnOverview("derive", "out", "Output", "Output", "replaced:original:out", "Value", "Int32",
+            4, 0, 0, 0, 42, 0, "Replacement", null, new DataFlowExpressionDependencies(true, constant ? Array.Empty<int>() : new[] { 42, 43 }), true);
+        var target = Column("target", "in", "target", "Input", 42, "Value");
+        var derive = new DataFlowComponentOverview("derive", "Derive", "Vendor.Derive", "", 1, 1,
+            new[] { original, adjustment }, new[] { replacement }, Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(),
+            new[] { new DataFlowOutputOverview("out", "Output", "in", false) });
+        var flow = new DataFlowOverview("flow", "Flow", new[] { derive, Component("target", new[] { target }, Array.Empty<DataFlowColumnOverview>()) },
+            new[] { new DataFlowPathOverview("path", "Path", "derive", "out", "target", "in") });
+        var upstream = new ColumnLineageQuery().Trace(flow, "target", "target", true);
+        Assert.True(upstream.IsComplete);
+        Assert.Contains(replacement, upstream.Items[0].Columns);
+        Assert.Equal(constant ? 0 : 2, upstream.Items[0].Links.Count(link => link.Kind == "ExpressionResolved"));
+        Assert.DoesNotContain(upstream.Items[0].Links, link => ReferenceEquals(link.Source, link.Target));
+        var downstream = new ColumnLineageQuery().Trace(flow, "derive", "original");
+        Assert.True(downstream.IsComplete);
+        Assert.Equal(constant ? 1 : 3, downstream.Items[0].Columns.Count);
+        Assert.DoesNotContain(downstream.Items[0].Links, link => link.Kind == "SynchronousPassThrough");
+    }
+
     private static DataFlowColumnOverview Column(string component, string port, string id, string direction, int lineage, string name) =>
         new(component, port, port, direction, id, name, "Int32", 4, 0, 0, 0, lineage, 0, "");
 

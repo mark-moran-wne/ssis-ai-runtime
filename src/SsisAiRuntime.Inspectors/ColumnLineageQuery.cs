@@ -31,6 +31,7 @@ namespace SsisAiRuntime.Inspectors
             }
 
             var allLinks = new List<ColumnLineageLink>();
+            var expressionGaps = new HashSet<DataFlowColumnOverview>();
             foreach (var path in flow.Paths)
             {
                 var sources = columns.Where(column => column.Direction == "Output" && column.ComponentId == path.SourceComponentId && column.PortId == path.SourceOutputId);
@@ -59,6 +60,20 @@ namespace SsisAiRuntime.Inspectors
             }
             foreach (var component in flow.Components)
             {
+                foreach (var output in component.OutputColumns.Where(column => column.ExpressionDependencies != null))
+                {
+                    var dependencies = output.ExpressionDependencies;
+                    if (!dependencies.IsResolved) { expressionGaps.Add(output); continue; }
+                    var ports = component.Outputs.Where(port => port.Id == output.PortId).ToList();
+                    foreach (var lineageId in dependencies.InputLineageIds)
+                    {
+                        var sources = Inputs(component).Where(input => input.LineageId == lineageId &&
+                            (component.Outputs.Count == 0 || (ports.Count == 1 &&
+                                ports[0].SynchronousInputId == input.PortId))).ToList();
+                        if (sources.Count == 1) { allLinks.Add(new ColumnLineageLink(sources[0], output, string.Empty)); }
+                        else { expressionGaps.Add(output); }
+                    }
+                }
                 foreach (var output in component.OutputColumns.Where(column => column.SourceInputLineageId.HasValue && column.LineageId > 0))
                 {
                     var ports = component.Outputs.Where(port => port.Id == output.PortId).ToList();
@@ -72,7 +87,7 @@ namespace SsisAiRuntime.Inspectors
                 }
                 foreach (var input in Inputs(component))
                 {
-                    foreach (var output in component.OutputColumns.Where(column => !column.SourceInputLineageId.HasValue && column.LineageId > 0 && column.LineageId == input.LineageId &&
+                    foreach (var output in component.OutputColumns.Where(column => column.ExpressionDependencies == null && !column.SourceInputLineageId.HasValue && column.LineageId > 0 && column.LineageId == input.LineageId &&
                         (component.Outputs.Count == 0 || component.Outputs.Any(port => port.Id == column.PortId && port.SynchronousInputId == input.PortId))))
                     {
                         allLinks.Add(new ColumnLineageLink(input, output, string.Empty));
@@ -102,17 +117,27 @@ namespace SsisAiRuntime.Inspectors
                 var connectedOutputs = component.Outputs.Where(output => flow.Paths.Any(path => path.SourceComponentId == component.Id && path.SourceOutputId == output.Id)).ToList();
                 var internalBoundary = upstream ? current.Direction == "Output" && (component.InputCount > 0 || current.SourceInputLineageId.HasValue) :
                     IsInput(current) && (component.Outputs.Count == component.OutputCount ?
-                        connectedOutputs.Any(output => output.SynchronousInputId.Length == 0 || output.SynchronousInputId == current.PortId ||
-                            !Inputs(component).Any(input => input.PortId == output.SynchronousInputId)) : component.OutputCount > 0);
+                        connectedOutputs.Any(output => !HasResolvedReplacement(component, current, output.Id) &&
+                            (output.SynchronousInputId.Length == 0 || output.SynchronousInputId == current.PortId ||
+                            !Inputs(component).Any(input => input.PortId == output.SynchronousInputId))) : component.OutputCount > 0);
+                if (upstream && current.ExpressionDependencies != null && current.ExpressionDependencies.IsResolved &&
+                    current.ExpressionDependencies.InputLineageIds.Count == 0)
+                {
+                    internalBoundary = false;
+                }
                 var relevantPaths = flow.Paths.Where(path => upstream
                     ? IsInput(current) && path.TargetComponentId == current.ComponentId && path.TargetInputId == current.PortId
                     : path.SourceComponentId == current.ComponentId &&
                         ((current.Direction == "Output" && path.SourceOutputId == current.PortId) ||
-                         (IsInput(current) && component.Outputs.Any(output => output.Id == path.SourceOutputId && output.SynchronousInputId == current.PortId)))).ToList();
+                                 (IsInput(current) && !HasResolvedReplacement(component, current, path.SourceOutputId) &&
+                                     component.Outputs.Any(output => output.Id == path.SourceOutputId && output.SynchronousInputId == current.PortId)))).ToList();
                 var missingPath = relevantPaths.Any(path => !nextLinks.Any(link => link.PathId == path.Id ||
                     (!upstream && link.Target.Direction == "Output" && link.Target.PortId == path.SourceOutputId &&
                         allLinks.Any(continuation => ReferenceEquals(continuation.Source, link.Target) && continuation.PathId == path.Id))));
-                if (current.LineageId <= 0 || missingPath || (nextLinks.Count == 0 && internalBoundary))
+                var unknownDerivedRelationship = !upstream && IsInput(current) && component.OutputColumns.Any(output =>
+                    output.ExpressionDependencies != null && !output.ExpressionDependencies.IsResolved &&
+                    (component.Outputs.Count == 0 || component.Outputs.Any(port => port.Id == output.PortId && port.SynchronousInputId == current.PortId)));
+                if (current.LineageId <= 0 || missingPath || unknownDerivedRelationship || expressionGaps.Contains(current) || (nextLinks.Count == 0 && internalBoundary))
                 {
                     gaps.Add(new UnsupportedItem(current.Id, current.Name, component.ComponentClassId,
                         "The projected metadata cannot prove the next column relationship.", UnsupportedItem.UnsupportedMetadataCode));
@@ -123,6 +148,12 @@ namespace SsisAiRuntime.Inspectors
             {
                 new ColumnLineageTrace(flow.ExecutableId, flow.ExecutableName, upstream ? "Upstream" : "Downstream", reached, links)
             }, gaps);
+        }
+
+        private static bool HasResolvedReplacement(DataFlowComponentOverview component, DataFlowColumnOverview column, string outputId)
+        {
+            return component.OutputColumns.Any(output => output.IsReplacement && output.PortId == outputId &&
+                output.LineageId == column.LineageId && output.ExpressionDependencies != null && output.ExpressionDependencies.IsResolved);
         }
 
         private static bool IsInput(DataFlowColumnOverview column)

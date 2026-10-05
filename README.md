@@ -46,6 +46,17 @@ Run the repeatable Windows smoke test against a representative package:
 .\tests\Run-SsisAiRuntime.Ssis16SmokeTest.ps1 -PackagePath "C:\path\to\Package.dtsx"
 ```
 
+Run the native C# Data Conversion verification on Windows with SSIS 16 installed:
+
+```powershell
+dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
+```
+
+This separate x64 .NET Framework 4.8 test executable creates a fresh temporary package through the SSIS object model, configures only metadata for an integer-to-string Data Conversion, saves and reloads that scratch file, and checks the inspector, query, and actual CLI subprocess in both directions. It verifies redaction and an unchanged fixture hash after inspection, then removes the scratch directory. It never executes or validates a package, configures a database connection, or alters caller-supplied packages. Fixture creation is test-only; the production CLI remains strictly read-only and has no EzAPI dependency. A `CS8012` warning can occur with the installed GAC_32 interop reference; the harness has been run successfully in x64 on this SSIS 16 host, but this does not certify other installations.
+
+The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` reference observer with synthetic expressions. Successful native name/lineage lookups are recorded as numeric column references; enumeration reads are not treated as dependencies, collection mutations are refused, and failed parses discard partial references. Controlled cases cover single/multiple/named/repeated columns, variable-driven conditionals, constants, quoted/escaped strings, and malformed syntax. A native Derived Column fixture additionally verifies per-output mapping, a literal-only output, original-value replacement semantics, task-scoped variable shadowing, and actual CLI redaction. All passed on this SSIS 16 host without a call to `Evaluate` or package execution/validation. The production adapter now uses this reference observer; no syntax tree or handwritten expression parser is exposed.
+
 ## Usage
 
 Build the solution in Release, then invoke the built executable from PowerShell:
@@ -83,7 +94,11 @@ Tracing matches positive lineage IDs and exact component/port endpoints, not col
 
 Built-in Data Conversion output columns can expose `sourceInputLineageId`, taken only from their unencrypted, positive integer `SourceInputColumnLineageID` property. The adapter recognises the component through the installed runtime's creation names and registered class IDs, not its package display name. A uniquely resolved source creates an `ExplicitMapping` link even when the output has a different name, type, or lineage ID. Missing or ambiguous sources stay incomplete; an invalid explicit source cannot fall back to a coincidentally matching lineage ID. Successful numeric mapping properties are no longer counted as omitted configuration values.
 
-This is a limited computed-column mapping implementation: Derived Column expressions, arbitrary custom components, and other transformation-specific contracts are not parsed or inferred. Expression text remains omitted. The mapping query is covered by C# tests, and the native reader builds against SSIS 16. The existing WebProd and Paycom2 samples contain no Data Conversion components, so native mapping verification still needs a representative package.
+Recognised built-in Derived Column outputs expose `expressionDependencies`, containing `isResolved`, `resolution` (`NativeParser` or `Unresolved`), and sorted `inputLineageIds`. SSIS's native parser resolves each unencrypted `Expression` in the data-flow task's variable scope through a read-only forwarding column collection; expression text, variable values, and native parser error text never enter the projection. Expressions over 65,536 characters, unavailable parser interfaces, unexpected generic metadata reads, parse failures, and missing/ambiguous input references remain explicit gaps. Only successfully resolved references create `ExpressionResolved` links. A resolved empty input list means no input-column dependency; it does not imply the expression is independent of variables.
+
+In-place replacements appear as distinct output-stage projections with `isReplacement: true` and an ID of `replaced:<native-input-column-id>:<output-port-id>`. Pass that complete key to `--column` to trace the computed replacement. Expression edges originate from original input nodes, including when an expression references the column being replaced; the old value is never silently passed through as the new one. Both ordinary and constant replacements are covered. Other expressions in the same component still reference original inputs, not another replacement's computed value.
+
+This remains a bounded implementation: a separate variable-dependency graph and arbitrary custom component expression contracts are not yet exposed. Data Conversion and Derived Column behavior are covered by portable C# tests and isolated native SSIS 16 fixtures. Paycom2 additionally verified 23 resolved Derived Column outputs with no raw-expression fields and an unchanged package hash. No package validation, execution, or metadata refresh is used for extraction.
 
 Trace completeness applies only to the selected projected relationships, not to unrelated configuration omissions or execution validity. `all` continues to return the four overview/SQL/lineage/configuration contexts; a selected-column trace is a separate operation.
 

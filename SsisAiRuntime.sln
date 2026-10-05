@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisAiRuntime.Tests", "test
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisAiRuntime.Cli", "src\SsisAiRuntime.Cli\SsisAiRuntime.Cli.csproj", "{EADA7E2A-74B4-49B1-B6CA-59D77524B8DF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisAiRuntime.Ssis16IntegrationTests", "tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj", "{D1F0FC32-4CD2-48E3-99B6-572CBA965577}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -87,6 +89,18 @@ Global
 		{EADA7E2A-74B4-49B1-B6CA-59D77524B8DF}.Release|x64.Build.0 = Release|Any CPU
 		{EADA7E2A-74B4-49B1-B6CA-59D77524B8DF}.Release|x86.ActiveCfg = Release|Any CPU
 		{EADA7E2A-74B4-49B1-B6CA-59D77524B8DF}.Release|x86.Build.0 = Release|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Debug|x64.Build.0 = Debug|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Debug|x86.Build.0 = Debug|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Release|x64.ActiveCfg = Release|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Release|x64.Build.0 = Release|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Release|x86.ActiveCfg = Release|Any CPU
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -97,5 +111,6 @@ Global
 		{B10B1B4D-7BFC-47D2-9F32-6D847A8B5C13} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{91E72345-39E0-4CF2-931F-8645CD2DC896} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{EADA7E2A-74B4-49B1-B6CA-59D77524B8DF} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{D1F0FC32-4CD2-48E3-99B6-572CBA965577} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

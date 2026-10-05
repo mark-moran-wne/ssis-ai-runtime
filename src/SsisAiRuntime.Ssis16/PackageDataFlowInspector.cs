@@ -13,7 +13,8 @@ namespace SsisAiRuntime.Ssis16
     public sealed class PackageDataFlowInspector : IPackageDataFlowInspector<DtsRuntime.Package>
     {
         private const string SourceLineageProperty = "SourceInputColumnLineageID";
-        private static readonly Lazy<HashSet<string>> DataConversionClassIds = new Lazy<HashSet<string>>(FindDataConversionClasses);
+        private static readonly Lazy<HashSet<string>> DataConversionClassIds = new Lazy<HashSet<string>>(() => FindBuiltInClasses("Microsoft.DataConvert", "DTSTransform.DataConvert."));
+        private static readonly Lazy<HashSet<string>> DerivedColumnClassIds = new Lazy<HashSet<string>>(() => FindBuiltInClasses("Microsoft.DerivedColumn", "DTSTransform.DerivedColumn."));
 
         private static readonly HashSet<string> SafeSettings = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -46,11 +47,12 @@ namespace SsisAiRuntime.Ssis16
 
             var dataFlows = new List<DataFlowOverview>();
             var unsupportedItems = new List<UnsupportedItem>();
-            AddDataFlows(session.Package.Executables, dataFlows, unsupportedItems);
+            AddDataFlows(session.Package, session.Package.Executables, dataFlows, unsupportedItems);
             return new InspectionResult<DataFlowOverview>(dataFlows, unsupportedItems);
         }
 
         private static void AddDataFlows(
+            DtsRuntime.Package package,
             DtsRuntime.Executables executables,
             ICollection<DataFlowOverview> dataFlows,
             ICollection<UnsupportedItem> unsupportedItems)
@@ -59,7 +61,7 @@ namespace SsisAiRuntime.Ssis16
             {
                 if (executable is DtsRuntime.IDTSSequence sequence)
                 {
-                    AddDataFlows(sequence.Executables, dataFlows, unsupportedItems);
+                    AddDataFlows(package, sequence.Executables, dataFlows, unsupportedItems);
                     continue;
                 }
 
@@ -156,6 +158,9 @@ namespace SsisAiRuntime.Ssis16
                                 var sourceLineage = handlesSourceMapping
                                     ? ReadSourceLineage(taskHost.ID, component, column, unsupportedItems)
                                     : null;
+                                var expressionDependencies = !output.IsErrorOut && DerivedColumnClassIds.Value.Contains(component.ComponentClassID)
+                                    ? ReadExpressionDependencies(taskHost, component, column.ID, column.Name, column.CustomPropertyCollection, unsupportedItems)
+                                    : null;
                                 outputColumns.Add(new DataFlowColumnOverview(
                                     component.ID.ToString(CultureInfo.InvariantCulture),
                                     output.ID.ToString(CultureInfo.InvariantCulture),
@@ -171,7 +176,8 @@ namespace SsisAiRuntime.Ssis16
                                     column.LineageID,
                                     column.ExternalMetadataColumnID,
                                     string.Empty,
-                                    sourceLineage));
+                                    sourceLineage,
+                                    expressionDependencies));
                                 AddUnsupportedColumnProperties(component, column.ID, column.CustomPropertyCollection, unsupportedItems, handlesSourceMapping);
                             }
 
@@ -186,6 +192,28 @@ namespace SsisAiRuntime.Ssis16
                             AddSettings(component, "Output", output.ID.ToString(CultureInfo.InvariantCulture), output.CustomPropertyCollection, settings, unsupportedItems);
                         }
 
+                        if (DerivedColumnClassIds.Value.Contains(component.ComponentClassID))
+                        {
+                            foreach (DtsPipeline.IDTSInput100 input in component.InputCollection)
+                            {
+                                foreach (DtsPipeline.IDTSInputColumn100 column in input.InputColumnCollection)
+                                {
+                                    if (!column.CustomPropertyCollection.Cast<DtsPipeline.IDTSCustomProperty100>()
+                                        .Any(property => string.Equals(property.Name, "Expression", StringComparison.OrdinalIgnoreCase))) { continue; }
+                                    var dependencies = ReadExpressionDependencies(taskHost, component, column.ID, column.Name,
+                                        column.CustomPropertyCollection, unsupportedItems);
+                                    foreach (DtsPipeline.IDTSOutput100 output in component.OutputCollection)
+                                    {
+                                        if (output.IsErrorOut || output.SynchronousInputID != input.ID) { continue; }
+                                        outputColumns.Add(new DataFlowColumnOverview(
+                                            component.ID.ToString(CultureInfo.InvariantCulture), output.ID.ToString(CultureInfo.InvariantCulture),
+                                            output.Name, "Output", "replaced:" + column.ID.ToString(CultureInfo.InvariantCulture) + ":" + output.ID.ToString(CultureInfo.InvariantCulture),
+                                            column.Name, column.DataType.ToString(), column.Length, column.Precision, column.Scale,
+                                            column.CodePage, column.LineageID, column.ExternalMetadataColumnID, "Replacement", null, dependencies, true));
+                                    }
+                                }
+                            }
+                        }
                         AddSettings(component, "Component", component.ID.ToString(CultureInfo.InvariantCulture), component.CustomPropertyCollection, settings, unsupportedItems);
                         components.Add(new DataFlowComponentOverview(
                             component.ID.ToString(CultureInfo.InvariantCulture),
@@ -262,15 +290,15 @@ namespace SsisAiRuntime.Ssis16
             }
         }
 
-        private static HashSet<string> FindDataConversionClasses()
+        private static HashSet<string> FindBuiltInClasses(string modernName, string prefix)
         {
-            var classes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Microsoft.DataConvert" };
+            var classes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { modernName };
             try
             {
                 foreach (DtsRuntime.PipelineComponentInfo info in new DtsRuntime.Application().PipelineComponentInfos)
                 {
-                    if (string.Equals(info.CreationName, "Microsoft.DataConvert", StringComparison.OrdinalIgnoreCase) ||
-                        info.CreationName.StartsWith("DTSTransform.DataConvert.", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(info.CreationName, modernName, StringComparison.OrdinalIgnoreCase) ||
+                        info.CreationName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     {
                         classes.Add(info.CreationName);
                         classes.Add(info.ID);
@@ -282,6 +310,60 @@ namespace SsisAiRuntime.Ssis16
                 return classes;
             }
             return classes;
+        }
+
+        private static DataFlowExpressionDependencies ReadExpressionDependencies(DtsRuntime.TaskHost taskHost,
+            DtsPipeline.IDTSComponentMetaData100 component, int columnId, string columnName,
+            DtsPipeline.IDTSCustomPropertyCollection100 properties, ICollection<UnsupportedItem> unsupportedItems)
+        {
+            object evaluator = null;
+            try
+            {
+                var expressions = properties.Cast<DtsPipeline.IDTSCustomProperty100>()
+                    .Where(property => string.Equals(property.Name, "Expression", StringComparison.OrdinalIgnoreCase)).ToList();
+                if (expressions.Count == 1 && !expressions[0].EncryptionRequired && component.InputCollection.Count == 1)
+                {
+                    var expression = expressions[0].Value as string;
+                    if (!string.IsNullOrWhiteSpace(expression) && expression.Length <= 65536)
+                    {
+                        evaluator = new Microsoft.SqlServer.Dts.Runtime.Wrapper.ExpressionEvaluatorClass();
+                        var parser = evaluator as DtsPipeline.IDTSExpressionEvaluatorEx100;
+                        if (parser != null)
+                        {
+                            var columns = component.InputCollection[0].InputColumnCollection;
+                            var before = SnapshotExpressionInputs(columns);
+                            var observer = new NativeExpressionInputColumns(columns);
+                            parser.Parse(expression, DtsRuntime.DtsConvert.GetExtendedInterface(taskHost.VariableDispenser), observer);
+                            if (observer.GeneralReads == 0 && observer.MutationAttempts == 0 && before == SnapshotExpressionInputs(columns))
+                            {
+                                return new DataFlowExpressionDependencies(true, observer.BindingLineageIds);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                unsupportedItems.Add(new UnsupportedItem(columnId.ToString(CultureInfo.InvariantCulture), columnName,
+                    component.ComponentClassID, "The expression column references could not be resolved.", UnsupportedItem.UnsupportedMetadataCode));
+                return new DataFlowExpressionDependencies(false, Array.Empty<int>());
+            }
+            finally
+            {
+                if (evaluator != null && System.Runtime.InteropServices.Marshal.IsComObject(evaluator))
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(evaluator);
+                }
+            }
+            unsupportedItems.Add(new UnsupportedItem(columnId.ToString(CultureInfo.InvariantCulture), columnName,
+                component.ComponentClassID, "The expression column references are unavailable or unsupported.", UnsupportedItem.UnsupportedMetadataCode));
+            return new DataFlowExpressionDependencies(false, Array.Empty<int>());
+        }
+
+        private static string SnapshotExpressionInputs(DtsPipeline.IDTSInputColumnCollection100 columns)
+        {
+            return string.Join("|", columns.Cast<DtsPipeline.IDTSInputColumn100>().Select(column =>
+                column.ID + ":" + column.LineageID + ":" + column.UsageType + ":" + column.DataType));
         }
 
         private static int? ReadSourceLineage(string flowId, DtsPipeline.IDTSComponentMetaData100 component,

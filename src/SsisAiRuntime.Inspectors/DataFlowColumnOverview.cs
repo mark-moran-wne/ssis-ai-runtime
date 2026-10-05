@@ -28,6 +28,16 @@ namespace SsisAiRuntime.Inspectors
             string componentId, string portId, string portName, string direction, string id, string name,
             string dataType, int length, int precision, int scale, int codePage, int lineageId,
             int externalMetadataColumnId, string usageType, int? sourceInputLineageId)
+            : this(componentId, portId, portName, direction, id, name, dataType, length, precision, scale,
+                codePage, lineageId, externalMetadataColumnId, usageType, sourceInputLineageId, null, false)
+        {
+        }
+
+        public DataFlowColumnOverview(
+            string componentId, string portId, string portName, string direction, string id, string name,
+            string dataType, int length, int precision, int scale, int codePage, int lineageId,
+            int externalMetadataColumnId, string usageType, int? sourceInputLineageId,
+            DataFlowExpressionDependencies expressionDependencies, bool isReplacement = false)
         {
             if (sourceInputLineageId.HasValue && sourceInputLineageId.Value <= 0)
             {
@@ -48,6 +58,8 @@ namespace SsisAiRuntime.Inspectors
             ExternalMetadataColumnId = externalMetadataColumnId;
             UsageType = usageType ?? string.Empty;
             SourceInputLineageId = sourceInputLineageId;
+            ExpressionDependencies = expressionDependencies;
+            IsReplacement = isReplacement;
         }
 
         public string ComponentId { get; }
@@ -79,5 +91,7 @@ namespace SsisAiRuntime.Inspectors
         public string UsageType { get; }
 
         public int? SourceInputLineageId { get; }
+        public DataFlowExpressionDependencies ExpressionDependencies { get; }
+        public bool IsReplacement { get; }
     }
 }
