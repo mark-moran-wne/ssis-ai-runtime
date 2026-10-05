@@ -10,6 +10,8 @@ namespace SsisAiRuntime.AI
     {
         Direct,
         Indirect,
+        Variable,
+        Parameter,
         Configuration,
         ControlFlow,
         DataFlow
@@ -101,6 +103,8 @@ namespace SsisAiRuntime.AI
             if (distance > 1) { return ImpactCategory.Indirect; }
             switch (edge.Kind)
             {
+                case DependencyKind.UsesVariable: return ImpactCategory.Variable;
+                case DependencyKind.UsesParameter: return ImpactCategory.Parameter;
                 case DependencyKind.UsesConnection: return ImpactCategory.Configuration;
                 case DependencyKind.DependsOnTask: return ImpactCategory.ControlFlow;
                 case DependencyKind.ContainsDataFlow:

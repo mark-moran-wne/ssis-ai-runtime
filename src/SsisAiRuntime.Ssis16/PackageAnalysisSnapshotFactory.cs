@@ -4,12 +4,16 @@ using System.Linq;
 using SsisAiRuntime.AI;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Inspectors;
+using SsisAiRuntime.Inspectors.Expressions;
 
 namespace SsisAiRuntime.Ssis16
 {
     public sealed class PackageAnalysisSnapshotFactory
     {
-        public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session)
+        public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session) => Create(session, null);
+
+        public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session,
+            IEnumerable<ExpressionSymbol> projectParameters)
         {
             if (session == null) { throw new ArgumentNullException(nameof(session)); }
             var overview = new PackageOverviewInspector().InspectDetailed(session);
@@ -36,6 +40,18 @@ namespace SsisAiRuntime.Ssis16
             unsupported = Merge(unsupported, controlFlow.UnsupportedItems);
             var dependencies = new PackageDependencyGraphBuilder().Build(package, connections.Items, executables.Items,
                 sql.Items, dataFlows.Items, controlFlow, unsupported);
+            var expressionDependencies = new PackageExpressionDependencyInspector().Inspect(session, projectParameters);
+            if (expressionDependencies.Catalog != null)
+            {
+                dependencies = new ExpressionDependencyGraphBuilder().Enrich(dependencies, expressionDependencies.Catalog,
+                    expressionDependencies.Analyses.Items, expressionDependencies.Analyses.UnsupportedItems);
+            }
+            else
+            {
+                dependencies = new PackageDependencyGraph(dependencies.Nodes, dependencies.Edges,
+                    dependencies.UnsupportedItems.Concat(expressionDependencies.Analyses.UnsupportedItems));
+            }
+            unsupported = Merge(unsupported, expressionDependencies.Analyses.UnsupportedItems);
             unsupported = Merge(unsupported, dependencies.UnsupportedItems);
             var snapshot = new PackageAnalysisSnapshot(package, connections.Items, variables.Items, parameters.Items,
                 executables.Items, sql.Items, dataFlows.Items, expressions.Items, controlFlow, dependencies, catalog, unsupported);

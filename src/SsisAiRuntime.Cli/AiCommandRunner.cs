@@ -224,7 +224,8 @@ namespace SsisAiRuntime.Cli
             {
                 ["kind"] = CliSummary.LimitText(fact.Kind),
                 ["name"] = CliSummary.LimitText(fact.Name),
-                ["reference"] = CliSummary.LimitText(fact.Reference)
+                ["reference"] = CliSummary.LimitText(fact.Reference),
+                ["evidence"] = fact.Evidence == "LexicalAndScopeResolved" ? "LexicalAndScopeResolved" : null
             })),
             ["factsOmitted"] = context.FactsOmitted
         };
@@ -289,7 +290,8 @@ namespace SsisAiRuntime.Cli
         {
             ["from"] = CliSummary.LimitText(edge.From),
             ["to"] = CliSummary.LimitText(edge.To),
-            ["kind"] = edge.Kind.ToString()
+            ["kind"] = edge.Kind.ToString(),
+            ["evidence"] = edge.Evidence == "LexicalAndScopeResolved" ? "LexicalAndScopeResolved" : null
         };
 
         private static JObject Project(DependencySelectorResolution resolution) => new JObject

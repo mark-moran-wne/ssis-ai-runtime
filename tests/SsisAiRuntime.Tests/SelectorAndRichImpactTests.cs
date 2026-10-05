@@ -27,6 +27,23 @@ public class SelectorAndRichImpactTests
     }
 
     [Fact]
+    public void ResolverReportsTotalPartialMatchesBeyondCandidateLimit()
+    {
+        var nodes = Enumerable.Range(0, 75)
+            .Select(index => new DependencyNode("Connection:" + index, SemanticObjectKind.Connection,
+                "Warehouse " + index, index.ToString()))
+            .ToArray();
+        var graph = new PackageDependencyGraph(nodes, Array.Empty<DependencyEdge>(), Array.Empty<UnsupportedItem>());
+
+        var result = new DependencySelectorResolver().Resolve(graph, "Warehouse", SemanticObjectKind.Connection);
+
+        Assert.Equal(DependencySelectorResolutionStatus.Ambiguous, result.Status);
+        Assert.Equal(75, result.CandidateCount);
+        Assert.Equal(50, result.Candidates.Count);
+        Assert.Equal(25, result.CandidatesOmitted);
+    }
+
+    [Fact]
     public void RichImpactClassifiesDirectAndIndirectConsumers()
     {
         var result = new RichImpactAnalysisQuery().Analyze(BuildGraph(), "Connection:c").Items.Single();

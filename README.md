@@ -11,7 +11,7 @@ A headless foundation for inspecting and safely operating on SSIS packages throu
 - `SsisAiRuntime.Tests` tests the portable Core contract without requiring SSIS.
 - `SsisAiRuntime.Cli` is a Windows .NET Framework 4.8 x64 console app over the existing loader and inspectors. Its first release is strictly read-only.
 
-An AI skill and mutation workflows are planned follow-on work.
+A personal package-inspection skill exists outside this repository; a repository-registered Copilot skill and mutation workflows remain planned follow-on work.
 
 ## Runtime Requirements
 
@@ -73,7 +73,9 @@ SsisAiRuntime.Cli.exe ai impact.classified "C:\path\to\Package.dtsx" --node "Con
 SsisAiRuntime.Cli.exe ai question.plan "What uses this connection?"
 ```
 
-Selector resolution checks exact keys, exact native IDs, exact names, then bounded partial-name matches; ambiguous results return candidates without choosing one. Classified impact includes shortest proven paths to projected consumers. The dependency graph includes only projected relationships. Variable and parameter dependency edges are not generated because their references are not currently projected. These routes do not execute, validate, or modify packages.
+Selector resolution checks exact keys, exact native IDs, exact names, then bounded partial-name matches; ambiguous results return candidates without choosing one. Classified impact includes shortest projected paths to consumers. Variable and parameter expression dependencies use ANTLR lexical candidates plus deterministic resolution against native declaration IDs and container hierarchy. Only unique resolutions produce `UsesVariable` or `UsesParameter` edges, labeled with `evidence: "LexicalAndScopeResolved"` in graph/impact output and bounded AI facts. These are heuristic relationships, not native parser bindings. These routes do not execute, validate, or modify packages.
+
+Variable resolution stops at the nearest matching scope; same-scope duplicates and unwrapped names matching multiple namespaces remain ambiguous. Package parameters resolve only in the package inventory. Project parameters require explicitly supplied project metadata through the hosting API; standalone CLI loads report `expression.project_context_unavailable`. Parse failures, missing owners/targets, invalid topology, and ambiguous/missing references remain redacted `expression.*` coverage gaps without guessed edges or echoed reference tokens. The grammar is bounded, not a claim of complete SSIS language compatibility. Expression text and values never enter CLI output or AI context.
 
 Commands accept a command and a package path. Every command returns a bounded summary by default; add `--details` to return the full redacted projection. The focused commands cover package overview, SQL-task metadata, data-flow lineage, and connections/variables/parameters/expressions. These are projections of the existing services, not a new DTSX parser. SQL text and setting values are deliberately omitted in v1, even when the adapter has sanitized them.
 
@@ -102,7 +104,7 @@ Recognised built-in Derived Column outputs expose `expressionDependencies`, cont
 
 In-place replacements appear as distinct output-stage projections with `isReplacement: true` and an ID of `replaced:<native-input-column-id>:<output-port-id>`. Pass that complete key to `--column` to trace the computed replacement. Expression edges originate from original input nodes, including when an expression references the column being replaced; the old value is never silently passed through as the new one. Both ordinary and constant replacements are covered. Other expressions in the same component still reference original inputs, not another replacement's computed value.
 
-This remains a bounded implementation: a separate variable-dependency graph and arbitrary custom component expression contracts are not yet exposed. Data Conversion and Derived Column behavior are covered by portable C# tests and isolated native SSIS 16 fixtures. Paycom2 additionally verified 23 resolved Derived Column outputs with no raw-expression fields and an unchanged package hash. No package validation, execution, or metadata refresh is used for extraction.
+This remains a bounded implementation: arbitrary custom component expression contracts are not exposed. Variable/parameter references in registered Derived Column expressions are separately projected into the package dependency graph using heuristic lexical-and-scope evidence; column tracing continues to use only native column observations. Data Conversion and Derived Column behavior are covered by portable C# tests and isolated native SSIS 16 fixtures. Paycom2 additionally verified 23 resolved Derived Column outputs with no raw-expression fields and an unchanged package hash. No package validation, execution, or metadata refresh is used for extraction.
 
 Trace completeness applies only to the selected projected relationships, not to unrelated configuration omissions or execution validity. `inspect` returns the four overview/SQL/lineage/configuration contexts; a selected-column trace is a separate operation.
 

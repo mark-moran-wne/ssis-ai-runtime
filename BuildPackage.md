@@ -30,6 +30,8 @@ dotnet build .\SsisAiRuntime.sln -c Release -p:SSIS16ManagedDtsPath="C:\path\to\
 
 The CLI output is `src/SsisAiRuntime.Cli/bin/Release/net48/SsisAiRuntime.Cli.exe`, together with its configuration and application dependencies. Invoke the executable directly as described in [README.md](README.md#usage).
 
+The inspector project generates its bounded expression grammar during builds through `Antlr4BuildTasks`; `Antlr4.Runtime.Standard` is an application dependency. Grammar and candidate extraction remain runtime-neutral, separate from native scope projection and native column observation. First-time builds may need to acquire ANTLR generator tooling in addition to NuGet packages.
+
 ## Portable Tests
 
 Run the runtime-neutral Core, inspector, query, and CLI-contract tests on any supported .NET 10 SDK host. These tests do not require SSIS:
@@ -52,6 +54,8 @@ This separate x64 .NET Framework 4.8 test executable creates a fresh temporary p
 The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` reference observer with synthetic expressions. Successful native name/lineage lookups are recorded as numeric column references; enumeration reads are not treated as dependencies, collection mutations are refused, and failed parses discard partial references. Controlled cases cover single/multiple/named/repeated columns, variable-driven conditionals, constants, quoted/escaped strings, and malformed syntax. A native Derived Column fixture additionally verifies per-output mapping, a literal-only output, original-value replacement semantics, task-scoped variable shadowing, and actual CLI redaction. All passed on this SSIS 16 host without a call to `Evaluate` or package execution/validation. The production adapter uses this reference observer; no syntax tree or handwritten expression parser is exposed.
 
 A `CS8012` warning can occur with the installed GAC_32 interop reference. The harness has been run successfully in x64 on this SSIS 16 host, but this does not certify other installations.
+
+The expression-scope fixture separately verifies ANTLR candidates against native declaration metadata: package/task/nested shadowing, package parameters, evaluated variable expressions, For Loop assignments, precedence constraints, event-handler scopes, Derived Column variable dependencies, failed-catalog coverage, and CLI heuristic evidence. Expression text and values stay redacted; package hashes remain unchanged after inspection. Project-parameter resolution is covered by portable explicit-inventory tests; this verifier does not claim a project-backed SSIS fixture.
 
 ## Package Smoke Test
 

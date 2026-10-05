@@ -76,13 +76,13 @@ namespace SsisAiRuntime.AI
             else if (result.Result is PackageDependencyGraph graph)
             {
                 AddFacts(graph.Nodes.Select(node => new AiFact("dependencyNode." + node.Kind, node.Name, node.Key)));
-                AddFacts(graph.Edges.Select(edge => new AiFact("dependencyEdge." + edge.Kind, edge.From, edge.To)));
+                AddFacts(graph.Edges.Select(edge => EdgeFact("dependencyEdge", edge)));
             }
             else if (result.Result is ImpactAnalysisResult impact)
             {
                 AddFacts(new[] { new AiFact("impactRoot." + impact.Root.Kind, impact.Root.Name, impact.Root.Key) });
                 AddFacts(impact.ImpactedNodes.Select(node => new AiFact("impacted." + node.Kind, node.Name, node.Key)));
-                AddFacts(impact.Paths.Select(edge => new AiFact("impactPath." + edge.Kind, edge.From, edge.To)));
+                AddFacts(impact.Paths.Select(edge => EdgeFact("impactPath", edge)));
             }
             else if (result.Result is DependencySelectorResolution resolution)
             {
@@ -114,7 +114,7 @@ namespace SsisAiRuntime.AI
                 AddFacts(richImpact.Impacts.Select(item =>
                     new AiFact("impact." + item.Category, item.Node.Name, item.Node.Key)));
                 AddFacts(richImpact.Impacts.SelectMany(item => item.Path.Select(edge =>
-                    new AiFact("impactPath." + edge.Kind, edge.From, edge.To))));
+                    EdgeFact("impactPath", edge))));
             }
             else if (result.Result is QuestionPlan plan)
             {
@@ -129,6 +129,9 @@ namespace SsisAiRuntime.AI
             potentialFacts = totalFacts;
             return facts;
         }
+        private static AiFact EdgeFact(string category, DependencyEdge edge) =>
+            new AiFact(category + "." + edge.Kind, edge.From, edge.To,
+                edge.Evidence == "LexicalAndScopeResolved" ? "LexicalAndScopeResolved" : string.Empty);
     }
 
     public sealed class AiContext
@@ -156,14 +159,16 @@ namespace SsisAiRuntime.AI
 
     public sealed class AiFact
     {
-        public AiFact(string kind, string name, string reference)
+        public AiFact(string kind, string name, string reference, string evidence = "")
         {
             Kind = kind ?? string.Empty;
             Name = name ?? string.Empty;
             Reference = reference ?? string.Empty;
+            Evidence = evidence == "LexicalAndScopeResolved" ? evidence : string.Empty;
         }
         public string Kind { get; }
         public string Name { get; }
         public string Reference { get; }
+        public string Evidence { get; }
     }
 }

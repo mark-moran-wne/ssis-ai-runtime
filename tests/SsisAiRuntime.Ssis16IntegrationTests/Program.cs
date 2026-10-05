@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,6 +10,7 @@ using SsisAiRuntime.Ssis16;
 using SsisAiRuntime.Inspectors;
 using Newtonsoft.Json.Linq;
 using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
+using DtsRuntime = Microsoft.SqlServer.Dts.Runtime;
 
 namespace SsisAiRuntime.Ssis16IntegrationTests
 {
@@ -106,6 +108,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     ProbeExpressionParser(load.Session.Package);
                     Require(Hash(path) == before, "fixture.parser.hash");
                     VerifyDerivedFixture(directory);
+                    VerifyHeuristicExpressions(directory);
                     if (args.Length == 1) { VerifyExistingPackage(args[0]); }
                     return 0;
                 }
@@ -123,6 +126,102 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             {
                 Directory.Delete(directory, true);
             }
+        }
+
+        private static void VerifyHeuristicExpressions(string directory)
+        {
+            stage = "heuristic.fixture.creation";
+            var path = Path.Combine(directory, "ExpressionScopes.dtsx");
+            using (var package = new Package { Name = "ExpressionScopes", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+            {
+                package.Variables.Add("Flag", false, "User", false);
+                package.Parameters.Add("Toggle", TypeCode.Boolean).Value = false;
+                package.SetExpression("Disable", "@[User::Flag]");
+                var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                task.Name = "TaskOwner";
+                task.Variables.Add("Flag", false, "User", true);
+                task.SetExpression("Disable", "@[User::Flag] || @[User::Flag]");
+                task.SetExpression("DelayValidation", "@[$Package::Toggle]");
+                var outer = (Sequence)package.Executables.Add("STOCK:Sequence");
+                outer.Name = "OuterOwner";
+                outer.Variables.Add("Flag", false, "User", true);
+                outer.SetExpression("Disable", "@[User::Flag]");
+                var inner = (Sequence)outer.Executables.Add("STOCK:Sequence");
+                inner.Name = "InnerOwner";
+                inner.Variables.Add("Flag", false, "User", false);
+                inner.SetExpression("Disable", "@[User::Flag]");
+                var child = (TaskHost)inner.Executables.Add("STOCK:PipelineTask");
+                child.Name = "ChildOwner";
+                child.SetExpression("Disable", "@[User::Flag]");
+                var loop = (ForLoop)package.Executables.Add("STOCK:ForLoop");
+                loop.Name = "LoopOwner";
+                loop.Variables.Add("Counter", false, "User", 0);
+                loop.InitExpression = "@[User::Counter] = 0";
+                loop.EvalExpression = "@[User::Counter] < 2";
+                loop.AssignExpression = "@[User::Counter] = @[User::Counter] + 1";
+                var constraint = inner.PrecedenceConstraints.Add(child, (TaskHost)inner.Executables.Add("STOCK:PipelineTask"));
+                constraint.EvalOp = DTSPrecedenceEvalOp.ExpressionAndConstraint;
+                constraint.Expression = "@[User::Flag]";
+                var handler = (DtsEventHandler)task.EventHandlers.Add("OnError");
+                handler.Variables.Add("HandlerFlag", false, "User", false);
+                handler.SetExpression("Disable", "@[User::HandlerFlag]");
+                package.Variables.Add("Number", false, "User", 1);
+                var expressionVariable = package.Variables.Add("Calculated", false, "User", 0);
+                expressionVariable.Expression = "@[User::Number] + 1";
+                expressionVariable.EvaluateAsExpression = true;
+                new Application().SaveToXml(path, package, null);
+            }
+            stage = "heuristic.fixture.reload";
+            var before = Hash(path);
+            var loaded = new PackageLoader().Load(path);
+            Require(loaded.Succeeded, "heuristic.load");
+            try
+            {
+                var report = new PackageExpressionDependencyInspector().Inspect(loaded.Session);
+                Require(report.Catalog != null, "heuristic.catalog");
+                Require(report.Analyses.UnsupportedItems.Count == 0, "heuristic.coverage");
+                var package = loaded.Session.Package;
+                var task = (TaskHost)package.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "TaskOwner");
+                var outer = (Sequence)package.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "OuterOwner");
+                var inner = (Sequence)outer.Executables.Cast<Executable>().Single();
+                var child = (TaskHost)inner.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "ChildOwner");
+                foreach (var owner in new DtsContainer[] { package, task, outer, inner, child })
+                {
+                    var expectedScope = owner == child ? inner.ID : owner.ID;
+                    var resolutions = report.Analyses.Items.Where(item => item.OwnerNativeId == owner.ID)
+                        .SelectMany(item => item.Resolutions).Where(item => item.Reference.Name == "Flag").ToArray();
+                    Require(resolutions.Length > 0 && resolutions.All(item => item.ResolvedSymbol != null && item.ResolvedSymbol.ScopeId == expectedScope), "heuristic.shadowing");
+                    var scope = report.Catalog.Scopes.Single(item => item.Id == owner.ID);
+                    Require(scope.Symbols.All(symbol => symbol.ScopeId == owner.ID), "heuristic.declarations");
+                }
+                Require(report.Analyses.Items.SelectMany(item => item.Resolutions).Any(item => item.ResolvedSymbol != null &&
+                    item.ResolvedSymbol.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionSymbolKind.PackageParameter), "heuristic.parameter");
+                Require(report.Analyses.Items.Where(item => item.PropertyName == "LoopExpression").Count() == 3 &&
+                    report.Analyses.Items.Where(item => item.PropertyName == "LoopExpression").All(item => item.IsComplete), "heuristic.loop");
+                Require(report.Analyses.Items.Any(item => item.PropertyName == "ConstraintExpression" && item.IsComplete), "heuristic.constraint");
+                Require(report.Catalog.Scopes.Any(scope => scope.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionScopeKind.EventHandler &&
+                    scope.Symbols.Any(symbol => symbol.Name == "HandlerFlag")), "heuristic.handler");
+                var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var eventScope = report.Catalog.Scopes.Single(scope => scope.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionScopeKind.EventHandler);
+                Require(snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
+                    edge.From == "Executable:" + task.ID && edge.To == "Executable:" + eventScope.Id), "heuristic.handler.containment");
+                var invalidProject = new[] { new SsisAiRuntime.Inspectors.Expressions.ExpressionSymbol("invalid-project", "missing-scope",
+                    SsisAiRuntime.Inspectors.Expressions.ExpressionSymbolKind.ProjectParameter, "$Project", "Unavailable") };
+                var invalidSnapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session, invalidProject).Items.Single();
+                Require(invalidSnapshot.Dependencies.UnsupportedItems.Any(gap => gap.ReasonCode == "expression.target_not_projected") &&
+                    !invalidSnapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.UsesVariable || edge.Kind == DependencyKind.UsesParameter), "heuristic.catalog.failure");
+                var edges = snapshot.Dependencies.Edges.Where(edge => edge.Kind == DependencyKind.UsesVariable || edge.Kind == DependencyKind.UsesParameter).ToArray();
+                Require(edges.Length >= 7 && edges.All(edge => edge.Evidence == "LexicalAndScopeResolved"), "heuristic.edges");
+                stage = "heuristic.cli.graph";
+                var cli = RunCli(new[] { "ai", "dependency.graph", path }, 0, 5);
+                var projectedEdges = ((JArray)cli["results"]["edges"]).Where(edge => (string)edge["kind"] == "UsesVariable" || (string)edge["kind"] == "UsesParameter").ToArray();
+                Require(projectedEdges.Length > 0 && projectedEdges.All(edge => (string)edge["evidence"] == "LexicalAndScopeResolved"), "heuristic.cli.evidence");
+                RequireNoValues(cli);
+                Require(!cli.ToString().Contains("@[User::Flag]") && !cli.ToString().Contains("@[$Package::Toggle]"), "heuristic.cli.text");
+                Require(Hash(path) == before, "heuristic.hash");
+                Console.WriteLine("Heuristic expression verification: PASS; native declaration IDs, nearest-scope shadowing, package parameters, redaction, CLI evidence, and unchanged hash; no execution or validation.");
+            }
+            finally { loaded.Session.Package.Dispose(); }
         }
 
         private static void CreateFixture(string path)
@@ -222,6 +321,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(constant.ExpressionDependencies.IsResolved && constant.ExpressionDependencies.InputLineageIds.Count == 0, "derived.constant");
                 Require(replacement.ExpressionDependencies.IsResolved && replacement.ExpressionDependencies.InputLineageIds.Count == 2, "derived.replacement");
                 Require(conditional.ExpressionDependencies.IsResolved && conditional.ExpressionDependencies.InputLineageIds.Count == 2, "derived.variable.scope");
+                var dependencies = new PackageAnalysisSnapshotFactory().Create(load.Session).Items.Single().Dependencies;
+                var variableEdge = dependencies.Edges.Single(edge => edge.From == "DataFlowComponent:" + flow.ExecutableId + ":" + derive.Id && edge.Kind == DependencyKind.UsesVariable);
+                var target = dependencies.Nodes.Single(node => node.Key == variableEdge.To);
+                Require(target.ParentId == flow.ExecutableId && variableEdge.Evidence == "LexicalAndScopeResolved", "derived.heuristic.scope");
                 foreach (var column in new[] { sum, replacement, constant, conditional })
                 {
                     stage = "derived.query." + column.Name;
@@ -246,7 +349,8 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
 
         private static void ProbeExpressionParser(Package package)
         {
-            var pipeline = (IDTSPipeline130)((TaskHost)package.Executables[0]).InnerObject;
+            var taskHost = (TaskHost)package.Executables[0];
+            var pipeline = (IDTSPipeline130)taskHost.InnerObject;
             var columns = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
                 .Single(component => component.Name == "ConvertNumber").InputCollection[0].InputColumnCollection;
             var original = columns[0];
@@ -297,6 +401,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     Console.WriteLine("Native parser case " + testCase.Label + ": PASS; parsed=" + parsed +
                         "; resolvedReferences=" + (parsed ? observed.BindingLineageIds.Count : 0) + "; collectionChanged=False.");
                 }
+                ProbeVariableParameterBindings(package, taskHost, columns, parser);
             }
             finally
             {
@@ -305,6 +410,158 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     System.Runtime.InteropServices.Marshal.ReleaseComObject(evaluator);
                 }
             }
+        }
+
+        private static void ProbeVariableParameterBindings(Package package, TaskHost taskHost,
+            IDTSInputColumnCollection100 columns, IDTSExpressionEvaluatorEx100 parser)
+        {
+            stage = "expression.binding.fixture.variables";
+            package.Variables.Add("ScopeProbe", false, "User", "package-fixture-value");
+            taskHost.Variables.Add("ScopeProbe", false, "User", true);
+            stage = "expression.binding.fixture.nested";
+            var outerExecutable = package.Executables.Add("STOCK:Sequence");
+            ((IDTSName)outerExecutable).Name = "OuterScopeProbe";
+            var outerSequence = (DtsRuntime.DtsContainer)outerExecutable;
+            var outerVariable = outerSequence.Variables.Add("NestedProbe", false, "User", true);
+            var innerExecutable = ((DtsRuntime.IDTSSequence)outerExecutable).Executables.Add("STOCK:Sequence");
+            ((IDTSName)innerExecutable).Name = "InnerScopeProbe";
+            var innerSequence = (DtsRuntime.DtsContainer)innerExecutable;
+            var innerVariable = innerSequence.Variables.Add("NestedProbe", false, "User", false);
+
+            stage = "expression.binding.fixture.parameter";
+            var packageParameter = package.Parameters.Add("ProbeParameter", TypeCode.String);
+            packageParameter.Value = "parameter-fixture-value";
+
+            var scopes = new[]
+            {
+                new NativeExpressionScope("Package", package.ID, package.Name),
+                new NativeExpressionScope("Task", ((IDTSName)taskHost).ID, ((IDTSName)taskHost).Name),
+                new NativeExpressionScope("Sequence", ((IDTSName)outerExecutable).ID, ((IDTSName)outerExecutable).Name),
+                new NativeExpressionScope("Sequence", ((IDTSName)innerExecutable).ID, ((IDTSName)innerExecutable).Name)
+            };
+
+            stage = "expression.binding.package-scope";
+            var packageProbe = ProbeVariableExpression("package-scope-shadow", "@[User::ScopeProbe] == \"package-fixture-value\"",
+                package.VariableDispenser, scopes, columns, parser);
+            Require(packageProbe.Parsed, "expression.binding.package-parse");
+            ReportVariableBindingProbe("package-scope-shadow", packageProbe, package.ID);
+
+            stage = "expression.binding.task-scope";
+            var taskProbe = ProbeVariableExpression("task-scope-shadow", "@[User::ScopeProbe] ? 1 : 0",
+                taskHost.VariableDispenser, scopes, columns, parser);
+            var taskId = ((IDTSName)taskHost).ID;
+            Require(taskProbe.Parsed, "expression.binding.task-parse");
+            ReportVariableBindingProbe("task-scope-shadow", taskProbe, taskId);
+
+            var outerId = ((IDTSName)outerExecutable).ID;
+            stage = "expression.binding.outer-scope";
+            var outerProbe = ProbeVariableExpression("outer-container-shadow", "@[User::NestedProbe] ? 1 : 0",
+                outerSequence.VariableDispenser, scopes, columns, parser);
+            Require(outerProbe.Parsed, "expression.binding.outer-parse");
+            ReportVariableBindingProbe("outer-container-shadow", outerProbe, outerId);
+            var innerId = ((IDTSName)innerExecutable).ID;
+            stage = "expression.binding.inner-scope";
+            var innerProbe = ProbeVariableExpression("nested-container-shadow", "@[User::NestedProbe] ? 1 : 0",
+                innerSequence.VariableDispenser, scopes, columns, parser);
+            Require(innerProbe.Parsed, "expression.binding.inner-parse");
+            ReportVariableBindingProbe("nested-container-shadow", innerProbe, innerId);
+            Require(outerVariable.QualifiedName == innerVariable.QualifiedName && outerId != innerId,
+                "expression.binding.nested-fixture");
+            Console.WriteLine("Native nested-scope fixture: same qualified name exists in distinct containers.");
+
+            stage = "expression.binding.constant";
+            var constantProbe = ProbeVariableExpression("constant", "1 + 2", taskHost.VariableDispenser,
+                scopes, columns, parser);
+            Require(constantProbe.Parsed && constantProbe.EmittedReferences.Length == 0, "expression.binding.constant");
+            Console.WriteLine("Native constant syntax probe: parsed=True; observedBindings=" +
+                constantProbe.ProvisionalReferences.Length + ".");
+
+            stage = "expression.binding.malformed";
+            var malformedProbe = ProbeVariableExpression("malformed-after-reference", "@[User::ScopeProbe] +",
+                taskHost.VariableDispenser, scopes, columns, parser);
+            Require(!malformedProbe.Parsed && malformedProbe.EmittedReferences.Length == 0,
+                "expression.binding.failed-parse-discards");
+            Console.WriteLine("Native variable binding malformed parse: parsed=False; provisionalReferences=" +
+                malformedProbe.ProvisionalReferences.Length + "; emittedReferences=0.");
+
+            stage = "expression.binding.package-parameter";
+            var packageParameterProbe = ProbeVariableExpression("package-parameter", "$Package::ProbeParameter == \"parameter-fixture-value\"",
+                package.VariableDispenser, scopes, columns, parser);
+            var packageParameterWrappedProbe = ProbeVariableExpression("package-parameter-wrapped", "@[$Package::ProbeParameter] == \"parameter-fixture-value\"",
+                package.VariableDispenser, scopes, columns, parser);
+            stage = "expression.binding.project-parameter";
+            var projectParameterProbe = ProbeVariableExpression("project-parameter", "$Project::ProbeParameter == \"parameter-fixture-value\"",
+                package.VariableDispenser, scopes, columns, parser);
+            var projectParameterWrappedProbe = ProbeVariableExpression("project-parameter-wrapped", "@[$Project::ProbeParameter] == \"parameter-fixture-value\"",
+                package.VariableDispenser, scopes, columns, parser);
+            Console.WriteLine("Native package-parameter syntax probe: parsed=" + packageParameterProbe.Parsed +
+                "; dispenserReadRequests=" + packageParameterProbe.ReadLockRequests.Length +
+                "; observedVariableBindings=" + packageParameterProbe.ProvisionalReferences.Length + ".");
+            Console.WriteLine("Native wrapped package-parameter syntax probe: parsed=" + packageParameterWrappedProbe.Parsed +
+                "; dispenserReadRequests=" + packageParameterWrappedProbe.ReadLockRequests.Length +
+                "; observedVariableBindings=" + packageParameterWrappedProbe.ProvisionalReferences.Length + ".");
+            Console.WriteLine("Native project-parameter syntax probe in standalone package: parsed=" + projectParameterProbe.Parsed +
+                "; dispenserReadRequests=" + projectParameterProbe.ReadLockRequests.Length +
+                "; observedVariableBindings=" + projectParameterProbe.ProvisionalReferences.Length +
+                "; project-backed fixture unavailable.");
+            Console.WriteLine("Native wrapped project-parameter syntax probe in standalone package: parsed=" + projectParameterWrappedProbe.Parsed +
+                "; dispenserReadRequests=" + projectParameterWrappedProbe.ReadLockRequests.Length +
+                "; observedVariableBindings=" + projectParameterWrappedProbe.ProvisionalReferences.Length +
+                "; project-backed fixture unavailable.");
+        }
+
+        private static void ReportVariableBindingProbe(string label, NativeExpressionProbeResult result, string expectedScopeId)
+        {
+            var scopeMatched = result.EmittedReferences.Length == 1 && result.EmittedReferences[0].ScopeId == expectedScopeId;
+            Console.WriteLine("Native variable binding probe " + label + ": parsed=" + result.Parsed +
+                "; readLockRequests=" + result.ReadLockRequests.Length +
+                "; observedBindings=" + result.ProvisionalReferences.Length +
+                "; expectedScopeObserved=" + scopeMatched + "; nativeId=" +
+                (result.ProvisionalReferences.Any(binding => binding.NativeId.Length > 0) ? "available" : "unavailable") + ".");
+        }
+
+        private static NativeExpressionProbeResult ProbeVariableExpression(string label, string expression,
+            VariableDispenser dispenser, IEnumerable<NativeExpressionScope> scopes,
+            IDTSInputColumnCollection100 columns, IDTSExpressionEvaluatorEx100 parser)
+        {
+            var observer = new NativeExpressionVariableDispenserObserver(DtsConvert.GetExtendedInterface(dispenser), scopes);
+            var columnObserver = new NativeExpressionInputColumns(columns);
+            var before = SnapshotColumns(columns);
+            var parsed = false;
+            try
+            {
+                parser.Parse(expression, observer, columnObserver);
+                parsed = true;
+            }
+            catch (Exception)
+            {
+                parsed = false;
+            }
+
+            Require(before == SnapshotColumns(columns) && columnObserver.MutationAttempts == 0,
+                "expression.binding.column-collection-read-only." + label);
+            Require(observer.WriteAttempts == 0 && observer.MutationAttempts == 0 && observer.ValueReadAttempts == 0,
+                "expression.binding.variable-observer-read-only." + label);
+            var provisional = observer.Bindings.ToArray();
+            var emitted = parsed ? provisional : Array.Empty<NativeExpressionVariableBinding>();
+            return new NativeExpressionProbeResult(parsed, observer.ReadLockRequests.ToArray(), provisional, emitted);
+        }
+
+        private sealed class NativeExpressionProbeResult
+        {
+            public NativeExpressionProbeResult(bool parsed, string[] readLockRequests,
+                NativeExpressionVariableBinding[] provisionalReferences, NativeExpressionVariableBinding[] emittedReferences)
+            {
+                Parsed = parsed;
+                ReadLockRequests = readLockRequests;
+                ProvisionalReferences = provisionalReferences;
+                EmittedReferences = emittedReferences;
+            }
+
+            public bool Parsed { get; }
+            public string[] ReadLockRequests { get; }
+            public NativeExpressionVariableBinding[] ProvisionalReferences { get; }
+            public NativeExpressionVariableBinding[] EmittedReferences { get; }
         }
 
         private static string SnapshotColumns(IDTSInputColumnCollection100 columns)

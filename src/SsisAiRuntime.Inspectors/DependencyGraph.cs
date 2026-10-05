@@ -14,7 +14,10 @@ namespace SsisAiRuntime.Inspectors
         ContainsComponent,
         ConnectsComponent,
         ReadsColumn,
-        WritesColumn
+        WritesColumn,
+        HasExpression,
+        UsesVariable,
+        UsesParameter
     }
 
     public sealed class DependencyNode

@@ -60,7 +60,7 @@ namespace SsisAiRuntime.AI
 
             var partialName = graph.Nodes.Where(node => (!kind.HasValue || node.Kind == kind.Value) &&
                 node.Name.IndexOf(selector, StringComparison.OrdinalIgnoreCase) >= 0)
-                .OrderBy(node => node.Key, StringComparer.Ordinal).Take(CandidateLimit).ToArray();
+                .OrderBy(node => node.Key, StringComparer.Ordinal).ToArray();
             if (partialName.Length == 1) { return Resolved(partialName[0]); }
             if (partialName.Length > 1) { return Ambiguous(partialName); }
             return NotFound();

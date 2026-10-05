@@ -13,6 +13,7 @@ namespace SsisAiRuntime.Inspectors
         OutputColumn,
         ExternalMetadataColumn,
         DataFlowPath,
-        DataFlowRuntimeConnection
+        DataFlowRuntimeConnection,
+        ExpressionOwner
     }
 }

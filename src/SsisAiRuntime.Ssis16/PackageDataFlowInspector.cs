@@ -15,6 +15,7 @@ namespace SsisAiRuntime.Ssis16
         private const string SourceLineageProperty = "SourceInputColumnLineageID";
         private static readonly Lazy<HashSet<string>> DataConversionClassIds = new Lazy<HashSet<string>>(() => FindBuiltInClasses("Microsoft.DataConvert", "DTSTransform.DataConvert."));
         private static readonly Lazy<HashSet<string>> DerivedColumnClassIds = new Lazy<HashSet<string>>(() => FindBuiltInClasses("Microsoft.DerivedColumn", "DTSTransform.DerivedColumn."));
+        internal static bool IsDerivedColumnClass(string classId) => DerivedColumnClassIds.Value.Contains(classId);
 
         private static readonly HashSet<string> SafeSettings = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
