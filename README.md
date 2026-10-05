@@ -12,17 +12,17 @@ A headless foundation for inspecting and safely operating on SSIS packages throu
 
 Additional inspectors, graph queries, an AI skill, and mutation workflows are planned follow-on work.
 
-## Prerequisites
+## Runtime Requirements
 
 - Windows x64 with .NET Framework 4.8.
 - SSIS 16 installed, with the providers and custom components needed by the inspected package. Only SSIS 16 x64 has been verified.
 - The built CLI and its application dependencies kept together.
 
-Running the executable does not require .NET 10 or a modern .NET SDK. For source builds, assembly-reference settings, tests, and Windows verification, see [BuildPackage.md](BuildPackage.md).
+Contributor documentation: [BuildPackage.md](BuildPackage.md).
 
 ## Usage
 
-Invoke the built executable directly from PowerShell. The example below uses the Release output location; source-build instructions are in [BuildPackage.md](BuildPackage.md#build).
+Invoke the executable directly. The example below uses the Release output location.
 
 ```powershell
 $cli = '.\src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe'
