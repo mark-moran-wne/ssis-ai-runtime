@@ -11,7 +11,8 @@ namespace SsisAiRuntime.AI
             IEnumerable<VariableOverview> variables, IEnumerable<ParameterOverview> parameters,
             IEnumerable<ExecutableOverview> executables, IEnumerable<SqlStatementOverview> sqlStatements,
             IEnumerable<DataFlowOverview> dataFlows, IEnumerable<ExpressionOverview> expressions,
-            ControlFlowGraph controlFlow, SemanticHandleCatalog catalog, IEnumerable<UnsupportedItem> unsupportedItems)
+            ControlFlowGraph controlFlow, PackageDependencyGraph dependencies, SemanticHandleCatalog catalog,
+            IEnumerable<UnsupportedItem> unsupportedItems)
         {
             Package = package ?? throw new ArgumentNullException(nameof(package));
             Connections = ReadOnly(connections, nameof(connections));
@@ -22,6 +23,7 @@ namespace SsisAiRuntime.AI
             DataFlows = ReadOnly(dataFlows, nameof(dataFlows));
             Expressions = ReadOnly(expressions, nameof(expressions));
             ControlFlow = controlFlow ?? throw new ArgumentNullException(nameof(controlFlow));
+            Dependencies = dependencies ?? throw new ArgumentNullException(nameof(dependencies));
             Catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             UnsupportedItems = ReadOnly(unsupportedItems, nameof(unsupportedItems));
             if (catalog.SessionId != package.SessionId) throw new ArgumentException("The catalog must belong to the package session.", nameof(catalog));
@@ -36,6 +38,7 @@ namespace SsisAiRuntime.AI
         public IReadOnlyList<DataFlowOverview> DataFlows { get; }
         public IReadOnlyList<ExpressionOverview> Expressions { get; }
         public ControlFlowGraph ControlFlow { get; }
+        public PackageDependencyGraph Dependencies { get; }
         public SemanticHandleCatalog Catalog { get; }
         public IReadOnlyList<UnsupportedItem> UnsupportedItems { get; }
         public bool IsComplete => UnsupportedItems.Count == 0;

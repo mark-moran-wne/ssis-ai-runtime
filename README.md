@@ -35,6 +35,10 @@ Usage:
 	SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]
 	SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]
 	SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]
+	  SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>
+	  SsisAiRuntime.Cli.exe ai dependency.query <package.dtsx> --node <node-key> [--recursive]
+	  SsisAiRuntime.Cli.exe ai impact.analysis <package.dtsx> --node <node-key>
+	  SsisAiRuntime.Cli.exe ai question.plan <question>
 
 Output defaults to a bounded summary. Use --details for the full redacted projection.
 ```
@@ -52,6 +56,20 @@ SsisAiRuntime.Cli.exe configuration "C:\path\to\Package.dtsx"
 ```
 
 Run the first example from the repository root. The following examples assume the same Command Prompt remains in the executable directory.
+
+### AI Analysis Tools
+
+The `ai` routes expose bounded, deterministic read-only tools over the same inspector projections. `dependency.query` and `impact.analysis` accept node keys returned by `dependency.graph`; `question.plan` selects an intent only and never resolves package objects or runs a planned tool.
+
+```bat
+SsisAiRuntime.Cli.exe ai package.summary "C:\path\to\Package.dtsx"
+SsisAiRuntime.Cli.exe ai dependency.graph "C:\path\to\Package.dtsx"
+SsisAiRuntime.Cli.exe ai dependency.query "C:\path\to\Package.dtsx" --node "Connection:connection-id" --recursive
+SsisAiRuntime.Cli.exe ai impact.analysis "C:\path\to\Package.dtsx" --node "Connection:connection-id"
+SsisAiRuntime.Cli.exe ai question.plan "What uses this connection?"
+```
+
+The dependency graph includes only projected relationships. Variable and parameter dependency edges are not generated because their references are not currently projected. Ambiguous or missing node keys return a safe selection error. These routes do not execute, validate, or modify packages.
 
 Commands accept a command and a package path. Every command returns a bounded summary by default; add `--details` to return the full redacted projection. The focused commands cover package overview, SQL-task metadata, data-flow lineage, and connections/variables/parameters/expressions. These are projections of the existing services, not a new DTSX parser. SQL text and setting values are deliberately omitted in v1, even when the adapter has sanitized them.
 

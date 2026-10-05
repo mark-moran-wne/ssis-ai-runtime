@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SsisAiRuntime.Core\SsisAiRuntime.Core.csproj" />
     <ProjectReference Include="..\SsisAiRuntime.Inspectors\SsisAiRuntime.Inspectors.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.AI\SsisAiRuntime.AI.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -86,6 +86,10 @@ namespace SsisAiRuntime.Cli
                         "  SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]",
                         "  SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]",
                         "  SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]",
+                        "  SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>",
+                        "  SsisAiRuntime.Cli.exe ai dependency.query <package.dtsx> --node <node-key> [--recursive]",
+                        "  SsisAiRuntime.Cli.exe ai impact.analysis <package.dtsx> --node <node-key>",
+                        "  SsisAiRuntime.Cli.exe ai question.plan <question>",
                         "",
                         "Output defaults to a bounded summary. Use --details for the full redacted projection."
                     });

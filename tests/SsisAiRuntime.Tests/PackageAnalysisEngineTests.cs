@@ -54,8 +54,10 @@ public class PackageAnalysisEngineTests
             Array.Empty<VariableOverview>(), Array.Empty<ParameterOverview>(), new[] { executable }, Array.Empty<DataFlowOverview>());
         var graph = new ControlFlowGraphBuilder().Build(new[] { executable },
             InspectionResult<PrecedenceConstraintOverview>.Complete(Array.Empty<PrecedenceConstraintOverview>()), catalog);
+        var dependencies = new PackageDependencyGraphBuilder().Build(package, new[] { connection }, new[] { executable },
+            Array.Empty<SqlStatementOverview>(), Array.Empty<DataFlowOverview>(), graph, Array.Empty<UnsupportedItem>());
         return new PackageAnalysisSnapshot(package, new[] { connection }, Array.Empty<VariableOverview>(),
             Array.Empty<ParameterOverview>(), new[] { executable }, Array.Empty<SqlStatementOverview>(),
-            Array.Empty<DataFlowOverview>(), Array.Empty<ExpressionOverview>(), graph, catalog, Array.Empty<UnsupportedItem>());
+            Array.Empty<DataFlowOverview>(), Array.Empty<ExpressionOverview>(), graph, dependencies, catalog, Array.Empty<UnsupportedItem>());
     }
 }

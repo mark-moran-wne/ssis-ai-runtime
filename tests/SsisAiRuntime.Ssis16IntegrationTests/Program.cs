@@ -31,6 +31,30 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 stage = "fixture.creation";
                 Require(Environment.Is64BitProcess, "fixture.architecture");
                 CreateFixture(path);
+                stage = "ai.question.plan";
+                var plan = RunCli(new[] { "ai", "question.plan", "What uses this connection?" }, 0);
+                Require((string)plan["tool"] == "question.plan" &&
+                    (string)plan["results"]!["intent"] == "DependencyQuery" &&
+                    !plan.ToString().Contains("What uses this connection?"), "fixture.ai.plan");
+                stage = "ai.package.summary";
+                var aiSummary = RunCli(new[] { "ai", "package.summary", path }, 0, 5);
+                Require((string)aiSummary["tool"] == "package.summary" &&
+                    (string)aiSummary["redaction"]!["policy"] == "metadata-only", "fixture.ai.summary");
+                RequireNoValues(aiSummary);
+                stage = "ai.dependency.graph";
+                var dependencyGraph = RunCli(new[] { "ai", "dependency.graph", path }, 0, 5);
+                var graphNodes = (JArray)dependencyGraph["results"]!["nodes"]!;
+                Require(graphNodes.Count > 0 && (int)dependencyGraph["results"]!["nodeCount"]! >= graphNodes.Count,
+                    "fixture.ai.graph");
+                var nodeKey = (string)graphNodes[0]! ["key"]!;
+                stage = "ai.dependency.query";
+                var dependencyQuery = RunCli(new[] { "ai", "dependency.query", path, "--node", nodeKey, "--recursive" }, 0, 5);
+                Require((string)dependencyQuery["tool"] == "dependency.query" &&
+                    ((JArray)dependencyQuery["results"]!["nodes"]!).Count > 0, "fixture.ai.query");
+                stage = "ai.impact.analysis";
+                var impact = RunCli(new[] { "ai", "impact.analysis", path, "--node", nodeKey }, 0, 5);
+                Require((string)impact["tool"] == "impact.analysis" &&
+                    (string)impact["results"]!["root"]!["key"] == nodeKey, "fixture.ai.impact");
                 stage = "inspect.selection";
                 var selectedReports = RunCli(new[] { "inspect", path, "--include", "lineage" }, 0, 5);
                 Require(((JArray)selectedReports["completedOperations"]).Values<string>().SequenceEqual(new[] { "lineage" }) &&
