@@ -9,6 +9,8 @@ namespace SsisAiRuntime.AI
         public const string DependencyGraph = "dependency.graph";
         public const string DependencyQuery = "dependency.query";
         public const string ImpactAnalysis = "impact.analysis";
+        public const string ResolveSelector = "selector.resolve";
+        public const string RichImpactAnalysis = "impact.classified";
         public const string QuestionPlan = "question.plan";
     }
 }

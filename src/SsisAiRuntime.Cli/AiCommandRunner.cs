@@ -85,6 +85,14 @@ namespace SsisAiRuntime.Cli
                             TryGetNode(args, false, out var impactNode, out _);
                             request = new AiToolRequest(AiToolNames.ImpactAnalysis, nodeKey: impactNode);
                             break;
+                        case "selector.resolve":
+                            TryGetSelector(args, out var selector, out var kind);
+                            request = new AiToolRequest(AiToolNames.ResolveSelector, selector: selector, kind: kind);
+                            break;
+                        case "impact.classified":
+                            TryGetNode(args, false, out var classifiedNode, out _);
+                            request = new AiToolRequest(AiToolNames.RichImpactAnalysis, nodeKey: classifiedNode);
+                            break;
                         default:
                             return WriteError(output, null, 2, "ai.usage", UsageMessage);
                     }
@@ -104,15 +112,49 @@ namespace SsisAiRuntime.Cli
         }
 
         private static bool IsKnownTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
-            tool == "dependency.query" || tool == "impact.analysis" || tool == "question.plan";
+            tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
+            tool == "impact.classified" || tool == "question.plan";
 
         private static bool IsPackageTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
-            tool == "dependency.query" || tool == "impact.analysis";
+            tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
+            tool == "impact.classified";
 
         private static bool HasValidOptions(string[] args, string tool)
         {
             if (tool == "package.summary" || tool == "dependency.graph") { return args.Length == 3; }
+            if (tool == "selector.resolve") { return TryGetSelector(args, out _, out _); }
             return TryGetNode(args, tool == "dependency.query", out _, out _);
+        }
+
+        private static bool TryGetSelector(string[] args, out string selector, out SemanticObjectKind? kind)
+        {
+            selector = string.Empty;
+            kind = null;
+            var selectorSpecified = false;
+            var kindSpecified = false;
+            for (var index = 3; index < args.Length; index++)
+            {
+                if (args[index] == "--selector")
+                {
+                    if (selectorSpecified || index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]) ||
+                        args[index + 1].StartsWith("--")) { return false; }
+                    selector = args[++index];
+                    selectorSpecified = true;
+                }
+                else if (args[index] == "--kind")
+                {
+                    if (kindSpecified || index + 1 >= args.Length ||
+                        !Enum.GetNames(typeof(SemanticObjectKind)).Any(name =>
+                            string.Equals(name, args[index + 1], StringComparison.OrdinalIgnoreCase))) { return false; }
+                    kind = (SemanticObjectKind)Enum.Parse(typeof(SemanticObjectKind), args[++index], true);
+                    kindSpecified = true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            return selectorSpecified;
         }
 
         private static bool TryGetNode(string[] args, bool allowRecursive, out string nodeKey, out bool recursive)
@@ -167,6 +209,8 @@ namespace SsisAiRuntime.Cli
             if (result is AiContext context) { return Project(context); }
             if (result is PackageDependencyGraph graph) { return Project(graph); }
             if (result is ImpactAnalysisResult impact) { return Project(impact); }
+            if (result is DependencySelectorResolution resolution) { return Project(resolution); }
+            if (result is RichImpactAnalysisResult richImpact) { return Project(richImpact); }
             if (result is QuestionPlan plan) { return Project(plan); }
             throw new ArgumentException("The AI tool result type is not supported.", nameof(result));
         }
@@ -248,6 +292,61 @@ namespace SsisAiRuntime.Cli
             ["kind"] = edge.Kind.ToString()
         };
 
+        private static JObject Project(DependencySelectorResolution resolution) => new JObject
+        {
+            ["status"] = resolution.Status.ToString(),
+            ["resolvedNode"] = resolution.ResolvedNode == null ? null : Project(resolution.ResolvedNode),
+            ["candidateCount"] = resolution.CandidateCount,
+            ["returnedCandidateCount"] = resolution.Candidates.Count,
+            ["candidatesOmitted"] = resolution.CandidatesOmitted,
+            ["candidates"] = new JArray(resolution.Candidates.Take(ResultItemLimit).Select(Project))
+        };
+
+        private static JObject Project(RichImpactAnalysisResult impact)
+        {
+            var selectedImpacts = impact.Impacts.Take(ResultItemLimit).ToList();
+            var remainingPathEdges = ResultItemLimit;
+            var returnedPathEdges = 0;
+            var projectedImpacts = new JArray();
+            foreach (var item in selectedImpacts)
+            {
+                var path = item.Path.Take(remainingPathEdges).ToList();
+                remainingPathEdges -= path.Count;
+                returnedPathEdges += path.Count;
+                projectedImpacts.Add(new JObject
+                {
+                    ["node"] = Project(item.Node),
+                    ["category"] = item.Category.ToString(),
+                    ["distance"] = item.Distance,
+                    ["path"] = new JArray(path.Select(Project)),
+                    ["pathEdgesOmitted"] = Math.Max(0, item.Path.Count - path.Count)
+                });
+            }
+
+            var narrative = new AnalysisNarrativeBuilder().Build(impact);
+            var totalPathEdges = impact.Impacts.Sum(item => item.Path.Count);
+            return new JObject
+            {
+                ["root"] = Project(impact.Root),
+                ["impactCount"] = impact.Impacts.Count,
+                ["returnedImpactCount"] = selectedImpacts.Count,
+                ["impactsOmitted"] = Math.Max(0, impact.Impacts.Count - selectedImpacts.Count),
+                ["pathEdgeCount"] = totalPathEdges,
+                ["returnedPathEdgeCount"] = returnedPathEdges,
+                ["pathEdgesOmitted"] = Math.Max(0, totalPathEdges - returnedPathEdges),
+                ["isComplete"] = impact.IsComplete,
+                ["narrative"] = new JObject
+                {
+                    ["summary"] = CliSummary.LimitText(narrative.Summary),
+                    ["coverage"] = CliSummary.LimitText(narrative.Coverage),
+                    ["observations"] = new JArray(narrative.Observations.Take(20).Select(CliSummary.LimitText)),
+                    ["observationsOmitted"] = Math.Max(0, narrative.Observations.Count - 20),
+                    ["redactionPolicy"] = narrative.RedactionPolicy
+                },
+                ["impacts"] = projectedImpacts
+            };
+        }
+
         private static int WriteError(TextWriter output, string? tool, int exitCode, string code, string message) =>
             Write(output, tool, exitCode, null, Array.Empty<UnsupportedItem>(), code, message);
 
@@ -303,6 +402,8 @@ namespace SsisAiRuntime.Cli
 
         private const string UsageMessage = "Usage: SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>; " +
             "ai dependency.query <package.dtsx> --node <node-key> [--recursive]; " +
-            "ai impact.analysis <package.dtsx> --node <node-key>; ai question.plan <question>.";
+            "ai impact.analysis <package.dtsx> --node <node-key>; " +
+            "ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]; " +
+            "ai impact.classified <package.dtsx> --node <node-key>; ai question.plan <question>.";
     }
 }

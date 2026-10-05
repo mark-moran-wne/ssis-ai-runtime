@@ -84,6 +84,38 @@ namespace SsisAiRuntime.AI
                 AddFacts(impact.ImpactedNodes.Select(node => new AiFact("impacted." + node.Kind, node.Name, node.Key)));
                 AddFacts(impact.Paths.Select(edge => new AiFact("impactPath." + edge.Kind, edge.From, edge.To)));
             }
+            else if (result.Result is DependencySelectorResolution resolution)
+            {
+                AddFacts(new[] { new AiFact("selectorResolution", resolution.Status.ToString(), string.Empty) });
+                AddFacts(new[]
+                {
+                    new AiFact("counts", "candidates", resolution.CandidateCount.ToString()),
+                    new AiFact("counts", "candidatesOmitted", resolution.CandidatesOmitted.ToString())
+                });
+                if (resolution.ResolvedNode != null)
+                {
+                    AddFacts(new[] { new AiFact("resolvedNode." + resolution.ResolvedNode.Kind,
+                        resolution.ResolvedNode.Name, resolution.ResolvedNode.Key) });
+                }
+                else
+                {
+                    AddFacts(resolution.Candidates.Select(node =>
+                        new AiFact("candidate." + node.Kind, node.Name, node.Key)));
+                }
+            }
+            else if (result.Result is RichImpactAnalysisResult richImpact)
+            {
+                var narrative = new AnalysisNarrativeBuilder().Build(richImpact);
+                AddFacts(new[]
+                {
+                    new AiFact("impactRoot." + richImpact.Root.Kind, richImpact.Root.Name, richImpact.Root.Key),
+                    new AiFact("impactSummary", narrative.Summary, narrative.Coverage)
+                });
+                AddFacts(richImpact.Impacts.Select(item =>
+                    new AiFact("impact." + item.Category, item.Node.Name, item.Node.Key)));
+                AddFacts(richImpact.Impacts.SelectMany(item => item.Path.Select(edge =>
+                    new AiFact("impactPath." + edge.Kind, edge.From, edge.To))));
+            }
             else if (result.Result is QuestionPlan plan)
             {
                 AddFacts(new[] { new AiFact("questionIntent", plan.Intent.ToString(), plan.ToolName) });

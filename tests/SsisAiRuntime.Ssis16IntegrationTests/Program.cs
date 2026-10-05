@@ -47,6 +47,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(graphNodes.Count > 0 && (int)dependencyGraph["results"]!["nodeCount"]! >= graphNodes.Count,
                     "fixture.ai.graph");
                 var nodeKey = (string)graphNodes[0]! ["key"]!;
+                stage = "ai.selector.resolve";
+                var selector = RunCli(new[] { "ai", "selector.resolve", path, "--selector", nodeKey }, 0, 5);
+                Require((string)selector["results"]!["status"] == "Resolved" &&
+                    (string)selector["results"]!["resolvedNode"]!["key"] == nodeKey, "fixture.ai.selector");
                 stage = "ai.dependency.query";
                 var dependencyQuery = RunCli(new[] { "ai", "dependency.query", path, "--node", nodeKey, "--recursive" }, 0, 5);
                 Require((string)dependencyQuery["tool"] == "dependency.query" &&
@@ -55,6 +59,15 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var impact = RunCli(new[] { "ai", "impact.analysis", path, "--node", nodeKey }, 0, 5);
                 Require((string)impact["tool"] == "impact.analysis" &&
                     (string)impact["results"]!["root"]!["key"] == nodeKey, "fixture.ai.impact");
+                var incomingEdge = ((JArray)dependencyGraph["results"]!["edges"]!).FirstOrDefault();
+                if (incomingEdge != null)
+                {
+                    stage = "ai.impact.classified";
+                    var classified = RunCli(new[] { "ai", "impact.classified", path, "--node", (string)incomingEdge["to"]! }, 0, 5);
+                    Require((string)classified["tool"] == "impact.classified" &&
+                        (string)classified["results"]!["root"]!["key"] == (string)incomingEdge["to"]!, "fixture.ai.classified");
+                    Require((string)classified["results"]!["narrative"]!["redactionPolicy"] == "metadata-only", "fixture.ai.classified.redaction");
+                }
                 stage = "inspect.selection";
                 var selectedReports = RunCli(new[] { "inspect", path, "--include", "lineage" }, 0, 5);
                 Require(((JArray)selectedReports["completedOperations"]).Values<string>().SequenceEqual(new[] { "lineage" }) &&

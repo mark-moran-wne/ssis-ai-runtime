@@ -41,6 +41,10 @@ namespace SsisAiRuntime.AI
                         return Dependency(snapshot, request);
                     case AiToolNames.ImpactAnalysis:
                         return Impact(snapshot, request);
+                    case AiToolNames.ResolveSelector:
+                        return ResolveSelector(snapshot, request);
+                    case AiToolNames.RichImpactAnalysis:
+                        return RichImpact(snapshot, request);
                     case AiToolNames.QuestionPlan:
                         return BuildQuestionPlan(request);
                     default:
@@ -122,6 +126,28 @@ namespace SsisAiRuntime.AI
                 return AiToolResult.Failure(request.ToolName, "ai.question.required", "A question is required.");
             }
             return Success(request, new QuestionPlanner().Plan(request.Question), Array.Empty<UnsupportedItem>());
+        }
+
+        private static AiToolResult ResolveSelector(PackageAnalysisSnapshot snapshot, AiToolRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Selector))
+            {
+                return AiToolResult.Failure(request.ToolName, "ai.selector.required", "A selector is required.");
+            }
+            return Success(request, new DependencySelectorResolver().Resolve(snapshot.Dependencies, request.Selector, request.Kind),
+                snapshot.Dependencies.UnsupportedItems);
+        }
+
+        private static AiToolResult RichImpact(PackageAnalysisSnapshot snapshot, AiToolRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.NodeKey))
+            {
+                return AiToolResult.Failure(request.ToolName, "ai.impact.node_required", "An impact node key is required.");
+            }
+            var query = new RichImpactAnalysisQuery().Analyze(snapshot.Dependencies, request.NodeKey);
+            return query.Items.Count == 1
+                ? Success(request, query.Items[0], query.UnsupportedItems)
+                : AiToolResult.Failure(request.ToolName, "ai.impact.selection_invalid", "The impact node was missing or ambiguous.");
         }
 
         private static AiToolResult Success(AiToolRequest request, object result, IEnumerable<UnsupportedItem> unsupported) =>

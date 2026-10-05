@@ -89,6 +89,8 @@ namespace SsisAiRuntime.Cli
                         "  SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>",
                         "  SsisAiRuntime.Cli.exe ai dependency.query <package.dtsx> --node <node-key> [--recursive]",
                         "  SsisAiRuntime.Cli.exe ai impact.analysis <package.dtsx> --node <node-key>",
+                        "  SsisAiRuntime.Cli.exe ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]",
+                        "  SsisAiRuntime.Cli.exe ai impact.classified <package.dtsx> --node <node-key>",
                         "  SsisAiRuntime.Cli.exe ai question.plan <question>",
                         "",
                         "Output defaults to a bounded summary. Use --details for the full redacted projection."
