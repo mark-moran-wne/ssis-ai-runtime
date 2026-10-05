@@ -49,6 +49,22 @@ public sealed class ExpressionScopeResolverTests
     }
 
     [Fact]
+    public void UnwrappedCounterDoesNotFavorUserOtherOrSystemNamespace()
+    {
+        var catalog = new ExpressionScopeCatalog(new[] { Scope("package", "",
+            new ExpressionSymbol("system-counter", "package", ExpressionSymbolKind.SystemVariable, "System", "Counter"),
+            Variable("user-counter", "package", "Counter", "User"),
+            Variable("other-counter", "package", "Counter", "Other")) });
+
+        var result = Resolve(catalog, "package", "@Counter");
+
+        Assert.Equal(ExpressionReferenceResolutionStatus.Ambiguous, result.Status);
+        Assert.Null(result.ResolvedSymbol);
+        Assert.Contains(result.Candidates, symbol => symbol.QualifiedName == "User::Counter");
+        Assert.Contains(result.Candidates, symbol => symbol.QualifiedName == "Other::Counter");
+    }
+
+    [Fact]
     public void ParameterInventoriesAndSystemVariablesAreExplicit()
     {
         var catalog = new ExpressionScopeCatalog(new[] { Scope("package", "",
