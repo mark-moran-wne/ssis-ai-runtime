@@ -48,6 +48,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var graphNodes = (JArray)dependencyGraph["results"]!["nodes"]!;
                 Require(graphNodes.Count > 0 && (int)dependencyGraph["results"]!["nodeCount"]! >= graphNodes.Count,
                     "fixture.ai.graph");
+                VerifyCorpusCli(path, directory);
                 var nodeKey = (string)graphNodes[0]! ["key"]!;
                 stage = "ai.selector.resolve";
                 var selector = RunCli(new[] { "ai", "selector.resolve", path, "--selector", nodeKey }, 0, 5);
@@ -211,6 +212,52 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Console.WriteLine("Parsed SQL verification: PASS; connection-scoped schema objects, parsed evidence, dynamic gaps, default redaction, unchanged hash; no database connection, execution, or validation.");
             }
             finally { loaded.Session.Package.Dispose(); }
+        }
+
+        private static void VerifyCorpusCli(string packagePath, string directory)
+        {
+            var baselinePath = Path.Combine(directory, "corpus-baseline.json");
+            stage = "corpus.snapshot";
+            var snapshot = RunCli(new[] { "ai", "corpus.snapshot", packagePath }, 0, 5);
+            Require((string)snapshot["tool"] == "corpus.snapshot" &&
+                (string)snapshot["results"]!["snapshot"]!["schemaVersion"] == "1.0" &&
+                (int)snapshot["results"]!["snapshot"]!["nodeCount"] > 0, "corpus.snapshot.result");
+
+            stage = "corpus.approve";
+            var approved = RunCli(new[] { "ai", "corpus.approve", packagePath, "--baseline", baselinePath }, 0, 5);
+            Require((bool)approved["results"]!["approved"]! && File.Exists(baselinePath), "corpus.approve.result");
+
+            stage = "corpus.diff.match";
+            var diff = RunCli(new[] { "ai", "corpus.diff", packagePath, "--baseline", baselinePath }, 0, 5);
+            Require((bool)diff["results"]!["isMatch"]!, "corpus.diff.match");
+
+            stage = "corpus.verify.match";
+            var verified = RunCli(new[] { "ai", "corpus.verify", packagePath, "--baseline", baselinePath }, 0, 5);
+            Require((bool)verified["results"]!["isMatch"]! && ((JArray)verified["diagnostics"]!).Count == 0,
+                "corpus.verify.match");
+
+            var baseline = JObject.Parse(File.ReadAllText(baselinePath));
+            baseline["snapshot"]!["nodes"]![0]!["name"] = "changed-baseline-metadata";
+            File.WriteAllText(baselinePath, baseline.ToString());
+            stage = "corpus.verify.mismatch";
+            var mismatch = RunCli(new[] { "ai", "corpus.verify", packagePath, "--baseline", baselinePath }, 4);
+            Require(!(bool)mismatch["succeeded"]! &&
+                (string)mismatch["diagnostics"]![0]!["code"] == "corpus.verify.mismatch" &&
+                ((JArray)mismatch["results"]!["changes"]!["changedNodes"]!).Count > 0,
+                "corpus.verify.mismatch.result");
+
+            baseline["schemaVersion"] = "2.0";
+            File.WriteAllText(baselinePath, baseline.ToString());
+            stage = "corpus.approve.upgrade.required";
+            var upgradeRequired = RunCli(new[] { "ai", "corpus.approve", packagePath, "--baseline", baselinePath }, 4);
+            Require((string)upgradeRequired["diagnostics"]![0]!["code"] == "corpus.baseline.incompatible",
+                "corpus.approve.upgrade.required.result");
+            stage = "corpus.approve.upgrade";
+            var upgraded = RunCli(new[] { "ai", "corpus.approve", packagePath, "--baseline", baselinePath, "--upgrade" }, 0, 5);
+            Require((bool)upgraded["results"]!["approved"]! && (bool)upgraded["results"]!["upgraded"]! &&
+                (string)JObject.Parse(File.ReadAllText(baselinePath))["schemaVersion"] == "1.0",
+                "corpus.approve.upgrade.result");
+            Console.WriteLine("Corpus baseline lifecycle: PASS; snapshot, approve, matching diff/verify, mismatch failure, and explicit schema upgrade.");
         }
 
         private static void VerifyHeuristicExpressions(string directory)

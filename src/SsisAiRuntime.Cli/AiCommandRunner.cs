@@ -36,6 +36,16 @@ namespace SsisAiRuntime.Cli
                         new AiToolRequest(AiToolNames.QuestionPlan, question: args[2])));
                 }
 
+                if (IsCorpusTool(tool))
+                {
+                    if (!TryGetCorpusOptions(args, tool, out var baselinePath, out var upgradeBaseline) ||
+                        args.Length < 3 || string.IsNullOrWhiteSpace(args[2]))
+                    {
+                        return WriteError(output, tool, 2, "ai.usage", UsageMessage);
+                    }
+                    return RunCorpusTool(output, tool, args[2], baselinePath, upgradeBaseline);
+                }
+
                 if (!IsPackageTool(tool) || args.Length < 3 || string.IsNullOrWhiteSpace(args[2]))
                 {
                     return WriteError(output, IsKnownTool(tool) ? tool : null, 2, "ai.usage", UsageMessage);
@@ -115,13 +125,129 @@ namespace SsisAiRuntime.Cli
             }
         }
 
+        private static int RunCorpusTool(TextWriter output, string tool, string packagePath,
+            string baselinePath, bool upgradeBaseline)
+        {
+            if (!File.Exists(packagePath))
+            {
+                return WriteError(output, tool, 3, "package.path.not_found",
+                    "The package file is missing or inaccessible. The path is omitted.");
+            }
+
+            if (tool != "corpus.snapshot" && string.IsNullOrWhiteSpace(baselinePath))
+            {
+                return WriteError(output, tool, 2, "ai.usage", UsageMessage);
+            }
+
+            var load = new PackageLoader().Load(packagePath);
+            if (!load.Succeeded)
+            {
+                return WriteError(output, tool, 3, "ssis.package.load_failed",
+                    "The SSIS runtime failed to load the package. Details are omitted.");
+            }
+
+            try
+            {
+                var snapshotResult = new PackageAnalysisSnapshotFactory().Create(load.Session, includeSanitizedText: false);
+                if (snapshotResult.Items.Count != 1)
+                {
+                    return WriteError(output, tool, 4, "ai.snapshot.failed",
+                        "The package analysis snapshot could not be produced.");
+                }
+
+                var analysis = snapshotResult.Items[0];
+                var corpus = new CorpusSnapshotBuilder().Build(analysis);
+                switch (tool)
+                {
+                    case "corpus.snapshot":
+                        return Write(output, tool, corpus.IsComplete ? 0 : 5,
+                            new JObject
+                            {
+                                ["snapshot"] = CorpusBaselineStore.ProjectSnapshot(corpus)
+                            }, analysis.UnsupportedItems);
+                    case "corpus.diff":
+                        if (!CorpusBaselineStore.TryRead(baselinePath, out var baseline, out var diffErrorCode,
+                            out var diffErrorMessage, out _))
+                        {
+                            return WriteError(output, tool, 4, diffErrorCode, diffErrorMessage);
+                        }
+
+                        var diff = new CorpusDiffEngine().Diff(baseline, corpus);
+                        return Write(output, tool, corpus.IsComplete ? 0 : 5,
+                            ProjectDiffResult(baselinePath, diff, corpus), analysis.UnsupportedItems);
+                    case "corpus.verify":
+                        if (!CorpusBaselineStore.TryRead(baselinePath, out var verifyBaseline, out var verifyErrorCode,
+                            out var verifyErrorMessage, out _))
+                        {
+                            return WriteError(output, tool, 4, verifyErrorCode, verifyErrorMessage);
+                        }
+
+                        var verifyDiff = new CorpusDiffEngine().Diff(verifyBaseline, corpus);
+                        if (!verifyDiff.IsMatch)
+                        {
+                            return Write(output, tool, 4, ProjectDiffResult(baselinePath, verifyDiff, corpus),
+                                analysis.UnsupportedItems, "corpus.verify.mismatch",
+                                "The package corpus does not match the approved baseline.");
+                        }
+                        return Write(output, tool, corpus.IsComplete ? 0 : 5,
+                            ProjectDiffResult(baselinePath, verifyDiff, corpus), analysis.UnsupportedItems);
+                    case "corpus.approve":
+                        var previousVersion = string.Empty;
+                        if (File.Exists(baselinePath))
+                        {
+                            if (!CorpusBaselineStore.TryRead(baselinePath, out _, out var approveErrorCode,
+                                out var approveErrorMessage, out previousVersion))
+                            {
+                                var upgradeRequired = string.Equals(approveErrorCode, "corpus.baseline.incompatible", StringComparison.Ordinal);
+                                if (!upgradeRequired || !upgradeBaseline)
+                                {
+                                    return WriteError(output, tool, 4, approveErrorCode, approveErrorMessage);
+                                }
+                            }
+                            else if (!string.Equals(previousVersion, CorpusSchema.CurrentVersion, StringComparison.Ordinal) && !upgradeBaseline)
+                            {
+                                return WriteError(output, tool, 2, "corpus.baseline.upgrade_required",
+                                    "The baseline schema version differs. Re-run with --upgrade to update the baseline schema.");
+                            }
+                        }
+
+                        if (!CorpusBaselineStore.TryWrite(baselinePath, corpus, tool, packagePath, previousVersion,
+                            !string.IsNullOrWhiteSpace(previousVersion) && !string.Equals(previousVersion, CorpusSchema.CurrentVersion, StringComparison.Ordinal),
+                            out var writeErrorCode, out var writeErrorMessage))
+                        {
+                            return WriteError(output, tool, 4, writeErrorCode, writeErrorMessage);
+                        }
+
+                        return Write(output, tool, corpus.IsComplete ? 0 : 5,
+                            new JObject
+                            {
+                                ["baselinePath"] = Path.GetFileName(baselinePath),
+                                ["snapshot"] = CorpusBaselineStore.ProjectSnapshot(corpus),
+                                ["approved"] = true,
+                                ["upgraded"] = !string.IsNullOrWhiteSpace(previousVersion) &&
+                                    !string.Equals(previousVersion, CorpusSchema.CurrentVersion, StringComparison.Ordinal)
+                            }, analysis.UnsupportedItems);
+                    default:
+                        return WriteError(output, null, 2, "ai.usage", UsageMessage);
+                }
+            }
+            finally
+            {
+                load.Session.Package.Dispose();
+            }
+        }
+
         private static bool IsKnownTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
             tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
-            tool == "impact.classified" || tool == "question.plan" || tool == "context";
+            tool == "impact.classified" || tool == "question.plan" || tool == "context" ||
+            tool == "corpus.snapshot" || tool == "corpus.diff" || tool == "corpus.verify" || tool == "corpus.approve";
 
         private static bool IsPackageTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
             tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
             tool == "impact.classified" || tool == "context";
+
+        private static bool IsCorpusTool(string tool) => tool == "corpus.snapshot" || tool == "corpus.diff" ||
+            tool == "corpus.verify" || tool == "corpus.approve";
 
         private static bool HasValidOptions(string[] args, string tool)
         {
@@ -130,6 +256,61 @@ namespace SsisAiRuntime.Cli
             if (tool == "selector.resolve") { return TryGetSelector(args, out _, out _); }
             return TryGetNode(args, tool == "dependency.query", out _, out _);
         }
+
+        private static bool TryGetCorpusOptions(string[] args, string tool, out string baselinePath, out bool upgradeBaseline)
+        {
+            baselinePath = string.Empty;
+            upgradeBaseline = false;
+            if (tool == "corpus.snapshot") { return args.Length == 3; }
+
+            var baselineSpecified = false;
+            for (var index = 3; index < args.Length; index++)
+            {
+                if (args[index] == "--baseline")
+                {
+                    if (baselineSpecified || index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]) ||
+                        args[index + 1].StartsWith("--")) { return false; }
+                    baselinePath = args[++index];
+                    baselineSpecified = true;
+                }
+                else if (args[index] == "--upgrade" && tool == "corpus.approve" && !upgradeBaseline)
+                {
+                    upgradeBaseline = true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            return baselineSpecified;
+        }
+
+        private static JObject ProjectDiffResult(string baselinePath, CorpusDiffResult diff, CorpusSnapshot candidate) => new JObject
+        {
+            ["baselinePath"] = Path.GetFileName(baselinePath),
+            ["candidateSnapshot"] = CorpusBaselineStore.ProjectSnapshot(candidate),
+            ["isMatch"] = diff.IsMatch,
+            ["packageChanged"] = diff.PackageChanged,
+            ["changes"] = new JObject
+            {
+                ["addedNodes"] = new JArray(diff.AddedNodes),
+                ["removedNodes"] = new JArray(diff.RemovedNodes),
+                ["changedNodes"] = new JArray(diff.ChangedNodes),
+                ["addedEdges"] = new JArray(diff.AddedEdges),
+                ["removedEdges"] = new JArray(diff.RemovedEdges),
+                ["addedCoverageGaps"] = new JArray(diff.AddedCoverageGaps.Select(gap => new JObject
+                {
+                    ["reasonCode"] = gap.ReasonCode,
+                    ["count"] = gap.Count
+                })),
+                ["removedCoverageGaps"] = new JArray(diff.RemovedCoverageGaps.Select(gap => new JObject
+                {
+                    ["reasonCode"] = gap.ReasonCode,
+                    ["count"] = gap.Count
+                }))
+            }
+        };
 
         private static bool TryGetSelector(string[] args, out string selector, out SemanticObjectKind? kind)
         {
@@ -453,6 +634,9 @@ namespace SsisAiRuntime.Cli
             "ai dependency.query <package.dtsx> --node <node-key> [--recursive]; " +
             "ai impact.analysis <package.dtsx> --node <node-key>; " +
             "ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]; " +
-            "ai impact.classified <package.dtsx> --node <node-key>; ai context <package.dtsx> [--include-sanitized-text]; ai question.plan <question>.";
+            "ai impact.classified <package.dtsx> --node <node-key>; ai context <package.dtsx> [--include-sanitized-text]; " +
+            "ai corpus.snapshot <package.dtsx>; ai corpus.diff <package.dtsx> --baseline <file>; " +
+            "ai corpus.verify <package.dtsx> --baseline <file>; ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]; " +
+            "ai question.plan <question>.";
     }
 }

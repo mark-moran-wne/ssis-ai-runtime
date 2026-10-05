@@ -42,6 +42,10 @@ Usage:
 	  SsisAiRuntime.Cli.exe ai impact.classified <package.dtsx> --node <node-key>
 	  SsisAiRuntime.Cli.exe ai question.plan <question>
 	  SsisAiRuntime.Cli.exe ai context <package.dtsx> [--include-sanitized-text]
+	  SsisAiRuntime.Cli.exe ai corpus.snapshot <package.dtsx>
+	  SsisAiRuntime.Cli.exe ai corpus.diff <package.dtsx> --baseline <file>
+	  SsisAiRuntime.Cli.exe ai corpus.verify <package.dtsx> --baseline <file>
+	  SsisAiRuntime.Cli.exe ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]
 
 Output defaults to a bounded summary. Use --details for the full redacted projection.
 ```
@@ -73,6 +77,19 @@ SsisAiRuntime.Cli.exe ai selector.resolve "C:\path\to\Package.dtsx" --selector "
 SsisAiRuntime.Cli.exe ai impact.classified "C:\path\to\Package.dtsx" --node "Connection:connection-id"
 SsisAiRuntime.Cli.exe ai question.plan "What uses this connection?"
 ```
+
+### Corpus Baselines
+
+Corpus snapshots persist the package dependency graph, allowlisted edge evidence, and aggregated coverage gaps in a versioned JSON baseline. They omit raw SQL, expressions, settings, values, and absolute package paths. Node and edge inventories are deterministically ordered; the generated timestamp is baseline metadata.
+
+```bat
+SsisAiRuntime.Cli.exe ai corpus.snapshot "C:\path\to\Package.dtsx"
+SsisAiRuntime.Cli.exe ai corpus.approve "C:\path\to\Package.dtsx" --baseline ".\baselines\package.json"
+SsisAiRuntime.Cli.exe ai corpus.diff "C:\path\to\Package.dtsx" --baseline ".\baselines\package.json"
+SsisAiRuntime.Cli.exe ai corpus.verify "C:\path\to\Package.dtsx" --baseline ".\baselines\package.json"
+```
+
+`corpus.approve` creates or replaces the named baseline. Review changes before approving them; the command does not save or modify the SSIS package. `corpus.diff` reports added, removed, and metadata-changed nodes, edge changes, package identity/name changes, and coverage-gap deltas. `corpus.verify` returns exit `0` when the snapshot matches and is complete, `5` when it matches but has coverage gaps, and `4` with `corpus.verify.mismatch` when it differs. Schema major versions must match; use `--upgrade` on `corpus.approve` to explicitly replace an incompatible baseline with the current schema. Baseline files may contain package names, IDs, and dependency structure; review access controls before committing or publishing them. See [BuildPackage.md](BuildPackage.md#native-integration-tests) for the native CLI lifecycle verification.
 
 Selector resolution checks exact keys, exact native IDs, exact names, then bounded partial-name matches; ambiguous results return candidates without choosing one. Classified impact includes shortest projected paths to consumers. Variable and parameter expression dependencies use ANTLR lexical candidates plus deterministic resolution against native declaration IDs and container hierarchy. Only unique resolutions produce `UsesVariable` or `UsesParameter` edges, labeled with `evidence: "LexicalAndScopeResolved"` in graph/impact output and bounded AI facts. These are heuristic relationships, not native parser bindings. These routes do not execute, validate, or modify packages.
 
