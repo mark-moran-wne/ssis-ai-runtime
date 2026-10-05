@@ -12,5 +12,6 @@ namespace SsisAiRuntime.AI
         public const string ResolveSelector = "selector.resolve";
         public const string RichImpactAnalysis = "impact.classified";
         public const string QuestionPlan = "question.plan";
+        public const string LlmContext = "context";
     }
 }

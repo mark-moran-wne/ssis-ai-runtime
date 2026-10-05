@@ -59,7 +59,8 @@ namespace SsisAiRuntime.Cli
 
                 try
                 {
-                    var snapshotResult = new PackageAnalysisSnapshotFactory().Create(load.Session);
+                    var includeSanitizedText = tool == "context" && args.Length == 4;
+                    var snapshotResult = new PackageAnalysisSnapshotFactory().Create(load.Session, includeSanitizedText);
                     if (snapshotResult.Items.Count != 1)
                     {
                         return WriteError(output, tool, 4, "ai.snapshot.failed",
@@ -70,6 +71,9 @@ namespace SsisAiRuntime.Cli
                     AiToolRequest request;
                     switch (tool)
                     {
+                        case "context":
+                            request = new AiToolRequest(AiToolNames.LlmContext, includeSanitizedText: includeSanitizedText);
+                            break;
                         case "package.summary":
                             request = new AiToolRequest(AiToolNames.PackageSummary);
                             break;
@@ -113,14 +117,15 @@ namespace SsisAiRuntime.Cli
 
         private static bool IsKnownTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
             tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
-            tool == "impact.classified" || tool == "question.plan";
+            tool == "impact.classified" || tool == "question.plan" || tool == "context";
 
         private static bool IsPackageTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
             tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
-            tool == "impact.classified";
+            tool == "impact.classified" || tool == "context";
 
         private static bool HasValidOptions(string[] args, string tool)
         {
+            if (tool == "context") { return args.Length == 3 || (args.Length == 4 && args[3] == "--include-sanitized-text"); }
             if (tool == "package.summary" || tool == "dependency.graph") { return args.Length == 3; }
             if (tool == "selector.resolve") { return TryGetSelector(args, out _, out _); }
             return TryGetNode(args, tool == "dependency.query", out _, out _);
@@ -201,11 +206,13 @@ namespace SsisAiRuntime.Cli
             var projected = result.Result is PackageIntelligenceSummary
                 ? Project(new AiContextBuilder().Build(result, ResultItemLimit))
                 : Project(result.Result);
-            return Write(output, result.ToolName, result.IsComplete ? 0 : 5, projected, result.UnsupportedItems);
+            return Write(output, result.ToolName, result.IsComplete ? 0 : 5, projected, result.UnsupportedItems,
+                sanitizedTextIncluded: result.Result is LlmContext llm && llm.SanitizedTextIncluded);
         }
 
         private static JObject Project(object result)
         {
+            if (result is LlmContext llm) { return Project(llm); }
             if (result is AiContext context) { return Project(context); }
             if (result is PackageDependencyGraph graph) { return Project(graph); }
             if (result is ImpactAnalysisResult impact) { return Project(impact); }
@@ -214,6 +221,44 @@ namespace SsisAiRuntime.Cli
             if (result is QuestionPlan plan) { return Project(plan); }
             throw new ArgumentException("The AI tool result type is not supported.", nameof(result));
         }
+
+        private static JObject Project(LlmContext context)
+        {
+            var result = new JObject
+            {
+                ["package"] = new JObject { ["name"] = CliSummary.LimitText(context.PackageName), ["id"] = CliSummary.LimitText(context.PackageId) },
+                ["isComplete"] = context.IsComplete,
+                ["redactionPolicy"] = context.RedactionPolicy,
+                ["interpretationBoundary"] = context.InterpretationBoundary,
+                ["dependencyNodes"] = new JArray(context.DependencyNodes.Select(Project)),
+                ["dependencyEdges"] = new JArray(context.DependencyEdges.Select(Project)),
+                ["controlFlowFacts"] = new JArray(context.ControlFlowFacts.Select(ProjectFact)),
+                ["lineageFacts"] = new JArray(context.LineageFacts.Select(ProjectFact)),
+                ["omitted"] = new JObject
+                {
+                    ["dependencyNodes"] = context.DependencyNodesOmitted, ["dependencyEdges"] = context.DependencyEdgesOmitted,
+                    ["controlFlowFacts"] = context.ControlFlowFactsOmitted, ["lineageFacts"] = context.LineageFactsOmitted,
+                    ["texts"] = context.TextsOmitted
+                }
+            };
+            if (context.SanitizedTextIncluded)
+            {
+                result["sanitizedTexts"] = new JArray(context.SanitizedTexts.Select(text => new JObject
+                {
+                    ["ownerNativeId"] = CliSummary.LimitText(text.OwnerNativeId), ["ownerScopeId"] = CliSummary.LimitText(text.OwnerScopeId),
+                    ["propertyCategory"] = text.PropertyCategory, ["kind"] = text.Kind.ToString(),
+                    ["sanitizedText"] = text.Text, ["isAvailable"] = text.IsAvailable, ["charactersOmitted"] = text.CharactersOmitted,
+                    ["coverageCode"] = text.CoverageCode, ["trust"] = text.Trust, ["evidence"] = text.Evidence
+                }));
+            }
+            return result;
+        }
+
+        private static JObject ProjectFact(AiFact fact) => new JObject
+        {
+            ["kind"] = fact.Kind, ["name"] = CliSummary.LimitText(fact.Name), ["reference"] = CliSummary.LimitText(fact.Reference),
+            ["evidence"] = DependencyEvidence.Safe(fact.Evidence)
+        };
 
         private static JObject Project(AiContext context) => new JObject
         {
@@ -225,7 +270,7 @@ namespace SsisAiRuntime.Cli
                 ["kind"] = CliSummary.LimitText(fact.Kind),
                 ["name"] = CliSummary.LimitText(fact.Name),
                 ["reference"] = CliSummary.LimitText(fact.Reference),
-                ["evidence"] = fact.Evidence == "LexicalAndScopeResolved" ? "LexicalAndScopeResolved" : null
+                ["evidence"] = DependencyEvidence.Safe(fact.Evidence)
             })),
             ["factsOmitted"] = context.FactsOmitted
         };
@@ -291,7 +336,7 @@ namespace SsisAiRuntime.Cli
             ["from"] = CliSummary.LimitText(edge.From),
             ["to"] = CliSummary.LimitText(edge.To),
             ["kind"] = edge.Kind.ToString(),
-            ["evidence"] = edge.Evidence == "LexicalAndScopeResolved" ? "LexicalAndScopeResolved" : null
+            ["evidence"] = DependencyEvidence.Safe(edge.Evidence)
         };
 
         private static JObject Project(DependencySelectorResolution resolution) => new JObject
@@ -353,7 +398,7 @@ namespace SsisAiRuntime.Cli
             Write(output, tool, exitCode, null, Array.Empty<UnsupportedItem>(), code, message);
 
         private static int Write(TextWriter output, string? tool, int exitCode, JObject? results,
-            IEnumerable<UnsupportedItem> unsupportedItems, string errorCode = "", string errorMessage = "")
+            IEnumerable<UnsupportedItem> unsupportedItems, string errorCode = "", string errorMessage = "", bool sanitizedTextIncluded = false)
         {
             var unsupported = unsupportedItems.ToArray();
             var diagnostics = errorCode.Length == 0
@@ -386,7 +431,9 @@ namespace SsisAiRuntime.Cli
                 },
                 ["redaction"] = new JObject
                 {
-                    ["policy"] = "metadata-only",
+                    ["policy"] = sanitizedTextIncluded ? "sanitized-context-opt-in" : "metadata-only",
+                    ["rawTextOmitted"] = true,
+                    ["sanitizedTextIncluded"] = sanitizedTextIncluded,
                     ["applied"] = true,
                     ["connectionStringsOmitted"] = true,
                     ["variableValuesOmitted"] = true,
@@ -406,6 +453,6 @@ namespace SsisAiRuntime.Cli
             "ai dependency.query <package.dtsx> --node <node-key> [--recursive]; " +
             "ai impact.analysis <package.dtsx> --node <node-key>; " +
             "ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]; " +
-            "ai impact.classified <package.dtsx> --node <node-key>; ai question.plan <question>.";
+            "ai impact.classified <package.dtsx> --node <node-key>; ai context <package.dtsx> [--include-sanitized-text]; ai question.plan <question>.";
     }
 }

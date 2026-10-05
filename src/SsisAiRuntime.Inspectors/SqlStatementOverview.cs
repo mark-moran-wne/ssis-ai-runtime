@@ -1,3 +1,5 @@
+using SsisAiRuntime.Inspectors.SqlDependencies;
+
 namespace SsisAiRuntime.Inspectors
 {
     public sealed class SqlStatementOverview
@@ -11,7 +13,9 @@ namespace SsisAiRuntime.Inspectors
             bool statementTextRedacted,
             string connectionManagerId,
             string connectionManagerName,
-            int? parameterBindingCount)
+            int? parameterBindingCount,
+            SqlDependencyResolution sqlDependencies = null,
+            SanitizedTextSnippet sanitizedText = null)
         {
             TaskId = taskId ?? string.Empty;
             TaskName = taskName ?? string.Empty;
@@ -22,6 +26,8 @@ namespace SsisAiRuntime.Inspectors
             ConnectionManagerId = connectionManagerId ?? string.Empty;
             ConnectionManagerName = connectionManagerName ?? string.Empty;
             ParameterBindingCount = parameterBindingCount;
+            SqlDependencies = sqlDependencies;
+            SanitizedText = sanitizedText;
         }
 
         public string TaskId { get; }
@@ -41,5 +47,7 @@ namespace SsisAiRuntime.Inspectors
         public string ConnectionManagerName { get; }
 
         public int? ParameterBindingCount { get; }
+        public SqlDependencyResolution SqlDependencies { get; }
+        public SanitizedTextSnippet SanitizedText { get; }
     }
 }

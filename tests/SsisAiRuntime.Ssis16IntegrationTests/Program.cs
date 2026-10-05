@@ -109,6 +109,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     Require(Hash(path) == before, "fixture.parser.hash");
                     VerifyDerivedFixture(directory);
                     VerifyHeuristicExpressions(directory);
+                    VerifySqlDependencies(directory);
                     if (args.Length == 1) { VerifyExistingPackage(args[0]); }
                     return 0;
                 }
@@ -126,6 +127,90 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             {
                 Directory.Delete(directory, true);
             }
+        }
+
+        private static void VerifySqlDependencies(string directory)
+        {
+            stage = "sql.fixture.creation";
+            var path = Path.Combine(directory, "SqlDependencies.dtsx");
+            var application = new Application();
+            using (var package = new Package { Name = "SqlDependencies", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+            {
+                var contextVariable = package.Variables.Add("ContextValue", false, "User", "variable-fixture-secret");
+                contextVariable.Expression = "\"expression-fixture-secret\"";
+                contextVariable.EvaluateAsExpression = true;
+                foreach (var suffix in new[] { "A", "B" })
+                {
+                    stage = "sql.fixture.connection";
+                    var connection = package.Connections.Add("OLEDB");
+                    connection.Name = "SqlConnection" + suffix;
+                    stage = "sql.fixture.provider";
+                    connection.ConnectionString = "Provider=SQLOLEDB;Data Source=(local);Initial Catalog=Fixture" + suffix + ";Integrated Security=SSPI;";
+                    stage = "sql.fixture.task";
+                    var host = (TaskHost)package.Executables.Add("STOCK:SQLTask");
+                    host.Name = "SqlTask" + suffix;
+                    var task = host.InnerObject;
+                    var type = task.GetType();
+                    stage = "sql.fixture.task.connection";
+                    type.GetProperty("Connection").SetValue(task, connection.ID, null);
+                    stage = "sql.fixture.source.type";
+                    var sourceType = type.GetProperty("SqlStatementSourceType");
+                    sourceType.SetValue(task, Enum.Parse(sourceType.PropertyType, "DirectInput"), null);
+                    stage = "sql.fixture.statement";
+                    type.GetProperty("SqlStatementSource").SetValue(task,
+                        "-- select * from dbo.CommentOnly\n select 'sql-fixture-secret' as LiteralValue; select * from dbo.Student; exec dbo.LoadStudent; select dbo.GetTerm(); exec sys.sp_executesql @sql;", null);
+                }
+                stage = "sql.fixture.save";
+                application.SaveToXml(path, package, null);
+            }
+            stage = "sql.fixture.reload";
+            var before = Hash(path);
+            var loaded = new PackageLoader().Load(path);
+            stage = "sql.fixture.load.result";
+            Require(loaded.Succeeded, "sql.load");
+            try
+            {
+                stage = "sql.fixture.inspect";
+                var sql = new PackageSqlInspector().InspectDetailed(loaded.Session);
+                stage = "sql.fixture.analysis";
+                Console.WriteLine("Native SQL coverage: tasks=" + sql.Items.Count + "; parsed=" + sql.Items.Count(item => item.SqlDependencies != null && item.SqlDependencies.Parsed) +
+                    "; codes=" + string.Join(",", sql.UnsupportedItems.Select(gap => gap.ReasonCode).Distinct()));
+                Require(sql.Items.Count == 2 && sql.Items.All(item => item.SqlDependencies != null && item.SqlDependencies.Parsed), "sql.analysis");
+                Require(sql.Items.All(item => item.SqlDependencies.References.Count == 3), "sql.references");
+                Require(sql.UnsupportedItems.Any(gap => gap.ReasonCode == "sql.dynamic_sql"), "sql.dynamic");
+                var graph = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single().Dependencies;
+                Require(graph.Nodes.Count(node => node.Kind == SemanticObjectKind.SchemaObject && node.Name == "[dbo].[Student]") == 2, "sql.connection.scope");
+                Require(graph.Edges.Any(edge => edge.Kind == DependencyKind.ReadsSchemaObject && edge.Evidence == "ParsedSchemaObject") &&
+                    graph.Edges.Any(edge => edge.Kind == DependencyKind.ExecutesSchemaObject && edge.Evidence == "ParsedExecuteTarget") &&
+                    graph.Edges.Any(edge => edge.Kind == DependencyKind.ReferencesSqlFunction && edge.Evidence == "ParsedFunctionReference"), "sql.evidence");
+                stage = "sql.cli.default";
+                var cli = RunCli(new[] { "ai", "dependency.graph", path }, 0, 5);
+                RequireNoValues(cli);
+                Require(!cli.ToString().Contains("sql-fixture-secret") && !cli.ToString().Contains("CommentOnly"), "sql.redaction");
+                Require(((JArray)cli["results"]["edges"]).Any(edge => (string)edge["evidence"] == "ParsedSchemaObject"), "sql.cli.evidence");
+                var focused = RunCli(new[] { "sql", path, "--details" }, 0, 5);
+                RequireNoValues(focused);
+                Require(!focused.ToString().Contains("sql-fixture-secret") && !focused.ToString().Contains("CommentOnly"), "sql.focused.redaction");
+                stage = "sql.cli.context.default";
+                var metadata = RunCli(new[] { "ai", "context", path }, 0, 5);
+                Require(metadata["results"]["sanitizedTexts"] == null && (string)metadata["redaction"]["policy"] == "metadata-only", "context.default");
+                RequireNoValues(metadata);
+                stage = "sql.cli.context.optin";
+                var context = RunCli(new[] { "ai", "context", path, "--include-sanitized-text" }, 0, 5);
+                Require((string)context["redaction"]["policy"] == "sanitized-context-opt-in" && (bool)context["redaction"]["rawTextOmitted"], "context.policy");
+                var texts = (JArray)context["results"]["sanitizedTexts"];
+                Require(texts.Any(text => (string)text["kind"] == "Sql") && texts.Any(text => (string)text["kind"] == "Expression"), "context.snippets");
+                Require(context["results"]["dependencyNodes"] != null && context["results"]["controlFlowFacts"] != null && context["results"]["lineageFacts"] != null, "context.evidence");
+                Require(!context.ToString().Contains("sql-fixture-secret") && !context.ToString().Contains("expression-fixture-secret") &&
+                    !context.ToString().Contains("variable-fixture-secret") && !context.ToString().Contains("CommentOnly"), "context.redaction");
+                Require(texts.All(text => ((string)text["sanitizedText"] ?? "").Length <= SanitizedTextFactory.MaximumTextLength &&
+                    (string)text["trust"] == "untrusted-package-content"), "context.bounds");
+                RunCli(new[] { "ai", "context", path, "--include-sanitized-text", "--include-sanitized-text" }, 2);
+                RunCli(new[] { "ai", "dependency.graph", path, "--include-sanitized-text" }, 2);
+                Require(Hash(path) == before, "sql.hash");
+                Console.WriteLine("Parsed SQL verification: PASS; connection-scoped schema objects, parsed evidence, dynamic gaps, default redaction, unchanged hash; no database connection, execution, or validation.");
+            }
+            finally { loaded.Session.Package.Dispose(); }
         }
 
         private static void VerifyHeuristicExpressions(string directory)

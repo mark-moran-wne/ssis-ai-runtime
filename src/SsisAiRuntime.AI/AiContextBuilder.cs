@@ -131,7 +131,7 @@ namespace SsisAiRuntime.AI
         }
         private static AiFact EdgeFact(string category, DependencyEdge edge) =>
             new AiFact(category + "." + edge.Kind, edge.From, edge.To,
-                edge.Evidence == "LexicalAndScopeResolved" ? "LexicalAndScopeResolved" : string.Empty);
+                DependencyEvidence.Safe(edge.Evidence));
     }
 
     public sealed class AiContext
@@ -164,7 +164,7 @@ namespace SsisAiRuntime.AI
             Kind = kind ?? string.Empty;
             Name = name ?? string.Empty;
             Reference = reference ?? string.Empty;
-            Evidence = evidence == "LexicalAndScopeResolved" ? evidence : string.Empty;
+            Evidence = DependencyEvidence.Safe(evidence);
         }
         public string Kind { get; }
         public string Name { get; }

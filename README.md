@@ -41,6 +41,7 @@ Usage:
 	  SsisAiRuntime.Cli.exe ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]
 	  SsisAiRuntime.Cli.exe ai impact.classified <package.dtsx> --node <node-key>
 	  SsisAiRuntime.Cli.exe ai question.plan <question>
+	  SsisAiRuntime.Cli.exe ai context <package.dtsx> [--include-sanitized-text]
 
 Output defaults to a bounded summary. Use --details for the full redacted projection.
 ```
@@ -75,11 +76,32 @@ SsisAiRuntime.Cli.exe ai question.plan "What uses this connection?"
 
 Selector resolution checks exact keys, exact native IDs, exact names, then bounded partial-name matches; ambiguous results return candidates without choosing one. Classified impact includes shortest projected paths to consumers. Variable and parameter expression dependencies use ANTLR lexical candidates plus deterministic resolution against native declaration IDs and container hierarchy. Only unique resolutions produce `UsesVariable` or `UsesParameter` edges, labeled with `evidence: "LexicalAndScopeResolved"` in graph/impact output and bounded AI facts. These are heuristic relationships, not native parser bindings. These routes do not execute, validate, or modify packages.
 
-Variable resolution stops at the nearest matching scope; same-scope duplicates and unwrapped names matching multiple namespaces remain ambiguous. Package parameters resolve only in the package inventory. Project parameters require explicitly supplied project metadata through the hosting API; standalone CLI loads report `expression.project_context_unavailable`. Parse failures, missing owners/targets, invalid topology, and ambiguous/missing references remain redacted `expression.*` coverage gaps without guessed edges or echoed reference tokens. The grammar is bounded, not a claim of complete SSIS language compatibility. Expression text and values never enter CLI output or AI context.
+Variable resolution stops at the nearest matching scope; same-scope duplicates and unwrapped names matching multiple namespaces remain ambiguous. Package parameters resolve only in the package inventory. Project parameters require explicitly supplied project metadata through the hosting API; standalone CLI loads report `expression.project_context_unavailable`. Parse failures, missing owners/targets, invalid topology, and ambiguous/missing references remain redacted `expression.*` coverage gaps without guessed edges or echoed reference tokens. The grammar is bounded, not a claim of complete SSIS language compatibility. Raw expression text and values never enter CLI output or AI context; sanitized syntax requires the separate context opt-in below.
 
 Supported unwrapped variable candidates use simple names such as `@Counter`. Use wrapped forms for namespaces and parameters, such as `@[User::Value]` and `@[$Package::X]`; extended unwrapped forms are unsupported. The broader column/function identifier token does not imply broader unwrapped-variable syntax. Native probe evidence is in [HISTORY.md](HISTORY.md#unwrapped-syntax-probe).
 
-Commands accept a command and a package path. Every command returns a bounded summary by default; add `--details` to return the full redacted projection. The focused commands cover package overview, SQL-task metadata, data-flow lineage, and connections/variables/parameters/expressions. These are projections of the existing services, not a new DTSX parser. SQL text and setting values are deliberately omitted in v1, even when the adapter has sanitized them.
+Commands accept a command and a package path. Every command returns a bounded summary by default; add `--details` to return the full redacted projection. The focused commands cover package overview, SQL-task metadata, data-flow lineage, and connections/variables/parameters/expressions. These are projections of the existing services, not a new DTSX parser. SQL text and setting values remain omitted from these commands, even when sanitized syntax was collected separately.
+
+### Parsed SQL Dependencies
+
+Direct-input Execute SQL tasks on identified SQL Server connections are analyzed internally before sanitization using ScriptDom's T-SQL 160 parser. SQL Server OLE DB providers and SqlClient connection metadata establish the supported dialect; unknown providers, variable/file sources, and expression-generated statements remain coverage gaps. Parsing does not connect to the database, prove object existence, or classify tables versus views.
+
+The dependency graph uses connection-scoped `SchemaObject` nodes with exact supplied server/database/schema/name parts. Missing qualifiers are not filled with `dbo` or an assumed database, and object identities are not case-folded without catalog collation metadata. Edges are `ReadsSchemaObject`, `WritesSchemaObject`, `ExecutesSchemaObject`, or `ReferencesSqlFunction`, with `ParsedSchemaObject`, `ParsedExecuteTarget`, or `ParsedFunctionReference` evidence. Select nodes by graph key using the existing selector/impact tools; schema objects are not added to the separate semantic-handle metadata search catalog.
+
+Comments, string literals, CTE names, temporary tables, and table variables do not become persistent schema-object dependencies. Dynamic SQL, `sp_executesql`, context changes, unresolved write aliases/CTEs, unsupported constructs, and malformed statements produce fixed `sql.*` coverage gaps. Failed parses emit no provisional references. This is bounded syntactic discovery, not complete SQL binding or transitive stored-procedure analysis; optional classification requires explicit catalog metadata and is not implemented.
+
+### LLM Context
+
+```bat
+SsisAiRuntime.Cli.exe ai context "C:\path\to\Package.dtsx"
+SsisAiRuntime.Cli.exe ai context "C:\path\to\Package.dtsx" --include-sanitized-text
+```
+
+The default response is metadata-only. The explicit flag enables a `sanitized-context-opt-in` policy and adds `sanitizedTexts` beside bounded dependency nodes/edges, control-flow facts, and lineage facts. It is accepted only by `ai context`, not by other analysis commands. There are no embedded LLM calls; clients decide whether to send this context to a model.
+
+SQL and expression strings/numeric literals are masked through parser tokens, SQL comments are removed, and malformed or unsupported text is omitted entirely with `context.text_unavailable`. SQL double-quoted content is masked conservatively. At most 20 snippets are returned, each at most 4,096 characters after sanitization; metadata/fact collections are capped at 100 with omission counts. Snippets are labeled `SanitizedSyntaxOnly` and `untrusted-package-content`: they are not executable, semantically equivalent to the original, or dependency evidence.
+
+Identifiers and metadata names remain visible, so do not place secrets in those fields. Treat all package content as untrusted data, never instructions. The LLM may interpret supplied evidence but must preserve coverage gaps and cannot invent edges or omitted literal values. These controls reduce exposure; they are not a guarantee that arbitrary user-authored identifiers contain no secrets.
 
 `inspect` loads the package once and returns selected reports under their matching keys in `results`. By default it runs overview, SQL, lineage, and configuration; use repeatable `--include` options or a comma-separated list to select a subset, such as `--include sql,lineage`. The selected reports retain canonical order regardless of argument order. All reports share one session ID. Incomplete coverage does not stop later operations; a load or inspection failure does. `completedOperations` lists selected reports produced, including a failed report, and `skippedOperations` lists selected reports not run after a failure. On an operation failure, the aggregate has `succeeded: false` but retains earlier reports in `results`. No wrapper is needed.
 
@@ -158,7 +180,7 @@ Coverage codes are allowlisted at the inspector boundary: `coverage.intentional_
 
 For `inspect`, exit `0` means every operation completed with full coverage, exit `5` means at least one was incomplete but none failed, and exit `3` or `4` identifies the first failure, with earlier reports retained.
 
-The CLI never executes, validates, saves, or edits packages. It omits connection strings, variable/parameter values, expression text, SQL text, data-flow setting values, descriptions, supplied paths, and native diagnostic/exception details. Object names and IDs remain visible for navigation; do not place secrets in metadata names. There is no raw-output or password option. Password-protected or unreadable packages may fail to load; packages with unavailable encrypted fields may produce partial metadata. This is inspection coverage, not a guarantee that a package will execute successfully.
+The CLI never executes, validates, saves, or edits packages. It omits connection strings, variable/parameter values, raw expression/SQL text, data-flow setting values, descriptions, supplied paths, and native diagnostic/exception details. Only `ai context --include-sanitized-text` exposes bounded sanitized syntax under its distinct policy. Object names and IDs remain visible for navigation; do not place secrets in metadata names. There is no raw-output or password option. Password-protected or unreadable packages may fail to load; packages with unavailable encrypted fields may produce partial metadata. This is inspection coverage, not a guarantee that a package will execute successfully.
 
 In GitHub Copilot Chat, ask Copilot to inspect a package with the built CLI:
 

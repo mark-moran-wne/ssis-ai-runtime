@@ -17,7 +17,11 @@ namespace SsisAiRuntime.Inspectors
         WritesColumn,
         HasExpression,
         UsesVariable,
-        UsesParameter
+        UsesParameter,
+        ReadsSchemaObject,
+        WritesSchemaObject,
+        ExecutesSchemaObject,
+        ReferencesSqlFunction
     }
 
     public sealed class DependencyNode
@@ -53,6 +57,12 @@ namespace SsisAiRuntime.Inspectors
         public string To { get; }
         public DependencyKind Kind { get; }
         public string Evidence { get; }
+    }
+
+    public static class DependencyEvidence
+    {
+        public static string Safe(string evidence) => evidence == "LexicalAndScopeResolved" || evidence == "ParsedSchemaObject" ||
+            evidence == "ParsedExecuteTarget" || evidence == "ParsedFunctionReference" ? evidence : string.Empty;
     }
 
     public sealed class PackageDependencyGraph
@@ -177,7 +187,8 @@ namespace SsisAiRuntime.Inspectors
 
             var distinctEdges = edges.GroupBy(edge => edge.From + "\u001f" + edge.To + "\u001f" + edge.Kind)
                 .Select(group => group.First());
-            return new PackageDependencyGraph(nodes.Values.OrderBy(node => node.Key, StringComparer.Ordinal), distinctEdges, unsupported);
+            return new SqlDependencies.SqlDependencyGraphBuilder().Enrich(
+                new PackageDependencyGraph(nodes.Values.OrderBy(node => node.Key, StringComparer.Ordinal), distinctEdges, unsupported), sqlStatements);
         }
 
         private static void AddColumn(IDictionary<string, DependencyNode> nodes, ICollection<DependencyEdge> edges,

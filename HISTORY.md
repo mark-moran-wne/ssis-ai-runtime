@@ -2,9 +2,18 @@
 
 This document records completed milestones, investigation evidence, and dated verification results. For current behavior and safety limits, see [README.md](README.md). For remaining work and design decisions, see [Plan.md](Plan.md). Build and verification commands are in [BuildPackage.md](BuildPackage.md).
 
-## 2026-10-05 Verification
+## 2026-10-05 Parsed SQL and Context
 
-- Full portable suite: **150 passed, 0 failed, 0 skipped**. This is the latest recorded verification result, not a permanently fixed suite size.
+- Full portable suite after SQL/context implementation: **174 passed, 0 failed, 0 skipped**.
+- Added ScriptDom-backed T-SQL lexing/parsing and connection-scoped schema-object dependencies, with parsed evidence retained through selectors, classified impact, and AI facts. Regex dependency extraction remains an external prototype, not a production source.
+- Native SQL fixtures verify stock task loading, ID-based connection resolution, SQL Server provider detection, comment/literal exclusion, dynamic gaps, graph isolation across two connections, and unchanged hashes without opening a database connection.
+- Added bounded metadata-only `ai context`, with explicit `--include-sanitized-text` collection/emission. SQL and expression masking is parser/token-based, failure omits text, and snippets are labeled untrusted syntax rather than graph evidence.
+- Native CLI regressions verify default omission, sanitized SQL/expression opt-in, literal masking, bounds, invalid-option rejection, and no leaked fixture values. Native column and scope fixtures remain unchanged in behavior.
+- The portable suite also includes the strengthened unwrapped-variable regression: `User::Counter`, `Other::Counter`, and `System::Counter` all remain candidates. This exposed and fixed exclusion of projected system symbols from unwrapped lookup.
+
+## 2026-10-05 Earlier Verification
+
+- Full portable suite before the additional namespace and SQL/context regressions: **150 passed, 0 failed, 0 skipped**. This is a historical checkpoint, not the current suite size.
 - Native SSIS 16 integration build succeeds without assembly-path overrides. The installed GAC_32 interop reference produces the known `CS8012` processor warning; the x64 verifier passes on this host. This does not certify other installations.
 - Native scratch fixtures pass for Data Conversion, Derived Column, expression syntax, scope resolution, and actual CLI subprocess behavior.
 - Owner regressions verify package-variable, task, connection, and event-handler expression owners against the same catalog and graph identities. They cover handler-variable shadowing and reuse of one package parameter by package/task/handler owners.

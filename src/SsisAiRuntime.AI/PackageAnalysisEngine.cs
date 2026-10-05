@@ -29,6 +29,9 @@ namespace SsisAiRuntime.AI
                 {
                     case AiToolNames.PackageSummary:
                         return Success(request, new PackageIntelligenceSummary(snapshot), snapshot.UnsupportedItems);
+                    case AiToolNames.LlmContext:
+                        var context = new LlmContextBuilder().Build(snapshot, request.IncludeSanitizedText);
+                        return Success(request, context, context.UnsupportedItems);
                     case AiToolNames.MetadataSearch:
                         return Search(snapshot, request);
                     case AiToolNames.TaskDependencies:

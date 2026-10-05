@@ -21,7 +21,8 @@ namespace SsisAiRuntime.Inspectors
                 reasonCode != "expression.parse_failed" && reasonCode != "expression.owner_scope_missing" &&
                 reasonCode != "expression.scope_cycle" && reasonCode != "expression.reference_ambiguous" &&
                 reasonCode != "expression.reference_not_found" && reasonCode != "expression.project_context_unavailable" &&
-                reasonCode != "expression.target_not_projected")
+                reasonCode != "expression.target_not_projected" && reasonCode != "context.text_unavailable" &&
+                !SqlDependencies.SqlDependencyCoverage.IsSupported(reasonCode))
             {
                 throw new ArgumentException("A supported coverage reason code is required.", nameof(reasonCode));
             }

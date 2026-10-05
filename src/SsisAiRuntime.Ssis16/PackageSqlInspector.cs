@@ -2,8 +2,11 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
+using System.Data.Common;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Inspectors;
+using SsisAiRuntime.Inspectors.SqlDependencies;
 using DtsRuntime = Microsoft.SqlServer.Dts.Runtime;
 
 namespace SsisAiRuntime.Ssis16
@@ -22,7 +25,9 @@ namespace SsisAiRuntime.Ssis16
             return new ReadOnlyCollection<SqlStatementOverview>(statements);
         }
 
-        public InspectionResult<SqlStatementOverview> InspectDetailed(PackageSession<DtsRuntime.Package> session)
+        public InspectionResult<SqlStatementOverview> InspectDetailed(PackageSession<DtsRuntime.Package> session) => InspectDetailed(session, false);
+
+        public InspectionResult<SqlStatementOverview> InspectDetailed(PackageSession<DtsRuntime.Package> session, bool includeSanitizedText)
         {
             if (session == null)
             {
@@ -31,7 +36,7 @@ namespace SsisAiRuntime.Ssis16
 
             var statements = new List<SqlStatementOverview>();
             var unsupportedItems = new List<UnsupportedItem>();
-            AddStatements(session.Package, session.Package.Executables, statements, unsupportedItems);
+            AddStatements(session.Package, session.Package.Executables, statements, unsupportedItems, includeSanitizedText);
             return new InspectionResult<SqlStatementOverview>(statements, unsupportedItems);
         }
 
@@ -46,13 +51,13 @@ namespace SsisAiRuntime.Ssis16
             DtsRuntime.Package package,
             DtsRuntime.Executables executables,
             ICollection<SqlStatementOverview> statements,
-            ICollection<UnsupportedItem> unsupportedItems)
+            ICollection<UnsupportedItem> unsupportedItems, bool includeSanitizedText = false)
         {
             foreach (DtsRuntime.Executable executable in executables)
             {
                 if (executable is DtsRuntime.IDTSSequence sequence)
                 {
-                    AddStatements(package, sequence.Executables, statements, unsupportedItems);
+                    AddStatements(package, sequence.Executables, statements, unsupportedItems, includeSanitizedText);
                     continue;
                 }
 
@@ -87,6 +92,12 @@ namespace SsisAiRuntime.Ssis16
                 var bindingCount = CountItems(bindings);
                 var connectionReference = taskType.GetProperty("Connection")?.GetValue(task, null) as string;
                 var connectionManager = FindConnection(package, connectionReference);
+                var directInput = string.Equals(sourceType, "DirectInput", StringComparison.OrdinalIgnoreCase) &&
+                    string.IsNullOrWhiteSpace(taskHost.GetExpression("SqlStatementSource"));
+                var dependencies = directInput
+                    ? new SqlDependencyAnalyzer().Analyze(statement, ResolveDialect(connectionManager))
+                    : new SqlDependencyResolution(Array.Empty<SqlObjectReference>(), new[] { "sql.text_unavailable" }, false);
+                foreach (var code in dependencies.CoverageCodes) { unsupportedItems?.Add(SqlDependencyCoverage.Gap(taskHost.ID, code)); }
                 if (connectionManager == null)
                 {
                     unsupportedItems?.Add(new UnsupportedItem(
@@ -116,7 +127,10 @@ namespace SsisAiRuntime.Ssis16
                     sanitized.Redacted,
                     connectionManager == null ? string.Empty : connectionManager.ID,
                     connectionManager == null ? string.Empty : connectionManager.Name,
-                    bindingCount));
+                    bindingCount,
+                    dependencies,
+                    includeSanitizedText ? SanitizedTextFactory.Sql(taskHost.ID, connectionManager?.ID,
+                        directInput ? statement : null, ResolveDialect(connectionManager)) : null));
             }
         }
 
@@ -127,15 +141,31 @@ namespace SsisAiRuntime.Ssis16
                 return null;
             }
 
-            foreach (DtsRuntime.ConnectionManager connection in package.Connections)
-            {
-                if (string.Equals(connection.Name, connectionReference, StringComparison.OrdinalIgnoreCase))
-                {
-                    return connection;
-                }
-            }
+            var matches = package.Connections.Cast<DtsRuntime.ConnectionManager>().Where(connection =>
+                string.Equals(connection.ID, connectionReference, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(connection.Name, connectionReference, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
 
-            return null;
+        private static SqlDialect ResolveDialect(DtsRuntime.ConnectionManager connection)
+        {
+            if (connection == null) { return SqlDialect.Unsupported; }
+            if (connection.CreationName.IndexOf("SqlClient.SqlConnection", StringComparison.OrdinalIgnoreCase) >= 0) { return SqlDialect.TSql160; }
+            if (!connection.CreationName.Equals("OLEDB", StringComparison.OrdinalIgnoreCase)) { return SqlDialect.Unsupported; }
+            try
+            {
+                var property = connection.Properties.Cast<DtsRuntime.DtsProperty>().SingleOrDefault(item => item.Name.Equals("Provider", StringComparison.OrdinalIgnoreCase));
+                var provider = property?.GetValue(connection) as string ?? string.Empty;
+                if (provider.Length == 0)
+                {
+                    var builder = new DbConnectionStringBuilder { ConnectionString = connection.ConnectionString };
+                    provider = builder.TryGetValue("Provider", out var value) ? value as string ?? string.Empty : string.Empty;
+                }
+                return provider.StartsWith("SQLNCLI", StringComparison.OrdinalIgnoreCase) || provider.Equals("SQLOLEDB", StringComparison.OrdinalIgnoreCase) ||
+                    provider.Equals("SQLOLEDB.1", StringComparison.OrdinalIgnoreCase) ||
+                    provider.StartsWith("MSOLEDBSQL", StringComparison.OrdinalIgnoreCase) ? SqlDialect.TSql160 : SqlDialect.Unsupported;
+            }
+            catch { return SqlDialect.Unsupported; }
         }
 
         private static int? CountItems(object collection)

@@ -12,7 +12,7 @@ namespace SsisAiRuntime.AI
             IEnumerable<ExecutableOverview> executables, IEnumerable<SqlStatementOverview> sqlStatements,
             IEnumerable<DataFlowOverview> dataFlows, IEnumerable<ExpressionOverview> expressions,
             ControlFlowGraph controlFlow, PackageDependencyGraph dependencies, SemanticHandleCatalog catalog,
-            IEnumerable<UnsupportedItem> unsupportedItems)
+            IEnumerable<UnsupportedItem> unsupportedItems, IEnumerable<SanitizedTextSnippet> sanitizedTexts = null)
         {
             Package = package ?? throw new ArgumentNullException(nameof(package));
             Connections = ReadOnly(connections, nameof(connections));
@@ -26,6 +26,8 @@ namespace SsisAiRuntime.AI
             Dependencies = dependencies ?? throw new ArgumentNullException(nameof(dependencies));
             Catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             UnsupportedItems = ReadOnly(unsupportedItems, nameof(unsupportedItems));
+            SanitizedTextEnabled = sanitizedTexts != null;
+            SanitizedTexts = ReadOnly(sanitizedTexts ?? Array.Empty<SanitizedTextSnippet>(), nameof(sanitizedTexts));
             if (catalog.SessionId != package.SessionId) throw new ArgumentException("The catalog must belong to the package session.", nameof(catalog));
         }
 
@@ -41,6 +43,8 @@ namespace SsisAiRuntime.AI
         public PackageDependencyGraph Dependencies { get; }
         public SemanticHandleCatalog Catalog { get; }
         public IReadOnlyList<UnsupportedItem> UnsupportedItems { get; }
+        public bool SanitizedTextEnabled { get; }
+        public IReadOnlyList<SanitizedTextSnippet> SanitizedTexts { get; }
         public bool IsComplete => UnsupportedItems.Count == 0;
 
         private static IReadOnlyList<T> ReadOnly<T>(IEnumerable<T> values, string name)

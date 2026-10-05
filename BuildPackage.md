@@ -32,6 +32,8 @@ The CLI output is `src/SsisAiRuntime.Cli/bin/Release/net48/SsisAiRuntime.Cli.exe
 
 The inspector project generates its bounded expression grammar during builds through `Antlr4BuildTasks`; `Antlr4.Runtime.Standard` is an application dependency. Grammar and candidate extraction remain runtime-neutral, separate from native scope projection and native column observation. First-time builds may need to acquire ANTLR generator tooling in addition to NuGet packages.
 
+`Microsoft.SqlServer.TransactSql.ScriptDom` is an application dependency for bounded T-SQL 160 analysis and token-based SQL context redaction. Keep it with the CLI dependencies. The SQL parser never opens a database connection and the context builder never calls an LLM.
+
 ## Portable Tests
 
 Run the runtime-neutral Core, inspector, query, and CLI-contract tests on any supported .NET 10 SDK host. These tests do not require SSIS:
@@ -54,6 +56,8 @@ This separate x64 .NET Framework 4.8 test executable creates a fresh temporary p
 The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` column-reference observer and Derived Column mappings. Successful native lookups are column evidence, not variable/parameter bindings. Separate scope fixtures verify heuristic reference resolution, owner identity, shadowing, project-context gating, redaction, and unchanged hashes. Test-only syntax probes do not evaluate expressions. Record verification outcomes in [HISTORY.md](HISTORY.md), rather than treating a previous host result as a guarantee for a new installation.
 
 A `CS8012` warning can occur with a GAC_32 interop reference. Confirm the verifier runs as x64 on the target host. Project-parameter resolution is covered by portable explicit-inventory tests; the native verifier does not provide a project-backed SSIS fixture.
+
+The SQL scratch fixture uses stock Execute SQL tasks and metadata-only SQL Server OLE DB connections to verify connection-scoped object identities, parsed evidence, dynamic SQL gaps, and actual CLI context behavior. It checks metadata-only defaults, explicit SQL/expression sanitized-text opt-in, literal/comment redaction, option rejection, and unchanged hashes. It does not acquire a database connection, execute SQL, or validate a package.
 
 ## Package Smoke Test
 

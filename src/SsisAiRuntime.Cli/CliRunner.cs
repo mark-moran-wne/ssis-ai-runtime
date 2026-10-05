@@ -319,7 +319,8 @@ namespace SsisAiRuntime.Cli
             {
                 var property = base.CreateProperty(member, memberSerialization);
                 if (member.Name == "Description" || member.Name == "UnsupportedItems" ||
-                    (member.DeclaringType == typeof(SqlStatementOverview) && member.Name == "StatementText") ||
+                    (member.DeclaringType == typeof(SqlStatementOverview) && (member.Name == "StatementText" || member.Name == "SanitizedText")) ||
+                    (member.DeclaringType == typeof(SanitizedTextSnippet) && member.Name == "Text") ||
                     (member.DeclaringType == typeof(DataFlowSettingOverview) && member.Name == "Value"))
                 {
                     property.Ignored = true;

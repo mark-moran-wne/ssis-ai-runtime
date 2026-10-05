@@ -14,6 +14,7 @@ namespace SsisAiRuntime.Inspectors
         ExternalMetadataColumn,
         DataFlowPath,
         DataFlowRuntimeConnection,
-        ExpressionOwner
+        ExpressionOwner,
+        SchemaObject
     }
 }

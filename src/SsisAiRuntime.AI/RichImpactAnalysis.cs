@@ -14,7 +14,8 @@ namespace SsisAiRuntime.AI
         Parameter,
         Configuration,
         ControlFlow,
-        DataFlow
+        DataFlow,
+        Sql
     }
 
     public sealed class ClassifiedImpact
@@ -103,6 +104,10 @@ namespace SsisAiRuntime.AI
             if (distance > 1) { return ImpactCategory.Indirect; }
             switch (edge.Kind)
             {
+                case DependencyKind.ReadsSchemaObject:
+                case DependencyKind.WritesSchemaObject:
+                case DependencyKind.ExecutesSchemaObject:
+                case DependencyKind.ReferencesSqlFunction: return ImpactCategory.Sql;
                 case DependencyKind.UsesVariable: return ImpactCategory.Variable;
                 case DependencyKind.UsesParameter: return ImpactCategory.Parameter;
                 case DependencyKind.UsesConnection: return ImpactCategory.Configuration;
