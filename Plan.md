@@ -83,6 +83,8 @@ Retain these gates as grammar and owner coverage expand. Completed fixture resul
 2. After the lifecycle is specified, add explicit allowlisted execution operations rather than generic `set_property`: task rename first, followed by variable values, parameter defaults, connection properties, and SQL replacement. Resolve native identity, read current state, validate type/rules, and report before/after without echoing secrets.
 3. Test invalid targets/values, duplicate native-ID ambiguity, incomplete coverage, expression overrides, metadata refresh requirements, and failure behavior. Keep original packages untouched by default.
 
+Execution plans now declare checkpoint, save-as, reload, validation, and semantic-diff requirements through immutable `MutationExecutionRequirements`. Rename previews attach all five obligations, serialized in mutation contract schema `1.1`. This is policy metadata only; lifecycle enforcement and implementations remain deferred.
+
 ## Phase 7: Save, Reload, Validate, Diff
 
 1. Save mutations through native SSIS serialization to an explicit new destination. Refuse overwrite unless explicitly requested; distinguish an in-memory mutation from a saved result.

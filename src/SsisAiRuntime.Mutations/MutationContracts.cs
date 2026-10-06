@@ -107,18 +107,20 @@ namespace SsisAiRuntime.Mutations
     public sealed class MutationExecutionPlan
     {
         public MutationExecutionPlan(MutationRequest request, string expectedCurrentName,
-            string proposedName, MutationImpact impact)
+            string proposedName, MutationImpact impact, MutationExecutionRequirements requirements)
         {
             Request = request ?? throw new ArgumentNullException(nameof(request));
             ExpectedCurrentName = expectedCurrentName ?? string.Empty;
             ProposedName = proposedName ?? string.Empty;
             Impact = impact ?? throw new ArgumentNullException(nameof(impact));
+            Requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         }
 
         public MutationRequest Request { get; }
         public string ExpectedCurrentName { get; }
         public string ProposedName { get; }
         public MutationImpact Impact { get; }
+        public MutationExecutionRequirements Requirements { get; }
     }
 
     public sealed class MutationPreview

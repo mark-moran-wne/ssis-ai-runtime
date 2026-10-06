@@ -68,7 +68,8 @@ namespace SsisAiRuntime.Mutations
                     task.Name, request.ProposedName, impact, null, coverage);
             }
 
-            var plan = new MutationExecutionPlan(request, task.Name, request.ProposedName, impact);
+            var plan = new MutationExecutionPlan(request, task.Name, request.ProposedName, impact,
+                MutationExecutionPolicies.RenameTask());
             return new MutationPreview(MutationPreviewStatus.Valid, request,
                 task.Name, request.ProposedName, impact, plan, coverage);
         }

@@ -175,6 +175,69 @@ public sealed class MutationPreviewerTests
             new MutationTarget(SemanticObjectKind.Executable, "task-1"), "Renamed"));
     }
 
+    [Fact]
+    public void RenamePlanSerializesAllLifecycleRequirements()
+    {
+        var preview = new MutationPreviewer().Preview(Snapshot(),
+            Rename(SemanticObjectKind.Executable, "task-1", "Renamed"));
+        var plan = preview.ExecutionPlan;
+        var requirements = plan.Requirements;
+
+        Assert.True(requirements.RequiresLifecycle);
+        Assert.True(requirements.CheckpointRequired);
+        Assert.True(requirements.SaveAsRequired);
+        Assert.True(requirements.ReloadRequired);
+        Assert.True(requirements.ValidationRequired);
+        Assert.True(requirements.SemanticDiffRequired);
+        Assert.Equal(new[]
+        {
+            "checkpoint.required", "reload.required", "saveas.required",
+            "semanticdiff.required", "validation.required"
+        }, requirements.Requirements);
+
+        var document = JObject.Parse(MutationContractSerializer.Serialize(plan));
+        Assert.Equal("1.1", (string)document["schemaVersion"]!);
+        var serialized = (JObject)document["payload"]!["requirements"]!;
+        Assert.Equal(6, serialized.Count);
+        foreach (var flag in new[]
+        {
+            "checkpointRequired", "saveAsRequired", "reloadRequired",
+            "validationRequired", "semanticDiffRequired"
+        })
+        {
+            Assert.True((bool)serialized[flag]!);
+        }
+        Assert.Equal(requirements.Requirements, serialized["requirements"]!.Values<string>());
+        var previewDocument = JObject.Parse(MutationContractSerializer.Serialize(preview));
+        Assert.True(JToken.DeepEquals(serialized,
+            previewDocument["payload"]!["executionPlan"]!["requirements"]));
+        Assert.Throws<ArgumentNullException>(() => new MutationExecutionPlan(
+            plan.Request, plan.ExpectedCurrentName, plan.ProposedName, plan.Impact, null!));
+    }
+
+    [Fact]
+    public void RequirementsAreCopiedDeduplicatedSortedAndImmutable()
+    {
+        var source = new List<string> { "validation.required", "checkpoint.required", "validation.required" };
+        var requirements = new MutationExecutionRequirements(false, false, false, false, false, source);
+        source.Clear();
+
+        Assert.False(requirements.RequiresLifecycle);
+        Assert.Equal(new[] { "checkpoint.required", "validation.required" }, requirements.Requirements);
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)requirements.Requirements).Clear());
+        Assert.All(typeof(MutationExecutionRequirements).GetProperties(), property => Assert.Null(property.SetMethod));
+        Assert.Throws<ArgumentNullException>(() =>
+            new MutationExecutionRequirements(false, false, false, false, false, null!));
+
+        var request = Rename(SemanticObjectKind.Executable, "task-1", "Renamed");
+        var impact = new MutationImpact(MutationRisk.Low, "Rename", Array.Empty<string>());
+        var reordered = new MutationExecutionRequirements(false, false, false, false, false,
+            new[] { "checkpoint.required", "validation.required" });
+        Assert.Equal(
+            MutationContractSerializer.Serialize(new MutationExecutionPlan(request, "Load", "Renamed", impact, requirements)),
+            MutationContractSerializer.Serialize(new MutationExecutionPlan(request, "Load", "Renamed", impact, reordered)));
+    }
+
     private static MutationRequest Rename(SemanticObjectKind kind, string nativeId, string proposedName) =>
         new(MutationKind.RenameTask, new MutationTarget(kind, nativeId), proposedName);
 

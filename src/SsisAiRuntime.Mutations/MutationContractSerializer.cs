@@ -8,7 +8,7 @@ namespace SsisAiRuntime.Mutations
 {
     public static class MutationContractSchema
     {
-        public const string CurrentVersion = "1.0";
+        public const string CurrentVersion = "1.1";
 
         public static bool IsCompatible(string version)
         {
@@ -91,7 +91,18 @@ namespace SsisAiRuntime.Mutations
             ["request"] = Request(plan.Request),
             ["expectedCurrentName"] = plan.ExpectedCurrentName,
             ["proposedName"] = plan.ProposedName,
-            ["impact"] = Impact(plan.Impact)
+            ["impact"] = Impact(plan.Impact),
+            ["requirements"] = Requirements(plan.Requirements)
+        };
+
+        private static JObject Requirements(MutationExecutionRequirements requirements) => new JObject
+        {
+            ["checkpointRequired"] = requirements.CheckpointRequired,
+            ["saveAsRequired"] = requirements.SaveAsRequired,
+            ["reloadRequired"] = requirements.ReloadRequired,
+            ["validationRequired"] = requirements.ValidationRequired,
+            ["semanticDiffRequired"] = requirements.SemanticDiffRequired,
+            ["requirements"] = new JArray(requirements.Requirements)
         };
 
         private static JObject Impact(MutationImpact impact) => new JObject
