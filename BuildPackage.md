@@ -105,6 +105,23 @@ Every command must exit `0`. The lifecycle suite must report 22 passed cases, in
 
 The checkpoints and validators remain controlled test implementations. A pass proves the bounded orchestration and native rename/save/reload path, not production checkpoint storage, native validation, or arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
 
+## Required Column Widening Gate
+
+Before merging changes to the widening plan, coordinated metadata editor, or widening host lifecycle, run on Windows x64 with SSIS 16 and the .NET 10 SDK:
+
+```console
+dotnet build .\SsisAiRuntime.sln -c Release
+dotnet test .\tests\SsisAiRuntime.Tests\SsisAiRuntime.Tests.csproj -c Release --no-build
+dotnet test .\tests\SsisAiRuntime.Corpus.Tests\SsisAiRuntime.Corpus.Tests.csproj -c Release --no-build
+dotnet test .\tests\SsisAiRuntime.Mutations.Tests\SsisAiRuntime.Mutations.Tests.csproj -c Release --no-build
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --mutation-host-probe
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --column-widening-probe
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --execute-flow-probe
+```
+
+Every command must exit `0`. The widening suite must report 10 passed cases. These scratch tests do not call native `Validate` or `Execute`; the FlowRunner execution probe separately covers real synthetic data-flow execution. The checkpoint and validator are test doubles, not production services. Widening never changes physical database DDL and only publishes a separate DTSX copy after verification. This is a documented merge gate, not a configured CI check.
+
 ## Package Smoke Test
 
 The `components` command above performs metadata discovery only and does not request execution. Both default and opt-in native harness modes compare its complete catalog with native registration enumeration, check deterministic ordering and capability flags, and reject execution options on the discovery command.

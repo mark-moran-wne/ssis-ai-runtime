@@ -61,8 +61,9 @@ namespace SsisAiRuntime.FlowRunner
             external.Length = width;
             output.SetDataTypeProperties(output.DataType, width, output.Precision, output.Scale, output.CodePage);
             var design = destination.Instantiate();
-            design.SetUsageType(input.ID, input.GetVirtualInput(), output.LineageID, DTSUsageType.UT_IGNORED);
             var refreshed = design.SetUsageType(input.ID, input.GetVirtualInput(), output.LineageID, DTSUsageType.UT_READONLY);
+            if (refreshed.ID != selected.ID || refreshed.Length != width)
+            { throw new InvalidOperationException("flow.width.input_metadata_not_refreshed"); }
             design.MapInputColumn(input.ID, refreshed.ID, external.ID);
         }
 

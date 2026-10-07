@@ -49,5 +49,21 @@ namespace SsisAiRuntime.Mutations
                 "validation.required",
                 "semanticdiff.required"
             });
+
+        public static MutationExecutionRequirements WidenColumn() => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                "columnwidth.coordinated"
+            });
     }
 }

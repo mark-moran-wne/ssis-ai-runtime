@@ -11,7 +11,7 @@ Evolve the repository into a headless AI tool backed by the native SSIS runtime.
 - The bounded `ai context` tool is metadata-only by default; sanitized SQL/expression syntax is collected and emitted only through an explicit opt-in. LLM interpretation cannot alter graph construction or upgrade evidence.
 - Variable/parameter discovery uses ANTLR lexical candidates and native-metadata scope resolution. Its edges are explicitly heuristic; native column observation remains separate and authoritative for column lineage.
 - Expression grammar and owner coverage are bounded. Arbitrary custom-component contracts and automatic project-metadata discovery remain unsupported.
-- Repository-registered skills, CI on an SSIS-enabled host, SSIS 15 compatibility, and mutation/save workflows remain follow-on work.
+- Repository-registered skills, CI on an SSIS-enabled host, SSIS 15 compatibility, designer-aware component insertion, and general mutation/save workflows remain follow-on work. Bounded coordinated widening is implemented in the MutationHost; it does not provide designer placement for inserted components.
 
 Recorded verification totals and native-binding evidence are in [HISTORY.md](HISTORY.md).
 
@@ -20,7 +20,7 @@ Recorded verification totals and native-binding evidence are in [HISTORY.md](HIS
 1. Expand the bounded ANTLR grammar and expression-owner corpus using native fixtures; add project-backed metadata discovery only when explicitly scoped. The parser/resolver/heuristic graph pipeline is implemented.
 2. Expand the Windows SSIS 16 smoke corpus and automate it in CI on an SSIS-enabled host.
 3. Decide whether to add a repository-registered Copilot skill; the existing inspection skill is user-level and invokes the read-only CLI.
-4. Keep read-write operations deferred until their allowlist, save-as behavior, reload/validation, and semantic-diff contract are explicitly scoped and tested.
+4. Before planning component-insertion mutations, add the lightweight designer-layout traversal and placement service below. Keep broader read-write operations deferred until their allowlist, save-as behavior, reload/validation, and semantic-diff contract are explicitly scoped and tested.
 5. Expand parsed SQL syntax/provider/source coverage and add optional object classification only from explicitly supplied catalog metadata. Do not infer bindings from sanitized context.
 
 ## Phase 1: Runtime Foundation
@@ -79,11 +79,23 @@ Retain these gates as grammar and owner coverage expand. Completed fixture resul
 
 ## Phase 6: Narrow Mutations
 
-1. Define mutation and execution contracts separately from runtime loading. `RenameTask` preview requires an executable native ID and graph-based impact. Its scoped coverage policy permits only known task-property inspection omissions while retaining them in evidence; unresolved references and other gaps still block execution. The native MutationHost now has scratch lifecycle tests with injected checkpoint/validator doubles, but production policies and journaling remain deferred.
-2. After the lifecycle is specified, add explicit allowlisted execution operations rather than generic `set_property`: task rename first, followed by variable values, parameter defaults, connection properties, and SQL replacement. Resolve native identity, read current state, validate type/rules, and report before/after without echoing secrets.
+1. Define mutation and execution contracts separately from runtime loading. `RenameTask` preview requires an executable native ID and graph-based impact. Its scoped coverage policy permits only known task-property inspection omissions while retaining them in evidence; unresolved references and other gaps still block execution. The native MutationHost has scratch lifecycle tests for rename and bounded column widening using injected checkpoint/validator doubles; production services and journaling remain deferred.
+2. After the lifecycle is specified, add explicit allowlisted operations rather than generic `set_property`. Component insertion operations (Insert Derived Column, Insert Data Conversion, Add Source, Add Destination, and Split Path) depend on designer-layout traversal and placement; do not position new components at a fixed origin. Resolve native identity, read current state, validate type/rules, and report before/after without echoing secrets.
 3. Test invalid targets/values, duplicate native-ID ambiguity, incomplete coverage, expression overrides, metadata refresh requirements, and failure behavior. Keep original packages untouched by default.
 
-Execution plans now declare checkpoint, save-as, reload, validation, and semantic-diff requirements through immutable `MutationExecutionRequirements`. Rename previews attach all five obligations, serialized in mutation contract schema `1.1`. This is policy metadata only; lifecycle enforcement and implementations remain deferred.
+Execution plans now declare checkpoint, save-as, reload, validation, and semantic-diff requirements through immutable `MutationExecutionRequirements`. Rename previews attach all five obligations, serialized in mutation contract schema `1.1`; the widening plan declares its corresponding lifecycle requirements. The MutationHost enforces these paths with injected checkpoint and validator services, but production implementations remain deferred.
+
+### Designer Layout Support (Prerequisite to Component Insertion)
+
+Status: planned. Add a small layout projection and placement service over native SSIS metadata, not a `DesignerPackageModel` or another semantic package representation. The native package remains authoritative; this layer answers spatial questions needed to preserve readable designs when later mutations insert or reconnect components.
+
+1. Introduce immutable `DesignerLayoutSnapshot`, `DesignerNode`, `DesignerConnection`, and `DesignerPlacement` contracts. A node contains exact native identity, owner scope where needed, and integer left/top/width/height. A connection contains native endpoint identities and any persisted visual routing points that the SSIS model actually exposes. Canvas bounds are derived from known layout extents with a documented margin; do not assume a separate authoritative canvas rectangle exists.
+2. Correlate executable nodes directly by native ID. Scope data-flow component identity by its owning data-flow task ID as well as the component native ID; a pipeline-local component ID alone is not assumed package-global. Never resolve placement targets by display name.
+3. Build `IDesignerLayoutService` to traverse existing layouts and provide deterministic `PlaceRightOf`, `PlaceBelow`, `FindOpenSpace`, and explicit `Normalize` operations. Placement considers existing node bounds and connection routes. Missing or invalid coordinates must produce an explicit diagnostic or placement refusal, never silently place every new component at `(0,0)`. Do not move existing nodes except during an explicit normalization request.
+4. Keep designer layout out of `CorpusSnapshot`, `CorpusFingerprint`, `DependencyGraph`, lineage, and semantic diffs. Moving a component without changing package semantics must leave corpus fingerprints and semantic/dependency diffs unchanged. Layout verification belongs to a separate designer-layout comparison contract.
+5. Component-insertion mutations consume a placement result, then use native SSIS APIs to create components, reconnect paths, and persist the new layout. The layout service computes placement; it does not edit DTSX XML or become a generic mutation engine.
+
+Acceptance checks: load scratch packages with existing components at distinct and overlapping coordinates; recover native identities and bounds; verify right/below/open-space choices are deterministic and non-overlapping; preserve existing positions and path endpoints/routes during insertion and native save/reload; confirm an explicit move changes no corpus fingerprint or semantic/dependency diff; and exercise missing-coordinate refusal without falling back to the origin. Include insertion fixtures for Derived Column and Data Conversion before expanding to source/destination insertion or path splitting.
 
 ## Phase 7: Save, Reload, Validate, Diff
 
@@ -119,6 +131,7 @@ Execution plans now declare checkpoint, save-as, reload, validation, and semanti
 - Stable semantic handles are session-scoped; ambiguous names must return candidates, never guess.
 - Redact sensitive values by default, including logs. Mutation inputs may carry secrets, but outputs must not disclose them.
 - Save-as to a new path by default, require explicit overwrite consent, then reload, validate, diff, and journal.
+- Keep designer placement as a lightweight, native-ID-correlated projection separate from package semantics. Do not add layout fields to corpus fingerprints, dependency graphs, lineage, or semantic diffs.
 
 ## Further Considerations
 

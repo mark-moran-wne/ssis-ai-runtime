@@ -302,7 +302,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             public void Dispose() => System.IO.Directory.Delete(Directory, true);
         }
 
-        private sealed class TestCheckpoint : IMutationCheckpointService
+        internal sealed class TestCheckpoint : IMutationCheckpointService
         {
             private readonly string path;
             private readonly TaskCompletionSource<bool> gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -365,7 +365,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
         }
 
-        private sealed class TestValidator : INativeMutationValidator
+        internal sealed class TestValidator : INativeMutationValidator
         {
             public int Calls { get; private set; }
             public bool Fail { get; set; }

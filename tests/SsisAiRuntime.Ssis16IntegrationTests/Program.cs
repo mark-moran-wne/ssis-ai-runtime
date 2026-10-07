@@ -20,6 +20,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
 
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--column-widening-probe")
+            {
+                return ColumnWideningLifecycleTests.Run();
+            }
             if (args.Length == 1 && args[0] == "--mutation-host-probe")
             {
                 return MutationHostLifecycleTests.Run();
@@ -30,7 +34,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-widening-probe]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));

@@ -152,6 +152,21 @@ namespace SsisAiRuntime.MutationHost
             string destinationPackagePath,
             MutationExecutionPlan plan,
             string expectedSourceHash)
+            : this(sourcePackagePath, destinationPackagePath, expectedSourceHash)
+        {
+            Plan = plan ?? throw new ArgumentNullException(nameof(plan));
+        }
+
+        public MutationHostRequest(string sourcePackagePath, string destinationPackagePath,
+            ColumnWideningPlan plan, string expectedSourceHash)
+            : this(sourcePackagePath, destinationPackagePath, expectedSourceHash)
+        {
+            WideningPlan = plan ?? throw new ArgumentNullException(nameof(plan));
+            if (plan.SourceArtifactHash != expectedSourceHash)
+            { throw new ArgumentException("The widening plan must bind the expected source artifact.", nameof(expectedSourceHash)); }
+        }
+
+        private MutationHostRequest(string sourcePackagePath, string destinationPackagePath, string expectedSourceHash)
         {
             if (string.IsNullOrWhiteSpace(sourcePackagePath))
             {
@@ -178,9 +193,6 @@ namespace SsisAiRuntime.MutationHost
             DestinationPackagePath =
                 Path.GetFullPath(destinationPackagePath);
 
-            Plan = plan ??
-                throw new ArgumentNullException(nameof(plan));
-
             ExpectedSourceHash = expectedSourceHash;
         }
 
@@ -189,6 +201,7 @@ namespace SsisAiRuntime.MutationHost
         public string DestinationPackagePath { get; }
 
         public MutationExecutionPlan Plan { get; }
+        public ColumnWideningPlan WideningPlan { get; }
 
         public string ExpectedSourceHash { get; }
     }
@@ -325,6 +338,23 @@ namespace SsisAiRuntime.MutationHost
                 throw new ArgumentNullException(nameof(artifactStager));
         }
 
+        public ColumnWideningPlan PreviewColumnWidening(string sourcePackagePath, string taskId,
+            int sourceComponentId, int outputColumnId, int destinationComponentId, int proposedWidth)
+        {
+            using (var guard = new FileStream(sourcePackagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var hash = MutationHash.FileSha256(sourcePackagePath);
+                var loaded = packageLoader.Load(sourcePackagePath);
+                if (!loaded.Succeeded) { throw new InvalidOperationException("mutation.source.load_failed"); }
+                try
+                {
+                    return ColumnWideningPlan.Create(loaded.Session.Package, hash, taskId, sourceComponentId,
+                        outputColumnId, destinationComponentId, proposedWidth);
+                }
+                finally { loaded.Session.Package.Dispose(); }
+            }
+        }
+
         public async Task<MutationHostResult> ExecuteAsync(
             MutationHostRequest request,
             CancellationToken cancellationToken)
@@ -409,6 +439,12 @@ namespace SsisAiRuntime.MutationHost
                 var beforeAnalysis =
                     beforeAnalysisResult.Items[0];
 
+                if (request.WideningPlan != null)
+                {
+                    request.WideningPlan.CheckCurrent(originalSession.Package, sourceHash);
+                }
+                else
+                {
                 var rebuiltPreview = previewer.Preview(
                     beforeAnalysis,
                     request.Plan.Request);
@@ -436,7 +472,9 @@ namespace SsisAiRuntime.MutationHost
                         diagnosticCodes);
                 }
 
-                var requirements = request.Plan.Requirements;
+                    }
+
+                    var requirements = request.WideningPlan?.Requirements ?? request.Plan.Requirements;
 
                 if (!AllRenameRequirementsPresent(requirements))
                 {
@@ -454,7 +492,7 @@ namespace SsisAiRuntime.MutationHost
                 beforeFingerprint =
                     fingerprintProvider.Create(beforeCorpus);
 
-                if (!RenameCoveragePolicy.CanVerifyRename(beforeAnalysis))
+                if (!CanVerifyOperation(beforeAnalysis, request.WideningPlan != null))
                 {
                     return Failure(
                         MutationExecutionStatus.ValidationFailed,
@@ -472,7 +510,7 @@ namespace SsisAiRuntime.MutationHost
                             sourceHash,
                             beforeFingerprint,
                             operationId,
-                            "mutation.rename_task.before"),
+                            request.WideningPlan == null ? "mutation.rename_task.before" : "mutation.widen_column.before"),
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -508,9 +546,10 @@ namespace SsisAiRuntime.MutationHost
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                ApplyRename(
+                if (request.WideningPlan != null) { request.WideningPlan.Apply(originalSession.Package); }
+                else { ApplyRename(
                     originalSession.Package,
-                    request.Plan);
+                    request.Plan); }
 
                 PackageAnalysisSnapshot stagedAnalysis = null;
                 NativeMutationValidationResult stagedValidation = null;
@@ -592,7 +631,7 @@ namespace SsisAiRuntime.MutationHost
                         afterFingerprint =
                             fingerprintProvider.Create(afterCorpus);
 
-                        if (!RenameCoveragePolicy.CanVerifyRename(stagedAnalysis))
+                        if (!CanVerifyOperation(stagedAnalysis, request.WideningPlan != null))
                         {
                             diagnosticCodes.Add(
                                 "mutation.after.coverage_incomplete");
@@ -601,7 +640,11 @@ namespace SsisAiRuntime.MutationHost
                         }
 
                         var semanticVerification =
-                            VerifyRenameOnly(
+                            request.WideningPlan != null
+                                ? (request.WideningPlan.Verify(stagedPackage)
+                                    ? RenameSemanticVerification.Success()
+                                    : RenameSemanticVerification.Failure("mutation.width.unexpected_change"))
+                                : VerifyRenameOnly(
                                 beforeCorpus,
                                 afterCorpus,
                                 request.Plan);
@@ -800,14 +843,14 @@ namespace SsisAiRuntime.MutationHost
         private static void ValidateHostRequest(
             MutationHostRequest request)
         {
-            if (request.Plan.Request.Kind !=
+            if (request.WideningPlan == null && request.Plan.Request.Kind !=
                 MutationKind.RenameTask)
             {
                 throw new InvalidOperationException(
                     "mutation.kind.unsupported");
             }
 
-            if (request.Plan.Request.Target.Kind !=
+            if (request.WideningPlan == null && request.Plan.Request.Target.Kind !=
                 SemanticObjectKind.Executable)
             {
                 throw new InvalidOperationException(
@@ -835,6 +878,16 @@ namespace SsisAiRuntime.MutationHost
                 throw new InvalidOperationException(
                     "mutation.destination.exists");
             }
+        }
+
+        private static bool CanVerifyOperation(PackageAnalysisSnapshot snapshot, bool widening)
+        {
+            if (!widening) { return RenameCoveragePolicy.CanVerifyRename(snapshot); }
+            return snapshot.UnsupportedItems.Concat(snapshot.Dependencies.UnsupportedItems)
+                .Concat(snapshot.ControlFlow.UnsupportedItems).All(gap =>
+                    gap.ReasonCode == UnsupportedItem.IntentionalOmissionCode ||
+                    (gap.ReasonCode == UnsupportedItem.TaskPropertiesNotInspectedCode &&
+                     snapshot.Executables.Any(task => task.Id == gap.Id && task.CreationName == gap.CreationName)));
         }
 
         private static bool AllRenameRequirementsPresent(

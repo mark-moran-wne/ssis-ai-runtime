@@ -15,14 +15,14 @@ Current local implementation as of 2026-10-07. Implemented does not imply genera
 | Mutation contracts and requirements | Implemented | Read-only RenameTask preview, explicit lifecycle statuses, and schema 1.1 obligations; no executor |
 | Artifact staging | Implemented, limited | Separate destination, verification-gated publication, overwrite refusal, and normal-failure cleanup; not a complete save workflow |
 | Synthetic flow execution | Implemented | Native Derived Column, Int32-to-Int16/Int64 Data Conversion, and Unicode Flat File text probes with output assertions |
-| Coordinated column edits | Implemented in memory | Widen/shrink/add/remove across Flat File and source/destination metadata, checked by native XML round trips |
+| Coordinated column edits | Bounded lifecycle verified | Widening has exact-ID preview and copy-edit save/reload/verification; shrink/add/remove remain in-memory only |
 | Shared component catalog | Foundation implemented | 59 seeded SSIS 16 definitions and local matching; discovery is distinct from runnable recipe support |
 | Component support tooling and diagnostics | Implemented, bounded | Native describe, recipe probes, structural XML compare, catalog validation, native errors and output mismatch details; catalog PR guide remains pending |
 | Real-package editing lifecycle | Deferred | No agent-facing copy-edit command, checkpoint/restore host, live table DDL, or complete save/reload/validation/diff executor |
 
 `SsisAiRuntime.MutationHost` now has a scratch-package RenameTask lifecycle probe (22 native cases) with controlled checkpoint and validation implementations. It verifies native rename, save-as, reload, semantic checks, asynchronous checkpoint continuation, duplicate-ID refusal, and publication/refusal paths; production services and agent-facing commands remain deferred. Rename-scoped verification permits known task-property omissions without hiding coverage or claiming complete corpus fingerprints. Changes affecting this slice must pass the [required regression gate](BuildPackage.md#required-renametask-gate). See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
 
-The next development focus is coordinated column editing and actionable diagnostics, not generic property mutation. See [Plan.md](Plan.md) for lifecycle requirements and [HISTORY.md](HISTORY.md) for dated verification evidence.
+Widening lifecycle support is limited to a direct Flat File Source-to-Flat File or OLE DB Destination path. It writes a separate copy, checkpoints the original, and verifies coordinated native metadata changes; it does not alter a physical database schema or invoke native Validate/Execute. Production checkpoint and validator implementations and an editing CLI remain deferred. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md), [BuildPackage.md](BuildPackage.md#required-column-widening-gate), and [Plan.md](Plan.md) for boundaries and verification.
 
 ## Current Foundation
 
@@ -32,7 +32,7 @@ The next development focus is coordinated column editing and actionable diagnost
 - `SsisAiRuntime.AI` targets .NET Standard 2.0 and provides deterministic read-only tools over inspector projections. It does not call an LLM or load SSIS packages; the SSIS host composes one immutable snapshot per package session.
 - `SsisAiRuntime.Corpus` targets .NET Standard 2.0 and projects analysis snapshots into versioned dependency/evidence baselines with compatibility checks, structural comparison, and deterministic semantic fingerprints.
 - `SsisAiRuntime.Mutations` targets .NET Standard 2.0 and provides native-ID-only `RenameTask` preview, versioned deterministic contracts, and explicit execution lifecycle statuses. It has no executor or native package mutation implementation.
-- `SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes a scratch-tested native RenameTask lifecycle with injected checkpoint and validator contracts. No production implementations or agent-facing edit commands are provided.
+- `SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes scratch-tested RenameTask and bounded column-widening copy-edit lifecycles with injected checkpoint and validator contracts. No production implementations or agent-facing edit commands are provided.
 - `SsisAiRuntime.Tests` tests the portable Core contract without requiring SSIS.
 - `SsisAiRuntime.Corpus.Tests` exercises snapshot projection, baseline validation, and corpus comparison without requiring SSIS.
 - `SsisAiRuntime.Mutations.Tests` exercises mutation target validation, graph-based impact, and incomplete-coverage refusal without requiring SSIS.

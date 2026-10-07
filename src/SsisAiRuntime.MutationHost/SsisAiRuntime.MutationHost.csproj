@@ -7,6 +7,10 @@
     <SSIS16BinnPath Condition="'$(SSIS16BinnPath)' == ''">$(ProgramFiles)\Microsoft SQL Server\160\DTS\Binn</SSIS16BinnPath>
     <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll')">$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
     <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SQLServer.ManagedDTS\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
+    <SSIS16PipelineWrapPath Condition="'$(SSIS16PipelineWrapPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SqlServer.DTSPipelineWrap.dll')">$(SSIS16BinnPath)\Microsoft.SqlServer.DTSPipelineWrap.dll</SSIS16PipelineWrapPath>
+    <SSIS16PipelineWrapPath Condition="'$(SSIS16PipelineWrapPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SqlServer.DTSPipelineWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSPipelineWrap.dll</SSIS16PipelineWrapPath>
+    <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SqlServer.DTSRuntimeWrap.dll')">$(SSIS16BinnPath)\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
+    <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_32\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\SsisAiRuntime.Core\SsisAiRuntime.Core.csproj" />
@@ -15,10 +19,13 @@
     <ProjectReference Include="..\SsisAiRuntime.AI\SsisAiRuntime.AI.csproj" />
     <ProjectReference Include="..\SsisAiRuntime.Corpus\SsisAiRuntime.Corpus.csproj" />
     <ProjectReference Include="..\SsisAiRuntime.Mutations\SsisAiRuntime.Mutations.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.FlowRunner\SsisAiRuntime.FlowRunner.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
     <Reference Include="Microsoft.SQLServer.ManagedDTS">
       <HintPath>$(SSIS16ManagedDtsPath)</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSPipelineWrap"><HintPath>$(SSIS16PipelineWrapPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap"><HintPath>$(SSIS16RuntimeWrapPath)</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>
