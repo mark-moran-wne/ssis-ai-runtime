@@ -18,6 +18,12 @@ The edit coordinates source file-manager, output and external metadata, the sele
 
 This creates a separate DTSX copy; it never overwrites the source or issues physical database DDL. The lifecycle fixture uses injected test checkpoint and metadata-only validator implementations and does not call SSIS `Validate` or `Execute`. No production checkpoint/validator, editing CLI, or broad mutation authorization is supplied.
 
+## Designer Layout Utilities
+
+`DesignerLayoutExtractor`, `DesignerLayoutService`, and `DesignerLayoutComparer` operate on `DesignerLayoutSnapshot` values and are separate from corpus, dependency, and mutation-contract models. Native component IDs are scoped to their owning data-flow task. The parser accepts bounded `DesignTimeProperties` XML with `NodeLayout` coordinates and optional edge/path route points; placement is deterministic, owner-scoped, avoids known nodes/routes, and refuses unknown positions instead of assuming `(0,0)`. `Normalize` is explicit and shifts only the selected owner canvas, including known route points.
+
+The integration probe covers parser bounds/DTD refusal, placement, comparison, and native component/path extraction. Generated SSIS fixtures on this host have no `DesignTimeProperties` descriptor, and a test-only unknown property is discarded by native reload. A designer-authored package fixture is still needed to verify the actual persisted property owner, ID correlation, and route-point format. Until then, the utility fails closed when positions are unavailable and is not wired into component insertion or the mutation lifecycle. Run `SsisAiRuntime.Ssis16IntegrationTests.exe --designer-layout-probe` after building.
+
 The host holds the source read-only from hashing/loading through checkpoint creation and publication. The stager requires a different destination, refuses an existing destination, and opens another source read lock while staging. Both original and reloaded native packages are disposed, including load failures. Source file sharing prevents normal Windows writes/deletion during the lifecycle; it is not a sandbox against privileged actors. A corpus fingerprint describes projected semantic state, not all omitted package content and not restoration data.
 
 ## Rename Coverage

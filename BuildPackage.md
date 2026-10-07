@@ -122,6 +122,17 @@ dotnet test .\tests\SsisAiRuntime.Mutations.Tests\SsisAiRuntime.Mutations.Tests.
 
 Every command must exit `0`. The widening suite must report 10 passed cases. These scratch tests do not call native `Validate` or `Execute`; the FlowRunner execution probe separately covers real synthetic data-flow execution. The checkpoint and validator are test doubles, not production services. Widening never changes physical database DDL and only publishes a separate DTSX copy after verification. This is a documented merge gate, not a configured CI check.
 
+## Designer Layout Probe
+
+Run the focused designer-layout parser, placement, comparison, and native topology checks on Windows x64 with SSIS 16:
+
+```console
+dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --designer-layout-probe
+```
+
+The current native fixture has no designer-authored layout property; the probe verifies explicit refusal rather than fabricated positions. Do not claim real-package layout extraction is verified until a designer-authored saved fixture confirms native load/save/reload behavior and exact ID correlation. This is a documented follow-up gate, not a configured CI check.
+
 ## Package Smoke Test
 
 The `components` command above performs metadata discovery only and does not request execution. Both default and opt-in native harness modes compare its complete catalog with native registration enumeration, check deterministic ordering and capability flags, and reject execution options on the discovery command.
