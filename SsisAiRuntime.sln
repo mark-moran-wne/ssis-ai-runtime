@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisAiRuntime.Mutations", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisAiRuntime.FlowRunner", "src\SsisAiRuntime.FlowRunner\SsisAiRuntime.FlowRunner.csproj", "{C26C532E-8129-4D47-9F8C-A3FA55D7CF71}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisAiRuntime.MutationHost", "src\SsisAiRuntime.MutationHost\SsisAiRuntime.MutationHost.csproj", "{D0F64946-9D66-4B57-A490-41BBAF4A1398}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -185,6 +187,18 @@ Global
 		{C26C532E-8129-4D47-9F8C-A3FA55D7CF71}.Release|x64.Build.0 = Release|Any CPU
 		{C26C532E-8129-4D47-9F8C-A3FA55D7CF71}.Release|x86.ActiveCfg = Release|Any CPU
 		{C26C532E-8129-4D47-9F8C-A3FA55D7CF71}.Release|x86.Build.0 = Release|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Debug|x64.Build.0 = Debug|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Debug|x86.Build.0 = Debug|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Release|x64.ActiveCfg = Release|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Release|x64.Build.0 = Release|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Release|x86.ActiveCfg = Release|Any CPU
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -202,5 +216,6 @@ Global
 		{7E0B0606-3F68-4719-AF5B-DE663CEA737E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{1AE4DB37-0F35-4DB0-B7D4-67F1A960306D} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{C26C532E-8129-4D47-9F8C-A3FA55D7CF71} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{D0F64946-9D66-4B57-A490-41BBAF4A1398} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

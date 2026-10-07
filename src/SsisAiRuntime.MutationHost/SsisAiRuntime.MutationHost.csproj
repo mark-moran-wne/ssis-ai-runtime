@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <LangVersion>latest</LangVersion>
+    <SSIS16BinnPath Condition="'$(SSIS16BinnPath)' == ''">$(ProgramFiles)\Microsoft SQL Server\160\DTS\Binn</SSIS16BinnPath>
+    <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll')">$(SSIS16BinnPath)\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
+    <SSIS16ManagedDtsPath Condition="'$(SSIS16ManagedDtsPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SQLServer.ManagedDTS\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SQLServer.ManagedDTS.dll</SSIS16ManagedDtsPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SsisAiRuntime.Core\SsisAiRuntime.Core.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.Ssis16\SsisAiRuntime.Ssis16.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.Inspectors\SsisAiRuntime.Inspectors.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.AI\SsisAiRuntime.AI.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.Corpus\SsisAiRuntime.Corpus.csproj" />
+    <ProjectReference Include="..\SsisAiRuntime.Mutations\SsisAiRuntime.Mutations.csproj" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
+    <Reference Include="Microsoft.SQLServer.ManagedDTS">
+      <HintPath>$(SSIS16ManagedDtsPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

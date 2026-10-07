@@ -69,6 +69,23 @@ public sealed class MutationPreviewerTests
     }
 
     [Fact]
+    public void KnownTaskPropertyOmissionsDoNotBlockRenameAndRemainVisible()
+    {
+        var gap = new UnsupportedItem("task-1", "Load", "STOCK:Task", "Task properties omitted",
+            UnsupportedItem.TaskPropertiesNotInspectedCode);
+        var snapshot = Snapshot(new[] { gap });
+        var preview = new MutationPreviewer().Preview(snapshot,
+            Rename(SemanticObjectKind.Executable, "task-1", "Renamed"));
+
+        Assert.True(preview.IsValid);
+        Assert.False(snapshot.IsComplete);
+        Assert.Contains(gap, preview.CoverageGaps);
+        var unknownOwner = Snapshot(new[] { new UnsupportedItem("missing", "Load", "STOCK:Task", "omitted",
+            UnsupportedItem.TaskPropertiesNotInspectedCode) });
+        Assert.False(RenameCoveragePolicy.CanVerifyRename(unknownOwner));
+    }
+
+    [Fact]
     public void RenamePreviewDoesNotAcceptContainerAsTask()
     {
         var snapshot = Snapshot(containerTask: true);

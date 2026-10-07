@@ -20,13 +20,17 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
 
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--mutation-host-probe")
+            {
+                return MutationHostLifecycleTests.Run();
+            }
             if (args.Length == 1 && args[0] == "--execute-flow-probe")
             {
                 return VerifyFlowExecution();
             }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
@@ -896,8 +900,45 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 "flow.catalog.unsupported");
             RequireNoValues(catalog);
             RunExecutable(runner, new[] { "components", "--execute" }, 2);
+            VerifyDeveloperTools(runner);
             Console.WriteLine("Installed SSIS catalog: PASS; " + native.Length +
                 " registrations, exact native coverage, deterministic metadata, four recipe-supported components; no execution.");
+        }
+
+        private static void VerifyDeveloperTools(string runner)
+        {
+            foreach (var id in new[] { "microsoft.derived-column", "microsoft.data-conversion" })
+            {
+                var description = RunExecutable(runner, new[] { "describe", id }, 0);
+                Require(!(bool)description["packageExecuted"] &&
+                    (string)description["results"]["evidence"] == "NativeInitializedMetadata" &&
+                    ((JArray)description["results"]["inputs"]).Count == 1 &&
+                    ((JArray)description["results"]["connectionSlots"]).Count == 0, "tools.describe.structure");
+                var expectedProperty = id == "microsoft.derived-column" ? "Expression" : "SourceInputColumnLineageID";
+                Require(((JArray)description["results"]["outputColumnTemplate"]["properties"])
+                    .Any(property => (string)property["name"] == expectedProperty), "tools.describe.column_defaults");
+            }
+            var missing = RunExecutable(runner, new[] { "describe", "missing-component" }, 4);
+            Require((string)missing["diagnostics"][0]["stage"] == "resolve" &&
+                !string.IsNullOrWhiteSpace((string)missing["diagnostics"][0]["message"]), "tools.describe.failure");
+            var catalog = RunExecutable(runner, new[] { "catalog", "validate" }, 0);
+            Require((int)catalog["results"]["definitionCount"] >= 59 &&
+                !(bool)catalog["results"]["nativeSupportVerified"], "tools.catalog.validation");
+            var invalidPath = Path.Combine(Path.GetTempPath(), "SsisCatalogValidation-" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                File.WriteAllText(invalidPath, "{\"schemaVersion\":\"2.0\"}");
+                RunExecutable(runner, new[] { "catalog", "validate", invalidPath }, 2);
+            }
+            finally { File.Delete(invalidPath); }
+            var compareRequest = new JObject
+            {
+                ["schemaVersion"] = "1.0", ["beforeXml"] = "<flow width='4'/>", ["afterXml"] = "<flow width='64'/>"
+            };
+            var comparison = RunExecutableWithInput(runner, new[] { "compare" }, compareRequest.ToString(), 0);
+            Require((int)comparison["results"]["changeCount"] == 1 &&
+                !(bool)comparison["results"]["semanticsVerified"], "tools.compare.change");
+            Console.WriteLine("Developer tools: PASS; native defaults/templates, missing selector diagnostics, catalog validation, and structural XML comparison.");
         }
 
         private static int VerifyFlowExecution()
@@ -928,6 +969,9 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require((string)configured["command"] == "flow.run" && (int)configured["rowCount"] == 3,
                     "flow.configured.result");
                 RequireNoValues(configured);
+                var namedProbe = RunExecutableWithInput(runner, new[] { "probe", "derived-column" }, request.ToString(), 0);
+                Require((string)namedProbe["command"] == "flow.probe", "tools.probe.alias");
+                RunExecutableWithInput(runner, new[] { "probe", "data-conversion" }, request.ToString(), 2);
                 request["expression"] = "Value < 0 ? -Value : Value";
                 request["expectedValues"] = new JArray(2, 0, 3);
                 RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 0);
@@ -935,6 +979,8 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var mismatch = RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 4);
                 Require(!(bool)mismatch["succeeded"] && (string)mismatch["code"] == "flow.assertions.failed",
                     "flow.configured.mismatch");
+                Require(((JArray)mismatch["diagnostics"]).Any(item => (string)item["code"] == "flow.assertion.mismatch" &&
+                    item["expected"] != null && item["actual"] != null), "tools.probe.mismatch_details");
                 request["expression"] = "Value +";
                 var invalidExpression = RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 4);
                 Require(!(bool)invalidExpression["succeeded"], "flow.configured.expression_invalid");
@@ -958,6 +1004,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var overflow = RunExecutableWithInput(runner, new[] { "run" }, conversion.ToString(), 4);
                 Require(!(bool)overflow["succeeded"] && (string)overflow["code"] == "flow.execution.failed",
                     "flow.conversion.overflow");
+                Require(((JArray)overflow["diagnostics"]).Any(item => (string)item["code"] == "flow.native.error" &&
+                    item["nativeCode"] != null && !string.IsNullOrWhiteSpace((string)item["component"]) &&
+                    !string.IsNullOrWhiteSpace((string)item["message"])), "tools.probe.native_errors");
+                Require((bool)overflow["cleanupSucceeded"], "tools.probe.failure_cleanup");
                 var text = new JObject
                 {
                     ["schemaVersion"] = "1.1", ["recipe"] = "flat-file-text",

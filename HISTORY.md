@@ -1,5 +1,18 @@
 # SSIS AI Runtime History
 
+## 2026-10-07 Component Support Tooling
+
+- Added developer FlowRunner `describe`, `probe`, `compare`, and `catalog validate` commands. Native Derived Column/Data Conversion descriptions expose initialized ports and synthetic column-template defaults; defaults remain observations rather than inferred mandatory configuration.
+- Added bounded structural XML comparison with deterministic changes, formatting/prefix normalization, visible generated IDs and preserved leaf text; no SSIS semantic certification or external entity resolution. Five portable comparison tests pass.
+- Native tooling/probe regressions pass descriptions, missing-selector errors, valid/invalid catalogs, comparison, named recipe mismatch, actual native SSIS overflow messages and expected/actual value diagnostics. Cleanup failure reporting now preserves the original failure. Inspection CLI behavior remains separate and unchanged.
+
+## 2026-10-07 RenameTask Host Lifecycle
+
+- Added an opt-in scratch-package MutationHost lifecycle suite with 20 cases covering native save/reload/publication, stale names/hashes, target lookup, required obligations, checkpoint failure/hash mismatch, save/reload failure injection, validator/diff rejection, destination races, source locking, cancellation, and nested/event-handler targets. Checkpoints are test artifact copies and validators are test doubles, not native Validate/Execute.
+- Tests exposed blanket task-property omission blocking all previews, data-flow companion renames being rejected, snapshots being computed before validator callbacks, and event-handler targets missing from executable discovery. Added an explicit omission code and rename-scoped policy, preserved gap/fingerprint completeness evidence, allowed only the target executable/data-flow names, rebuilt post-validator snapshots, and traversed handler executable inventories.
+- Host packages are now disposed on normal/error paths; source read sharing spans loading through publication. Production checkpoint/validation services, result serialization, and authorization/journaling remain unverified or unimplemented.
+- Hardened the lifecycle suite to 22 cases with a gated, genuinely asynchronous checkpoint callback and test-only malformed duplicate native IDs. The async test proves the operation was pending before release and that copying/resumption runs off the caller thread; the duplicate-ID case verifies refusal before checkpointing/publication. Both pass on this host. Added a documented required native regression gate; no SSIS-enabled CI runner or branch-protection check is configured yet.
+
 This document records completed milestones, investigation evidence, and dated verification results. For current behavior and safety limits, see [README.md](README.md). For remaining work and design decisions, see [Plan.md](Plan.md). Build and verification commands are in [BuildPackage.md](BuildPackage.md).
 
 ## 2026-10-07 Synthetic SSIS Execution

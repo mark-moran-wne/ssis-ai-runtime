@@ -24,6 +24,7 @@ namespace SsisAiRuntime.Ssis16
             var overviews = new List<ExecutableOverview>();
             var unsupportedItems = new List<UnsupportedItem>();
             AddExecutables(session.Package.Executables, string.Empty, 0, overviews, unsupportedItems);
+            AddEventHandlers(session.Package, string.Empty, 0, overviews, unsupportedItems);
             return new InspectionResult<ExecutableOverview>(overviews, unsupportedItems);
         }
 
@@ -59,8 +60,23 @@ namespace SsisAiRuntime.Ssis16
                         metadata.ID,
                         metadata.Name,
                         metadata.CreationName,
-                        "Task-specific properties are not inspected yet."));
+                        "Task-specific properties are not inspected yet.", UnsupportedItem.TaskPropertiesNotInspectedCode));
                 }
+                if (executable is DtsRuntime.EventsProvider eventsProvider)
+                {
+                    AddEventHandlers(eventsProvider, metadata.ID, depth + 1, overviews, unsupportedItems);
+                }
+            }
+        }
+
+        private static void AddEventHandlers(DtsRuntime.EventsProvider provider, string parentId, int depth,
+            ICollection<ExecutableOverview> overviews, ICollection<UnsupportedItem> unsupportedItems)
+        {
+            foreach (DtsRuntime.DtsEventHandler handler in provider.EventHandlers)
+            {
+                overviews.Add(new ExecutableOverview(handler.ID, parentId, handler.Name, handler.CreationName,
+                    handler.Description, depth, true, handler.HasExpressions));
+                AddExecutables(handler.Executables, handler.ID, depth + 1, overviews, unsupportedItems);
             }
         }
     }

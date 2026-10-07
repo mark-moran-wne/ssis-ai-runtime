@@ -65,6 +65,8 @@ The SQL scratch fixture uses stock Execute SQL tasks and metadata-only SQL Serve
 
 ## Opt-In Execution Probe
 
+The default and execution harnesses also test developer `describe`, shared `catalog validate`, and structural `compare` commands. Portable comparison tests check namespace/format normalization, actual metadata changes, meaningful whitespace, generated-ID visibility, bounded examples and DTD/depth refusal. Named `probe` execution tests verify recipe matching, native component diagnostics, expected/actual mismatch details and cleanup reporting. These developer diagnostics intentionally differ from the inspection CLI's redacted output.
+
 Execute the fixed synthetic row-flow recipe explicitly, or run its native regression checks:
 
 ```console
@@ -75,6 +77,33 @@ type request.json | .\src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRunti
 ```
 
 Build the solution or integration project first. The opt-in mode calls the real FlowRunner executable and checks demo and configurable arithmetic/conditional expressions, exact values and row counts, expected-value mismatch, malformed expressions, incompatible request versions, JSON redaction, invalid-command rejection, and cleanup. It runs separately from the default metadata harness and cannot be combined with a caller-supplied package. The runner uses local synthetic CSV input/output files only, a child-process timeout, and installed Flat File Source/Destination and Derived Column components. No LocalDB, credentials, or database connection is needed. This is trusted developer execution under the caller's permissions, not OS-level isolation. See [src/SsisAiRuntime.FlowRunner/README.md](src/SsisAiRuntime.FlowRunner/README.md) for the JSON request format and limits. Portable tests compile the request parser without native SSIS references and test bounds, versioning, types, duplicate/unknown fields, and immutability.
+
+## Mutation Host Lifecycle Probe
+
+Run the separate opt-in RenameTask lifecycle suite:
+
+```console
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --mutation-host-probe
+```
+
+This mode calls the actual MutationHost on scratch DTSX files, uses a test checkpoint artifact copy and metadata-only validator doubles, and checks rename/save/reload/publication plus refusal/cleanup paths. It covers nested/event-handler targets, stale names and hashes, missing requirements/targets, blocking coverage, checkpoint failure, injected save/reload failure, validator exceptions, unexpected semantic changes, destination races, source locking, and cancellation. It does not invoke native validation or package execution and cannot be combined with a caller-supplied package. A passed suite verifies orchestration, not a production checkpoint or native-validator implementation. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
+
+## Required RenameTask Gate
+
+Before merging changes to native executable discovery, rename preview/coverage policy, corpus verification, artifact staging, or MutationHost execution, run the following from the repository root on Windows x64 with SSIS 16 and the .NET 10 SDK installed. The native host cannot be certified by portable tests alone.
+
+```console
+dotnet build .\SsisAiRuntime.sln -c Release
+dotnet test .\tests\SsisAiRuntime.Tests\SsisAiRuntime.Tests.csproj -c Release --no-build
+dotnet test .\tests\SsisAiRuntime.Corpus.Tests\SsisAiRuntime.Corpus.Tests.csproj -c Release --no-build
+dotnet test .\tests\SsisAiRuntime.Mutations.Tests\SsisAiRuntime.Mutations.Tests.csproj -c Release --no-build
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --mutation-host-probe
+```
+
+Every command must exit `0`. The lifecycle suite must report 22 passed cases, including a checkpoint task that is still pending when returned and resumes on another thread, plus refusal of duplicate native IDs in a deliberately malformed scratch artifact. Malformed XML construction is test-only and is never the production editing path. The suite checks source preservation and absence of staging files for every case. When adding a case, update its expected count and documented coverage; do not delete or relax an existing case simply to obtain a pass.
+
+The checkpoints and validators remain controlled test implementations. A pass proves the bounded orchestration and native rename/save/reload path, not production checkpoint storage, native validation, or arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
 
 ## Package Smoke Test
 

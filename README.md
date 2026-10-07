@@ -17,8 +17,10 @@ Current local implementation as of 2026-10-07. Implemented does not imply genera
 | Synthetic flow execution | Implemented | Native Derived Column, Int32-to-Int16/Int64 Data Conversion, and Unicode Flat File text probes with output assertions |
 | Coordinated column edits | Implemented in memory | Widen/shrink/add/remove across Flat File and source/destination metadata, checked by native XML round trips |
 | Shared component catalog | Foundation implemented | 59 seeded SSIS 16 definitions and local matching; discovery is distinct from runnable recipe support |
-| Developer diagnostics and contributions | In progress | Failure-stage codes exist; detailed native errors and a documented catalog PR workflow remain to be completed |
+| Component support tooling and diagnostics | Implemented, bounded | Native describe, recipe probes, structural XML compare, catalog validation, native errors and output mismatch details; catalog PR guide remains pending |
 | Real-package editing lifecycle | Deferred | No agent-facing copy-edit command, checkpoint/restore host, live table DDL, or complete save/reload/validation/diff executor |
+
+`SsisAiRuntime.MutationHost` now has a scratch-package RenameTask lifecycle probe (22 native cases) with controlled checkpoint and validation implementations. It verifies native rename, save-as, reload, semantic checks, asynchronous checkpoint continuation, duplicate-ID refusal, and publication/refusal paths; production services and agent-facing commands remain deferred. Rename-scoped verification permits known task-property omissions without hiding coverage or claiming complete corpus fingerprints. Changes affecting this slice must pass the [required regression gate](BuildPackage.md#required-renametask-gate). See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
 
 The next development focus is coordinated column editing and actionable diagnostics, not generic property mutation. See [Plan.md](Plan.md) for lifecycle requirements and [HISTORY.md](HISTORY.md) for dated verification evidence.
 
@@ -30,6 +32,7 @@ The next development focus is coordinated column editing and actionable diagnost
 - `SsisAiRuntime.AI` targets .NET Standard 2.0 and provides deterministic read-only tools over inspector projections. It does not call an LLM or load SSIS packages; the SSIS host composes one immutable snapshot per package session.
 - `SsisAiRuntime.Corpus` targets .NET Standard 2.0 and projects analysis snapshots into versioned dependency/evidence baselines with compatibility checks, structural comparison, and deterministic semantic fingerprints.
 - `SsisAiRuntime.Mutations` targets .NET Standard 2.0 and provides native-ID-only `RenameTask` preview, versioned deterministic contracts, and explicit execution lifecycle statuses. It has no executor or native package mutation implementation.
+- `SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes a scratch-tested native RenameTask lifecycle with injected checkpoint and validator contracts. No production implementations or agent-facing edit commands are provided.
 - `SsisAiRuntime.Tests` tests the portable Core contract without requiring SSIS.
 - `SsisAiRuntime.Corpus.Tests` exercises snapshot projection, baseline validation, and corpus comparison without requiring SSIS.
 - `SsisAiRuntime.Mutations.Tests` exercises mutation target validation, graph-based impact, and incomplete-coverage refusal without requiring SSIS.
@@ -53,6 +56,8 @@ Run these commands from the repository root after building. Unlike the inspectio
 
 ```console
 src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe components
+src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe describe microsoft.derived-column
+src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe catalog validate
 src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe demo
 type request.json | src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe run
 ```
@@ -77,7 +82,9 @@ The shared catalog and installed inventory are separate: this host has 59 regist
 
 `NativeFlatFileColumnEditor` provides in-memory `Widen`, `Shrink`, `Add`, and `Remove` methods. Shrinking and removal require explicit data-loss acknowledgement. Addition/removal currently support direct Unicode delimited Flat File source-to-destination flows; arbitrary intermediate transformations and branches are outside that scope. OLE DB destination changes affect SSIS external-column metadata and mappings only, not a database table's actual schema. These methods are not yet exposed as commands that load and save caller-supplied packages.
 
-The default native test harness stays non-executing; `--execute-flow-probe` opts into real synthetic row execution. Build/test commands and prerequisites are in [BuildPackage.md](BuildPackage.md). Current runner failures return stage codes; exposing detailed native errors and preserving original failures alongside cleanup errors is still pending. The inspection CLI retains its separate metadata-only redaction policy.
+The developer runner also exposes `probe <recipe>`, `compare` over before/after XML, and `catalog validate <file>` for candidate definitions. Native descriptions expose defaults and ports, not guessed complete configuration requirements. See the [runner guide](src/SsisAiRuntime.FlowRunner/README.md#component-support-tooling) for formats and limits.
+
+The default native test harness stays non-executing; `--execute-flow-probe` opts into real synthetic row execution. Build/test commands and prerequisites are in [BuildPackage.md](BuildPackage.md). Developer diagnostics include native SSIS messages, component names and expected/actual mismatches; they may contain synthetic values, expressions and temporary paths. Cleanup failures preserve the original failure. The inspection CLI retains its separate metadata-only redaction policy.
 
 ## Usage
 

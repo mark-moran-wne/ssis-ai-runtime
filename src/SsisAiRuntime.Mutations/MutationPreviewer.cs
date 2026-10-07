@@ -62,7 +62,7 @@ namespace SsisAiRuntime.Mutations
             var impact = new MutationImpact(MutationRisk.Low,
                 "Task rename; " + impactAnalysis.Impacts.Count + " dependent node(s) identified.",
                 impactAnalysis.Impacts.Select(item => item.Node.Key));
-            if (!snapshot.IsComplete || !snapshot.Dependencies.IsComplete || !impactAnalysis.IsComplete)
+            if (!RenameCoveragePolicy.CanVerifyRename(snapshot))
             {
                 return new MutationPreview(MutationPreviewStatus.IncompleteCoverage, request,
                     task.Name, request.ProposedName, impact, null, coverage);

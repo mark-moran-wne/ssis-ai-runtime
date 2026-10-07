@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\src\SsisAiRuntime.Ssis16\SsisAiRuntime.Ssis16.csproj" />
     <ProjectReference Include="..\..\src\SsisAiRuntime.Cli\SsisAiRuntime.Cli.csproj" />
     <ProjectReference Include="..\..\src\SsisAiRuntime.FlowRunner\SsisAiRuntime.FlowRunner.csproj" />
+    <ProjectReference Include="..\..\src\SsisAiRuntime.MutationHost\SsisAiRuntime.MutationHost.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Reference Include="Microsoft.SQLServer.ManagedDTS"><HintPath>$(SSIS16ManagedDtsPath)</HintPath><Private>false</Private></Reference>

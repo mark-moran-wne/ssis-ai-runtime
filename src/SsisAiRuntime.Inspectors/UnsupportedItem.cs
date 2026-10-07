@@ -5,6 +5,7 @@ namespace SsisAiRuntime.Inspectors
     public sealed class UnsupportedItem
     {
         public const string UnspecifiedCode = "coverage.unspecified";
+        public const string TaskPropertiesNotInspectedCode = "coverage.task_properties_not_inspected";
         public const string IntentionalOmissionCode = "coverage.intentional_omission";
         public const string UnsupportedMetadataCode = "coverage.unsupported_metadata";
         public const string ReadFailureCode = "coverage.read_failed";
@@ -16,7 +17,7 @@ namespace SsisAiRuntime.Inspectors
 
         public UnsupportedItem(string id, string name, string creationName, string reason, string reasonCode)
         {
-            if (reasonCode != UnspecifiedCode && reasonCode != IntentionalOmissionCode &&
+            if (reasonCode != UnspecifiedCode && reasonCode != TaskPropertiesNotInspectedCode && reasonCode != IntentionalOmissionCode &&
                 reasonCode != UnsupportedMetadataCode && reasonCode != ReadFailureCode &&
                 reasonCode != "expression.parse_failed" && reasonCode != "expression.owner_scope_missing" &&
                 reasonCode != "expression.scope_cycle" && reasonCode != "expression.reference_ambiguous" &&

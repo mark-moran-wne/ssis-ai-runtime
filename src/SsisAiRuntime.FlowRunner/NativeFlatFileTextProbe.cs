@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using Newtonsoft.Json.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
 using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
@@ -12,6 +13,7 @@ namespace SsisAiRuntime.FlowRunner
     {
         public string Stage { get; private set; } = "text.initialization";
         public int RowCount { get; private set; }
+        public JArray Diagnostics { get; } = new JArray();
 
         public void Run(string directory, FlowProbeRequest request)
         {
@@ -62,13 +64,26 @@ namespace SsisAiRuntime.FlowRunner
                 }
                 Stage = "text.width_verification";
                 if (column.Length > external.Length)
-                { throw new InvalidOperationException(); }
+                { throw new InvalidOperationException("Source output width " + column.Length + " exceeds destination metadata width " + external.Length + ". Use widenTo or increase destinationWidth."); }
                 Stage = "text.execution";
-                if (package.Execute() != DTSExecResult.Success) { throw new InvalidOperationException(); }
+                if (package.Execute(null, null, new NativeProbeEvents(Diagnostics), null, null) != DTSExecResult.Success)
+                { throw new InvalidOperationException("Native SSIS text execution failed; see component diagnostics."); }
                 Stage = "text.assertions";
                 var actual = File.ReadAllLines(outputPath, Encoding.Unicode);
-                if (!actual.SequenceEqual(request.ExpectedTextValues, StringComparer.Ordinal))
-                { throw new InvalidOperationException(); }
+                if (actual.Length != request.ExpectedTextValues.Count)
+                { throw new InvalidOperationException("Expected " + request.ExpectedTextValues.Count + " rows; received " + actual.Length + "."); }
+                for (var index = 0; index < actual.Length; index++)
+                {
+                    if (!string.Equals(actual[index], request.ExpectedTextValues[index], StringComparison.Ordinal))
+                    {
+                        Diagnostics.Add(new JObject
+                        {
+                            ["code"] = "flow.assertion.mismatch", ["stage"] = "assertions", ["rowIndex"] = index,
+                            ["expected"] = request.ExpectedTextValues[index], ["actual"] = actual[index]
+                        });
+                        throw new InvalidOperationException("Text output mismatch at zero-based row " + index + ".");
+                    }
+                }
                 RowCount = actual.Length;
                 Stage = "completed";
             }

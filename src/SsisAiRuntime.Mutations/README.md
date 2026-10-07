@@ -2,7 +2,7 @@
 
 This project contains runtime-neutral mutation contracts and a read-only preview for `RenameTask` only. Targets are selected by `SemanticObjectKind` and exact native ID; names are never used to resolve execution targets. Preview impact comes from the dependency graph's rich impact query.
 
-Incomplete dependency coverage prevents a valid execution plan from being produced. The project defines execution request/result and `IMutationExecutor` contracts but deliberately provides no executor. Native mutation, checkpointing, save-as, reload, validation, semantic diff, and journaling remain deferred until their lifecycle is explicitly designed and tested.
+Blocking dependency coverage prevents a valid execution plan from being produced. `RenameCoveragePolicy` allows only explicitly identified task-property inspection omissions belonging to known executables; it keeps those gaps visible and does not change full-snapshot or fingerprint completeness. Unresolved references, read failures, and other gaps remain blocking. This portable project defines execution contracts but provides no native executor. The separate MutationHost library has a scratch-tested rename lifecycle with injected checkpoint/validation services; production implementations and journaling remain deferred.
 
 `MutationContractSerializer` emits deterministic JSON envelopes with `schemaVersion` `1.1` for requests, previews, execution plans, and results. Version `1.1` adds execution requirements to standalone plans and plans nested in previews; major-version compatibility remains unchanged. `MutationExecutionStatus` distinguishes preview-only, checkpoint, validation, save, reload, and completion states; there is no ambiguous success boolean.
 

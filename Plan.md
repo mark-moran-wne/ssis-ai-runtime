@@ -79,7 +79,7 @@ Retain these gates as grammar and owner coverage expand. Completed fixture resul
 
 ## Phase 6: Narrow Mutations
 
-1. Define mutation and execution contracts separately from runtime loading. Begin with a read-only `RenameTask` preview that requires an executable native ID, computes graph-based impact, and refuses incomplete dependency coverage. Do not add an executor until checkpoint, save-as, reload, validation, semantic-diff, and journaling behavior are explicitly specified.
+1. Define mutation and execution contracts separately from runtime loading. `RenameTask` preview requires an executable native ID and graph-based impact. Its scoped coverage policy permits only known task-property inspection omissions while retaining them in evidence; unresolved references and other gaps still block execution. The native MutationHost now has scratch lifecycle tests with injected checkpoint/validator doubles, but production policies and journaling remain deferred.
 2. After the lifecycle is specified, add explicit allowlisted execution operations rather than generic `set_property`: task rename first, followed by variable values, parameter defaults, connection properties, and SQL replacement. Resolve native identity, read current state, validate type/rules, and report before/after without echoing secrets.
 3. Test invalid targets/values, duplicate native-ID ambiguity, incomplete coverage, expression overrides, metadata refresh requirements, and failure behavior. Keep original packages untouched by default.
 

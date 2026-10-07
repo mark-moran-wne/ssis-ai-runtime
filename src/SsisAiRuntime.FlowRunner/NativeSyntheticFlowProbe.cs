@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
 using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
@@ -12,6 +13,7 @@ namespace SsisAiRuntime.FlowRunner
     {
         public int RowCount { get; private set; }
         public string Stage { get; private set; } = "initialization";
+        public JArray Diagnostics { get; } = new JArray();
 
         public void Run(string directory, FlowProbeRequest request)
         {
@@ -21,6 +23,7 @@ namespace SsisAiRuntime.FlowRunner
                 var text = new NativeFlatFileTextProbe();
                 try { text.Run(directory, request); RowCount = text.RowCount; Stage = text.Stage; }
                 catch { Stage = text.Stage; throw; }
+                finally { foreach (var diagnostic in text.Diagnostics) { Diagnostics.Add(diagnostic.DeepClone()); } }
                 return;
             }
             var inputPath = Path.Combine(directory, "input.csv");
@@ -100,17 +103,26 @@ namespace SsisAiRuntime.FlowRunner
                 }
 
                 Stage = "execution";
-                if (package.Execute() != DTSExecResult.Success) { throw new InvalidOperationException(); }
+                if (package.Execute(null, null, new NativeProbeEvents(Diagnostics), null, null) != DTSExecResult.Success)
+                { throw new InvalidOperationException("Native SSIS execution failed; see component diagnostics."); }
 
                 Stage = "assertions";
                 var actual = File.ReadAllLines(outputPath).Select(line => line.Split(','))
                     .Select(parts => parts.Select(part => int.Parse(part, CultureInfo.InvariantCulture)).ToArray()).ToArray();
                 if (actual.Length != values.Count || actual.Any(row => row.Length != 2))
-                { throw new InvalidOperationException(); }
+                { throw new InvalidOperationException("Expected " + values.Count + " two-column rows; received " + actual.Length + " rows with possibly inconsistent columns."); }
                 for (var index = 0; index < values.Count; index++)
                 {
                     if (actual[index][0] != values[index] || actual[index][1] != request.ExpectedValues[index])
-                    { throw new InvalidOperationException(); }
+                    {
+                        Diagnostics.Add(new JObject
+                        {
+                            ["code"] = "flow.assertion.mismatch", ["stage"] = "assertions", ["rowIndex"] = index,
+                            ["expected"] = new JArray(values[index], request.ExpectedValues[index]),
+                            ["actual"] = new JArray(actual[index])
+                        });
+                        throw new InvalidOperationException("Output mismatch at zero-based row " + index + ".");
+                    }
                 }
                 RowCount = actual.Length;
                 Stage = "completed";
