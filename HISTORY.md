@@ -2,6 +2,22 @@
 
 This document records completed milestones, investigation evidence, and dated verification results. For current behavior and safety limits, see [README.md](README.md). For remaining work and design decisions, see [Plan.md](Plan.md). Build and verification commands are in [BuildPackage.md](BuildPackage.md).
 
+## 2026-10-07 Synthetic SSIS Execution
+
+- `FlowRunner components` now discovers all local pipeline registrations without instantiation or execution. This host exposes 59 registrations; exact native catalog coverage, deterministic output, separate recipe/configuration/test-availability flags, and no false per-invocation execution claims pass native regressions. Three selected registrations have synthetic-flow recipes; the remaining catalog entries are discovery-only.
+
+- Added a separate `SsisAiRuntime.FlowRunner` x64 net48 executable. Its explicit `demo` recipe runs native SSIS Flat File Source -> Derived Column -> Flat File Destination over three synthetic integers, checks exact output values and row counts, and creates no database connections.
+- The recipe runs in a child process with a 60-second timeout. The parent cleans its temporary input/output directory after completion and emits fixed status codes without native error text or paths. This is trusted developer execution, not a security sandbox or a generic flow-specification implementation.
+- Opt-in native harness mode `--execute-flow-probe` passes real runner execution, output assertions, redacted JSON, usage rejection, and cleanup checks. The default native metadata harness remains non-executing. Build retains the known interop processor warning.
+- Added bounded JSON-stdin `run` requests for Int32 input rows, a native Derived Column expression, and explicit expected values. Native regressions pass multiplication and conditional expressions, expected-result mismatch, malformed expressions, incompatible schemas, and cleanup. Ten portable parser tests pass without native SSIS dependencies. General flow topology, scripts/custom components, and database probes remain unimplemented.
+
+## 2026-10-07 In-Memory Pipeline Edits
+
+- Native SSIS 16 x64 harness passes a new contrived, in-memory source/destination fixture: destination input remapping, insertion of a Derived Column into the existing flow, path reconnection, and calculated-column destination mapping.
+- Structural assertions against native `SaveToXML` output verify input lineage/external mappings, the integer output type, the expected source reference and expression, component/path inventories, path endpoints, and unchanged source metadata. Native `LoadFromXML` accepts the edited XML and preserves package identity, topology, and destination mappings.
+- The new fixture performs no file writes, database connections, package execution, or validation. Editing is test-only; no production executor or mutation-host API is implemented by these tests.
+- The complete native integration harness passes on this host. Build retains the known GAC_32 interop `CS8012` warning. Diagnostics for the new fixture and harness entry point are clean.
+
 ## 2026-10-05 Parsed SQL and Context
 
 - Full portable suite after SQL/context implementation: **174 passed, 0 failed, 0 skipped**.

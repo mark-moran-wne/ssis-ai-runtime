@@ -20,9 +20,13 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
 
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--execute-flow-probe")
+            {
+                return VerifyFlowExecution();
+            }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
@@ -33,6 +37,13 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 stage = "fixture.creation";
                 Require(Environment.Is64BitProcess, "fixture.architecture");
                 CreateFixture(path);
+                stage = "pipeline.in_memory.edits";
+                var editApplication = new Application();
+                InMemoryPipelineEditTests.Run(prefix => FindComponent(editApplication, prefix));
+                stage = "pipeline.in_memory.schema_edits";
+                InMemorySchemaEditTests.Run(prefix => FindComponent(editApplication, prefix));
+                stage = "flow.component.catalog";
+                VerifyComponentCatalog();
                 stage = "ai.question.plan";
                 var plan = RunCli(new[] { "ai", "question.plan", "What uses this connection?" }, 0);
                 Require((string)plan["tool"] == "question.plan" &&
@@ -857,9 +868,134 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 property.Name == "expression" || property.Name == "friendlyExpression" || property.Name == "connectionString"), "fixture.cli.values");
         }
 
-        private static JObject RunCli(string[] arguments, params int[] allowedExitCodes)
+        private static void VerifyComponentCatalog()
         {
-            var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
+            var runner = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.FlowRunner.exe");
+            var catalog = RunExecutable(runner, new[] { "components" }, 0);
+            var repeated = RunExecutable(runner, new[] { "components" }, 0);
+            Require(JToken.DeepEquals(catalog, repeated), "flow.catalog.deterministic");
+            Require((string)catalog["command"] == "flow.components" && !(bool)catalog["packageExecuted"] &&
+                !(bool)catalog["databaseConnections"], "flow.catalog.readonly");
+            var components = (JArray)catalog["components"];
+            var native = new Application().PipelineComponentInfos.Cast<PipelineComponentInfo>().ToArray();
+            Require(components.Count == native.Length && (int)catalog["componentCount"] == native.Length,
+                "flow.catalog.count");
+            Require(components.Select(component => (string)component["creationName"])
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .SequenceEqual(native.Select(component => component.CreationName).OrderBy(name => name, StringComparer.Ordinal)),
+                "flow.catalog.registration.coverage");
+            Require(components.All(component => (bool)component["discovered"] &&
+                !(bool)component["executionTestedThisInvocation"]), "flow.catalog.no_test_claim");
+            var supported = components.Where(component => (bool)component["configurable"]).ToArray();
+            Require(supported.Length == 4 && (int)catalog["configurableCount"] == supported.Length &&
+                supported.All(component => (bool)component["executionTestAvailable"] &&
+                    ((string)component["recipe"] == "synthetic-derived-int32" ||
+                     (string)component["recipe"] == "synthetic-data-conversion-int32")), "flow.catalog.supported");
+            Require(components.Where(component => !(bool)component["configurable"])
+                .All(component => !(bool)component["executionTestAvailable"] && component["recipe"].Type == JTokenType.Null),
+                "flow.catalog.unsupported");
+            RequireNoValues(catalog);
+            RunExecutable(runner, new[] { "components", "--execute" }, 2);
+            Console.WriteLine("Installed SSIS catalog: PASS; " + native.Length +
+                " registrations, exact native coverage, deterministic metadata, four recipe-supported components; no execution.");
+        }
+
+        private static int VerifyFlowExecution()
+        {
+            try
+            {
+                Require(Environment.Is64BitProcess, "flow.architecture");
+                VerifyComponentCatalog();
+                var before = Directory.GetDirectories(Path.GetTempPath(), "SsisFlowProbe-*");
+                var runner = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.FlowRunner.exe");
+                var report = RunExecutable(runner, new[] { "demo" }, 0);
+                Require((bool)report["succeeded"] && (string)report["code"] == "flow.completed" &&
+                    (int)report["rowCount"] == 3 && !(bool)report["databaseConnections"], "flow.execution.result");
+                RequireNoValues(report);
+                Require(!report.ToString().Contains(Path.GetTempPath()) &&
+                    !report.Descendants().OfType<JProperty>().Any(property =>
+                        property.Name == "path" || property.Name == "exception"), "flow.execution.redaction");
+                RunExecutable(runner, Array.Empty<string>(), 2);
+                RunExecutable(runner, new[] { "execute", "production.dtsx" }, 2);
+                var request = new JObject
+                {
+                    ["schemaVersion"] = "1.0",
+                    ["values"] = new JArray(-2, 0, 3),
+                    ["expression"] = "Value * 2",
+                    ["expectedValues"] = new JArray(-4, 0, 6)
+                };
+                var configured = RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 0);
+                Require((string)configured["command"] == "flow.run" && (int)configured["rowCount"] == 3,
+                    "flow.configured.result");
+                RequireNoValues(configured);
+                request["expression"] = "Value < 0 ? -Value : Value";
+                request["expectedValues"] = new JArray(2, 0, 3);
+                RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 0);
+                request["expectedValues"] = new JArray(99, 99, 99);
+                var mismatch = RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 4);
+                Require(!(bool)mismatch["succeeded"] && (string)mismatch["code"] == "flow.assertions.failed",
+                    "flow.configured.mismatch");
+                request["expression"] = "Value +";
+                var invalidExpression = RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 4);
+                Require(!(bool)invalidExpression["succeeded"], "flow.configured.expression_invalid");
+                request["schemaVersion"] = "2.0";
+                var invalidRequest = RunExecutableWithInput(runner, new[] { "run" }, request.ToString(), 2);
+                Require((string)invalidRequest["code"] == "flow.request.invalid", "flow.configured.schema_invalid");
+                var conversion = new JObject
+                {
+                    ["schemaVersion"] = "1.1", ["recipe"] = "data-conversion",
+                    ["values"] = new JArray(-32768, 0, 32767), ["conversionType"] = "Int16",
+                    ["expectedValues"] = new JArray(-32768, 0, 32767)
+                };
+                RunExecutableWithInput(runner, new[] { "run" }, conversion.ToString(), 0);
+                conversion["conversionType"] = "Int64";
+                conversion["values"] = new JArray(int.MinValue, 0, int.MaxValue);
+                conversion["expectedValues"] = new JArray(int.MinValue, 0, int.MaxValue);
+                RunExecutableWithInput(runner, new[] { "run" }, conversion.ToString(), 0);
+                conversion["conversionType"] = "Int16";
+                conversion["values"] = new JArray(32768);
+                conversion["expectedValues"] = new JArray(32768);
+                var overflow = RunExecutableWithInput(runner, new[] { "run" }, conversion.ToString(), 4);
+                Require(!(bool)overflow["succeeded"] && (string)overflow["code"] == "flow.execution.failed",
+                    "flow.conversion.overflow");
+                var text = new JObject
+                {
+                    ["schemaVersion"] = "1.1", ["recipe"] = "flat-file-text",
+                    ["values"] = new JArray("Long student name", "Unicode " + char.ConvertFromUtf32(0x03A9)),
+                    ["expectedValues"] = new JArray("Long student name", "Unicode " + char.ConvertFromUtf32(0x03A9)),
+                    ["sourceWidth"] = 4, ["destinationWidth"] = 64
+                };
+                var sourceTruncation = RunExecutableWithInput(runner, new[] { "run" }, text.ToString(), 4);
+                Require((string)sourceTruncation["code"] == "flow.text.execution.failed", "flow.text.source.truncation");
+                text["sourceWidth"] = 64;
+                text["destinationWidth"] = 4;
+                var destinationTruncation = RunExecutableWithInput(runner, new[] { "run" }, text.ToString(), 4);
+                Require((string)destinationTruncation["code"] == "flow.text.width_verification.failed", "flow.text.destination.width_mismatch");
+                text["sourceWidth"] = 4;
+                text["widenTo"] = 64;
+                var widened = RunExecutableWithInput(runner, new[] { "run" }, text.ToString(), 0);
+                Require((int)widened["rowCount"] == 2, "flow.text.widen.preserved");
+                RequireNoValues(widened);
+                var after = Directory.GetDirectories(Path.GetTempPath(), "SsisFlowProbe-*");
+                Require(!after.Except(before, StringComparer.OrdinalIgnoreCase).Any(), "flow.execution.cleanup");
+                Console.WriteLine("SSIS execution probe: PASS; Derived Column, Data Conversion boundaries/overflow, Flat File source/destination truncation and Unicode width repair, output assertions and cleanup; no database connections.");
+                return 0;
+            }
+            catch (Exception)
+            {
+                Console.Error.WriteLine("SSIS execution probe failed. Raw exception details are withheld.");
+                return 1;
+            }
+        }
+
+        private static JObject RunCli(string[] arguments, params int[] allowedExitCodes) =>
+            RunExecutable(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe"), arguments, allowedExitCodes);
+
+        private static JObject RunExecutable(string cli, string[] arguments, params int[] allowedExitCodes) =>
+            RunExecutableWithInput(cli, arguments, null, allowedExitCodes);
+
+        private static JObject RunExecutableWithInput(string cli, string[] arguments, string standardInput, params int[] allowedExitCodes)
+        {
             Require(File.Exists(cli), "fixture.cli.missing");
             var argumentText = string.Join(" ", arguments.Select(Quote));
             using (var process = new Process
@@ -867,6 +1003,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 StartInfo = new ProcessStartInfo(cli, argumentText)
                 {
                     UseShellExecute = false,
+                    RedirectStandardInput = standardInput != null,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true
@@ -876,13 +1013,19 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(process.Start(), "fixture.cli.start");
                 var stdout = process.StandardOutput.ReadToEndAsync();
                 var stderr = process.StandardError.ReadToEndAsync();
-                if (!process.WaitForExit(60000))
+                var stdin = standardInput == null ? System.Threading.Tasks.Task.CompletedTask :
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        process.StandardInput.Write(standardInput);
+                        process.StandardInput.Close();
+                    });
+                if (!process.WaitForExit(75000))
                 {
                     process.Kill();
                     process.WaitForExit();
                     throw new InvalidOperationException("fixture.cli.timeout");
                 }
-                System.Threading.Tasks.Task.WaitAll(stdout, stderr);
+                System.Threading.Tasks.Task.WaitAll(stdin, stdout, stderr);
                 Require(allowedExitCodes.Contains(process.ExitCode), "fixture.cli.exit");
                 var report = JObject.Parse(stdout.Result);
                 Require((string)report["schemaVersion"] == "1.0" && (int)report["exitCode"] == process.ExitCode, "fixture.cli.envelope");

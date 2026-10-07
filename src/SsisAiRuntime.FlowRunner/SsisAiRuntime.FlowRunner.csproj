@@ -15,9 +15,7 @@
     <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_32\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\SsisAiRuntime.Ssis16\SsisAiRuntime.Ssis16.csproj" />
-    <ProjectReference Include="..\..\src\SsisAiRuntime.Cli\SsisAiRuntime.Cli.csproj" />
-    <ProjectReference Include="..\..\src\SsisAiRuntime.FlowRunner\SsisAiRuntime.FlowRunner.csproj" />
+    <EmbeddedResource Include="..\..\catalog\components\*.json" LogicalName="SsisAiRuntime.ComponentCatalog.%(Filename).json" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Reference Include="Microsoft.SQLServer.ManagedDTS"><HintPath>$(SSIS16ManagedDtsPath)</HintPath><Private>false</Private></Reference>

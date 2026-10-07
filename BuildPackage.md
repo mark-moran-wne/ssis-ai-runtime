@@ -53,15 +53,32 @@ dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16In
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
 ```
 
-This separate x64 .NET Framework 4.8 test executable creates a fresh temporary package through the SSIS object model, configures only metadata for an integer-to-string Data Conversion, saves and reloads that scratch file, and checks the inspector, query, and actual CLI subprocess in both directions. It verifies redaction and an unchanged fixture hash after inspection, then removes the scratch directory. It never executes or validates a package, configures a database connection, or alters caller-supplied packages. Fixture creation is test-only; the production CLI remains strictly read-only and has no EzAPI dependency.
+By default, this separate x64 .NET Framework 4.8 test executable creates a fresh temporary package through the SSIS object model, configures only metadata for an integer-to-string Data Conversion, saves and reloads that scratch file, and checks the inspector, query, and actual CLI subprocess in both directions. It verifies redaction and an unchanged fixture hash after inspection, then removes the scratch directory. The default mode never executes or validates a package, acquires a database connection, or alters caller-supplied packages. Fixture creation is test-only; the production CLI remains strictly read-only and has no EzAPI dependency.
 
 The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` column-reference observer and Derived Column mappings. Successful native lookups are column evidence, not variable/parameter bindings. Separate scope fixtures verify heuristic reference resolution, owner identity, shadowing, project-context gating, redaction, and unchanged hashes. Test-only syntax probes do not evaluate expressions. Record verification outcomes in [HISTORY.md](HISTORY.md), rather than treating a previous host result as a guarantee for a new installation.
+
+An additional test-only fixture constructs a source-to-destination data flow entirely in memory. It remaps a destination input between two source columns, inserts a Derived Column into the established flow, reconnects the paths, and maps the calculated output into a second destination column. Native `Package.SaveToXML` serialization is checked structurally for column types, expression references, path endpoints, destination mappings, and unchanged source metadata. `Package.LoadFromXML` reloads the edited result into another in-memory package. This fixture creates no files and acquires no database connection; it does not execute or validate a package. It probes native editing behavior, not a production mutation service or permission to execute mutation plans.
 
 A `CS8012` warning can occur with a GAC_32 interop reference. Confirm the verifier runs as x64 on the target host. Project-parameter resolution is covered by portable explicit-inventory tests; the native verifier does not provide a project-backed SSIS fixture.
 
 The SQL scratch fixture uses stock Execute SQL tasks and metadata-only SQL Server OLE DB connections to verify connection-scoped object identities, parsed evidence, dynamic SQL gaps, and actual CLI context behavior. It checks metadata-only defaults, explicit SQL/expression sanitized-text opt-in, literal/comment redaction, option rejection, and unchanged hashes. It does not acquire a database connection, execute SQL, or validate a package.
 
+## Opt-In Execution Probe
+
+Execute the fixed synthetic row-flow recipe explicitly, or run its native regression checks:
+
+```console
+.\src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe components
+.\src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe demo
+type request.json | .\src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe run
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --execute-flow-probe
+```
+
+Build the solution or integration project first. The opt-in mode calls the real FlowRunner executable and checks demo and configurable arithmetic/conditional expressions, exact values and row counts, expected-value mismatch, malformed expressions, incompatible request versions, JSON redaction, invalid-command rejection, and cleanup. It runs separately from the default metadata harness and cannot be combined with a caller-supplied package. The runner uses local synthetic CSV input/output files only, a child-process timeout, and installed Flat File Source/Destination and Derived Column components. No LocalDB, credentials, or database connection is needed. This is trusted developer execution under the caller's permissions, not OS-level isolation. See [src/SsisAiRuntime.FlowRunner/README.md](src/SsisAiRuntime.FlowRunner/README.md) for the JSON request format and limits. Portable tests compile the request parser without native SSIS references and test bounds, versioning, types, duplicate/unknown fields, and immutability.
+
 ## Package Smoke Test
+
+The `components` command above performs metadata discovery only and does not request execution. Both default and opt-in native harness modes compare its complete catalog with native registration enumeration, check deterministic ordering and capability flags, and reject execution options on the discovery command.
 
 Pass an optional existing package to the same C# verifier for read-only smoke checks:
 

@@ -1,6 +1,26 @@
 # SSIS AI Runtime (Experimental)
 
-A headless foundation for inspecting and safely operating on SSIS packages through the native SSIS runtime. The native package object remains authoritative; projections are intended for tools and AI context, not for serialization back into DTSX.
+A headless toolkit for inspecting SSIS packages and testing synthetic data flows through the native SSIS runtime. The inspection CLI stays read-only; a separate development harness constructs and executes contrived flows and probes coordinated metadata edits. The native package object remains authoritative; projections are intended for tools and AI context, not for serialization back into DTSX.
+
+## Milestone Progress
+
+Current local implementation as of 2026-10-07. Implemented does not imply general production mutation support or verification on every SSIS installation.
+
+| Area | Status | Current Scope |
+| --- | --- | --- |
+| Native runtime and inspection CLI | Implemented | SSIS 16 x64 loading, metadata inspection, safe JSON, and coverage reporting |
+| Dependency and control-flow graphs | Implemented | Native identity, selectors, impact queries, and projected precedence relationships |
+| Expression and SQL dependencies | Implemented | Native column observations, heuristic lexical/scope bindings, and parsed T-SQL evidence |
+| Corpus baselines and fingerprints | Implemented | Versioned snapshots, diff/verify/approve, canonical SHA-256 fingerprints, and transient-ID normalization |
+| Mutation contracts and requirements | Implemented | Read-only RenameTask preview, explicit lifecycle statuses, and schema 1.1 obligations; no executor |
+| Artifact staging | Implemented, limited | Separate destination, verification-gated publication, overwrite refusal, and normal-failure cleanup; not a complete save workflow |
+| Synthetic flow execution | Implemented | Native Derived Column, Int32-to-Int16/Int64 Data Conversion, and Unicode Flat File text probes with output assertions |
+| Coordinated column edits | Implemented in memory | Widen/shrink/add/remove across Flat File and source/destination metadata, checked by native XML round trips |
+| Shared component catalog | Foundation implemented | 59 seeded SSIS 16 definitions and local matching; discovery is distinct from runnable recipe support |
+| Developer diagnostics and contributions | In progress | Failure-stage codes exist; detailed native errors and a documented catalog PR workflow remain to be completed |
+| Real-package editing lifecycle | Deferred | No agent-facing copy-edit command, checkpoint/restore host, live table DDL, or complete save/reload/validation/diff executor |
+
+The next development focus is coordinated column editing and actionable diagnostics, not generic property mutation. See [Plan.md](Plan.md) for lifecycle requirements and [HISTORY.md](HISTORY.md) for dated verification evidence.
 
 ## Current Foundation
 
@@ -8,12 +28,14 @@ A headless foundation for inspecting and safely operating on SSIS packages throu
 - `SsisAiRuntime.Ssis16` targets .NET Framework 4.8 and loads packages with SSIS 16 `Application.LoadPackage`.
 - `SsisAiRuntime.Inspectors` targets .NET Standard 2.0 and defines runtime-neutral immutable inspector results, focused SQL/lineage/configuration contexts, session-scoped semantic handles, and a control-flow graph. The SSIS 16 adapter provides package, connection, variable, parameter, SQL task, expression-presence, executable hierarchy, and data-flow projections with column lineage/type metadata, runtime connection references, and allowlisted source/destination settings. Sensitive values are omitted or sanitized, and detailed reports expose incomplete/unsupported coverage.
 - `SsisAiRuntime.AI` targets .NET Standard 2.0 and provides deterministic read-only tools over inspector projections. It does not call an LLM or load SSIS packages; the SSIS host composes one immutable snapshot per package session.
-- `SsisAiRuntime.Corpus` targets .NET Standard 2.0 and projects analysis snapshots into versioned dependency/evidence baselines with compatibility checks and structural comparison.
+- `SsisAiRuntime.Corpus` targets .NET Standard 2.0 and projects analysis snapshots into versioned dependency/evidence baselines with compatibility checks, structural comparison, and deterministic semantic fingerprints.
 - `SsisAiRuntime.Mutations` targets .NET Standard 2.0 and provides native-ID-only `RenameTask` preview, versioned deterministic contracts, and explicit execution lifecycle statuses. It has no executor or native package mutation implementation.
 - `SsisAiRuntime.Tests` tests the portable Core contract without requiring SSIS.
 - `SsisAiRuntime.Corpus.Tests` exercises snapshot projection, baseline validation, and corpus comparison without requiring SSIS.
 - `SsisAiRuntime.Mutations.Tests` exercises mutation target validation, graph-based impact, and incomplete-coverage refusal without requiring SSIS.
 - `SsisAiRuntime.Cli` is a Windows .NET Framework 4.8 x64 console app over the existing loader and inspectors. Its first release is strictly read-only.
+- `SsisAiRuntime.FlowRunner` is a separate trusted-developer SSIS 16 x64 execution executable. `components` discovers installed registrations and matches shared definitions; `demo` and JSON-stdin `run` execute contrived flows. Recipes cover Derived Column expressions, numeric Data Conversion, and Unicode text width checks. Native column-edit methods coordinate in-memory changes. This is a development harness, not a security sandbox or a service for executing real jobs. See [src/SsisAiRuntime.FlowRunner/README.md](src/SsisAiRuntime.FlowRunner/README.md).
+- [catalog/components/ssis16.json](catalog/components/ssis16.json) contains shared component definitions, not package corpus data or machine paths. Definitions do not automatically authorize execution or create configuration recipes.
 
 A personal package-inspection skill exists outside this repository; a repository-registered Copilot skill and mutation execution workflows remain planned follow-on work.
 
@@ -24,6 +46,38 @@ A personal package-inspection skill exists outside this repository; a repository
 - The built CLI and its application dependencies kept together.
 
 Contributor documentation: [BuildPackage.md](BuildPackage.md). Investigation results and dated verification: [HISTORY.md](HISTORY.md).
+
+## Developer Flow Harness
+
+Run these commands from the repository root after building. Unlike the inspection commands below, `demo` and `run` explicitly execute a synthetic SSIS package. They use disposable local CSV files, expected-output assertions, a child worker with a 60-second timeout, and automatic cleanup. They do not accept a real package path, database connection string, or credentials. There is no fixture-retention option.
+
+```console
+src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe components
+src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe demo
+type request.json | src\SsisAiRuntime.FlowRunner\bin\Release\net48\SsisAiRuntime.FlowRunner.exe run
+```
+
+Schema `1.0` Derived Column requests remain supported. Schema `1.1` selects `derived-column`, `data-conversion`, or `flat-file-text`. A coordinated width-repair example:
+
+```json
+{
+	"schemaVersion": "1.1",
+	"recipe": "flat-file-text",
+	"values": ["Long student name"],
+	"expectedValues": ["Long student name"],
+	"sourceWidth": 4,
+	"destinationWidth": 4,
+	"widenTo": 64
+}
+```
+
+The probe builds the narrow flow, widens the connection managers and connected source/destination metadata, executes SSIS, and verifies that the full string survives. Source truncation is a real native failure. Delimited Flat File destinations can write values beyond their declared width, so the harness explicitly rejects narrower destination metadata rather than claiming native destination truncation.
+
+The shared catalog and installed inventory are separate: this host has 59 registrations, but only four selected components currently have execution recipes. `executionTestAvailable` describes test coverage; listing components does not execute them or certify them on another machine.
+
+`NativeFlatFileColumnEditor` provides in-memory `Widen`, `Shrink`, `Add`, and `Remove` methods. Shrinking and removal require explicit data-loss acknowledgement. Addition/removal currently support direct Unicode delimited Flat File source-to-destination flows; arbitrary intermediate transformations and branches are outside that scope. OLE DB destination changes affect SSIS external-column metadata and mappings only, not a database table's actual schema. These methods are not yet exposed as commands that load and save caller-supplied packages.
+
+The default native test harness stays non-executing; `--execute-flow-probe` opts into real synthetic row execution. Build/test commands and prerequisites are in [BuildPackage.md](BuildPackage.md). Current runner failures return stage codes; exposing detailed native errors and preserving original failures alongside cleanup errors is still pending. The inspection CLI retains its separate metadata-only redaction policy.
 
 ## Usage
 
