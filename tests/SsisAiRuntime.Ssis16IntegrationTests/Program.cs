@@ -20,13 +20,21 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
 
         private static int Main(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--create-designer-fixtures")
+            {
+                return CreateDesignerFixtures(args[1]);
+            }
+            if (args.Length == 2 && args[0] == "--inspect-designer-fixtures")
+            {
+                return InspectDesignerFixtures(args[1]);
+            }
             if (args.Length == 1 && args[0] == "--designer-layout-probe")
             {
                 return DesignerLayoutTests.Run();
             }
-            if (args.Length == 1 && args[0] == "--column-widening-probe")
+            if (args.Length == 1 && args[0] == "--column-resize-probe")
             {
-                return ColumnWideningLifecycleTests.Run();
+                return ColumnResizeLifecycleTests.Run();
             }
             if (args.Length == 1 && args[0] == "--mutation-host-probe")
             {
@@ -38,7 +46,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-widening-probe | --designer-layout-probe]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory>]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
@@ -150,6 +158,37 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             finally
             {
                 Directory.Delete(directory, true);
+            }
+        }
+
+        private static int CreateDesignerFixtures(string directory)
+        {
+            try
+            {
+                var paths = DesignerLayoutFixtureGenerator.Create(directory);
+                DesignerLayoutFixtureGenerator.Verify(Path.GetFullPath(directory));
+                Console.WriteLine("Created and native-reload verified " + paths.Count + " synthetic layout fixtures with no coordinates. Open them in SSDT, arrange and save each, then run --inspect-designer-fixtures against the saved directory.");
+                foreach (var path in paths) { Console.WriteLine(Path.GetFileName(path)); }
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine("Designer fixture generation failed: " + error.Message);
+                return 1;
+            }
+        }
+
+        private static int InspectDesignerFixtures(string directory)
+        {
+            try
+            {
+                DesignerLayoutFixtureGenerator.Inspect(directory);
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine("Designer fixture inspection failed: " + error.Message);
+                return 1;
             }
         }
 

@@ -50,7 +50,7 @@ namespace SsisAiRuntime.Mutations
                 "semanticdiff.required"
             });
 
-        public static MutationExecutionRequirements WidenColumn() => new MutationExecutionRequirements(
+        public static MutationExecutionRequirements ResizeColumn(bool dataLossAcknowledgementRequired) => new MutationExecutionRequirements(
             checkpointRequired: true,
             saveAsRequired: true,
             reloadRequired: true,
@@ -63,7 +63,10 @@ namespace SsisAiRuntime.Mutations
                 "reload.required",
                 "validation.required",
                 "semanticdiff.required",
-                "columnwidth.coordinated"
-            });
+                "columnwidth.coordinated",
+                "columnwidth.resize"
+            }.Concat(dataLossAcknowledgementRequired
+                ? new[] { "columnwidth.data_loss.acknowledged" }
+                : Array.Empty<string>()));
     }
 }

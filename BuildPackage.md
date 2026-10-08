@@ -105,9 +105,9 @@ Every command must exit `0`. The lifecycle suite must report 22 passed cases, in
 
 The checkpoints and validators remain controlled test implementations. A pass proves the bounded orchestration and native rename/save/reload path, not production checkpoint storage, native validation, or arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
 
-## Required Column Widening Gate
+## Required Column Resizing Gate
 
-Before merging changes to the widening plan, coordinated metadata editor, or widening host lifecycle, run on Windows x64 with SSIS 16 and the .NET 10 SDK:
+Before merging changes to the column-resize plan, Quick Analysis, coordinated metadata editor, or copy-edit lifecycle, run on Windows x64 with SSIS 16 and the .NET 10 SDK:
 
 ```console
 dotnet build .\SsisAiRuntime.sln -c Release
@@ -116,15 +116,26 @@ dotnet test .\tests\SsisAiRuntime.Corpus.Tests\SsisAiRuntime.Corpus.Tests.csproj
 dotnet test .\tests\SsisAiRuntime.Mutations.Tests\SsisAiRuntime.Mutations.Tests.csproj -c Release --no-build
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --mutation-host-probe
-.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --column-widening-probe
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --column-resize-probe
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --execute-flow-probe
 ```
 
-Every command must exit `0`. The widening suite must report 10 passed cases. These scratch tests do not call native `Validate` or `Execute`; the FlowRunner execution probe separately covers real synthetic data-flow execution. The checkpoint and validator are test doubles, not production services. Widening never changes physical database DDL and only publishes a separate DTSX copy after verification. This is a documented merge gate, not a configured CI check.
+Every command must exit `0`. The resize suite must report 15 passed cases. Quick Analysis is bounded to 1..10,000 rows and reports the maximum observed length without returning values. Shrink preview requires a matching successful analysis and explicit acknowledgement; a target below the observed maximum is refused. The confirmation warns that future values may be longer even after a complete scan, and that a partial scan leaves unscanned rows unchecked. The analyzed data-file hash is checked again before execution. These scratch tests do not call native `Validate` or `Execute`; the FlowRunner execution probe separately covers real synthetic data-flow execution. The checkpoint and validator are test doubles, not production services. Resizing never changes physical database DDL and only publishes a separate DTSX copy after verification. This is a documented merge gate, not a configured CI check.
 
 ## Designer Layout Probe
 
 Run the focused designer-layout parser, placement, comparison, and native topology checks on Windows x64 with SSIS 16:
+
+```console
+dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --create-designer-fixtures .\tests\LayoutFixtures
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --designer-layout-probe
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --inspect-designer-fixtures .\tests\LayoutFixtures
+```
+
+The generator refuses to overwrite any fixture and verifies native load/reload task/component/path counts. Its packages deliberately have no layout coordinates. In SSDT, arrange the horizontal/vertical, branch, merge, and crossed-path cases, save each package, then run the inspection command. It reports native owner/node/port IDs, positions, route-point counts, and fixed diagnostics; it does not validate or execute packages. Preserve an untouched generated copy if you want a before/after comparison. Review the SSDT-saved fixtures before checking them into `tests/LayoutFixtures`; persistence remains unverified until that real round-trip is inspected.
+
+The parser/placement/comparer test mode is:
 
 ```console
 dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release

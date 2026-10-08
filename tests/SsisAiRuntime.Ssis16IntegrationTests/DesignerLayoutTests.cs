@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
@@ -15,6 +16,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 VerifyLayoutParsing();
                 VerifyPlacementAndComparison();
                 VerifyNativeExtraction();
+                VerifyFixtureGeneration();
                 Console.WriteLine("Designer layout probe: PASS; native identity/topology, coordinate and route parsing, deterministic placement, refusal and layout comparison.");
                 return 0;
             }
@@ -123,6 +125,26 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 RequireThrows(() => new DesignerLayoutService().FindOpenSpace(snapshot, task.ID, 40, 40),
                     "extractor.placement_blocked_without_layout");
 
+            }
+        }
+
+        private static void VerifyFixtureGeneration()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "SsisLayoutFixtures-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var paths = DesignerLayoutFixtureGenerator.Create(directory);
+                Require(paths.Count == 7 && paths.All(File.Exists), "fixtures.created");
+                DesignerLayoutFixtureGenerator.Verify(directory);
+                var original = File.ReadAllBytes(paths[0]);
+                var refused = false;
+                try { DesignerLayoutFixtureGenerator.Create(directory); }
+                catch (IOException) { refused = true; }
+                Require(refused && File.ReadAllBytes(paths[0]).SequenceEqual(original), "fixtures.overwrite_refused");
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) { Directory.Delete(directory, true); }
             }
         }
 

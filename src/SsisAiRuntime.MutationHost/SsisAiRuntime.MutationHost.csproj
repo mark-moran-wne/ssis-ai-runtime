@@ -27,5 +27,6 @@
     </Reference>
     <Reference Include="Microsoft.SqlServer.DTSPipelineWrap"><HintPath>$(SSIS16PipelineWrapPath)</HintPath><Private>false</Private></Reference>
     <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap"><HintPath>$(SSIS16RuntimeWrapPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>
 </Project>

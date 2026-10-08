@@ -16,17 +16,23 @@ using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
 
 namespace SsisAiRuntime.Ssis16IntegrationTests
 {
-    internal static class ColumnWideningLifecycleTests
+    internal static class ColumnResizeLifecycleTests
     {
         private static string currentCase;
 
         public static int Run()
         {
+            casesPassed = 0;
             try
             {
-                Case("success", fixture =>
+                Case("resize-widen", fixture =>
                 {
-                    var plan = fixture.Preview();
+                    fixture.WriteSamples("abc", "abcd");
+                    var analysis = fixture.Analyze(64);
+                    Require(analysis.Succeeded && analysis.RowsScanned == 2 && analysis.ReachedEndOfFile &&
+                        analysis.MaximumObservedWidth == 4 && !analysis.WouldTruncateObservedData, "widen.analysis");
+                    Require(analysis.DataLossConfirmationMessage.Contains("future data"), "widen.analysis.warning");
+                    var plan = fixture.Preview(64, analysis);
                     Require(plan.Changes.Count == 6 && plan.Changes.All(change => change.CurrentWidth == 4 && change.ProposedWidth == 64), "preview.widths");
                     var result = fixture.Execute(plan);
                     Require(result.Completed, "success:" + result.Code + ":" + string.Join(",", result.DiagnosticCodes));
@@ -39,26 +45,89 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                             .Single(component => component.ID == fixture.DestinationId).InputCollection[0].InputColumnCollection[0];
                         Require(input.ID == fixture.InputColumnId && input.Length == 64, "success.input_identity");
                         loaded.Session.Package.SaveToXML(out var afterXml, null);
-                        RequireOnlyWidthChanges(fixture.OriginalXml, afterXml);
+                        RequireOnlyWidthChanges(fixture.OriginalXml, afterXml, "4", "64");
                     }
                     finally { loaded.Session.Package.Dispose(); }
                     Require(Hash(fixture.CheckpointPath) == plan.SourceArtifactHash, "checkpoint.artifact");
                 });
                 Case("stale-source", fixture =>
                 {
-                    var plan = fixture.Preview();
+                    var plan = fixture.Preview(64, fixture.Analyze(64));
                     fixture.ChangePackage(package => package.Name = "ChangedAfterPreview");
                     var result = fixture.Execute(plan);
                     Require(!result.Completed && result.Code == "mutation.source.hash_changed", "stale.refusal");
                 });
                 Case("stale-width", fixture =>
                 {
-                    var plan = fixture.Preview();
+                    var plan = fixture.Preview(64, fixture.Analyze(64));
                     fixture.ChangePackage(package => ((RuntimeWrapper.IDTSConnectionManagerFlatFile100)package.Connections[0].InnerObject)
                         .Columns[0].MaximumWidth = 8);
                     Require(!fixture.Execute(plan).Completed, "width.stale_refusal");
                 });
-                Case("shrinking-refused", fixture => fixture.PreviewRefused(2));
+                Case("analysis-source-changed", fixture =>
+                {
+                    fixture.WriteSamples("abc", "xy");
+                    var analysis = fixture.Analyze(3);
+                    var plan = fixture.Preview(3, analysis, acknowledgeDataLoss: true);
+                    fixture.WriteSamples("abc", "much-longer");
+                    var result = fixture.Execute(plan);
+                    Require(!result.Completed && result.DiagnosticCodes.Contains("mutation.resize.analysis_source_changed") &&
+                        fixture.Checkpoint.Calls == 0, "analysis.stale_refusal");
+                });
+                Case("shrink-ack-required", fixture =>
+                {
+                    fixture.WriteSamples("abc", "ab");
+                    var analysis = fixture.Analyze(3);
+                    Require(analysis.Succeeded && analysis.MaximumObservedWidth == 3, "shrink.analysis");
+                    fixture.PreviewRefused(3, analysis, expectedCode: "mutation.resize.data_loss_acknowledgement_required");
+                });
+                Case("shrink-analysis-required", fixture =>
+                {
+                    fixture.PreviewRefused(3, expectedCode: "mutation.resize.analysis_required");
+                });
+                Case("shrink-observed-truncation", fixture =>
+                {
+                    fixture.WriteSamples("abc", "abcd");
+                    var analysis = fixture.Analyze(3);
+                    Require(analysis.WouldTruncateObservedData && analysis.MaximumObservedWidth == 4, "shrink.truncation_analysis");
+                    fixture.PreviewRefused(3, analysis, acknowledgeDataLoss: true,
+                        expectedCode: "mutation.resize.would_truncate_observed_data");
+                });
+                Case("shrink-partial-analysis-warning", fixture =>
+                {
+                    fixture.WriteSamples("abc", "xy", "longer");
+                    var analysis = fixture.Analyze(3, sampleRowLimit: 2);
+                    Require(analysis.Succeeded && analysis.IsSampled && analysis.RowsScanned == 2 &&
+                        analysis.MaximumObservedWidth == 3 && !analysis.WouldTruncateObservedData &&
+                        analysis.DataLossConfirmationMessage.Contains("sample only"), "shrink.partial_analysis");
+                    fixture.PreviewRefused(3, analysis, expectedCode: "mutation.resize.data_loss_acknowledgement_required");
+                    var plan = fixture.Preview(3, analysis, acknowledgeDataLoss: true);
+                    Require(plan.IsShrinking && plan.DataLossAcknowledged, "shrink.partial_acknowledged");
+                });
+                Case("resize-shrink", fixture =>
+                {
+                    fixture.WriteSamples("abc", "xy");
+                    var analysis = fixture.Analyze(3);
+                    Require(analysis.Succeeded && analysis.ReachedEndOfFile && analysis.MaximumObservedWidth == 3 &&
+                        !analysis.WouldTruncateObservedData, "shrink.analysis");
+                    var plan = fixture.Preview(3, analysis, acknowledgeDataLoss: true);
+                    Require(plan.IsShrinking && plan.DataLossAcknowledged && plan.MaximumObservedWidth == 3 &&
+                        plan.Requirements.Requirements.Contains("columnwidth.data_loss.acknowledged"), "shrink.plan");
+                    var result = fixture.Execute(plan);
+                    Require(result.Completed, "shrink:" + result.Code);
+                    var loaded = new PackageLoader().Load(fixture.Destination);
+                    Require(loaded.Succeeded, "shrink.reload");
+                    try
+                    {
+                        var pipeline = (IDTSPipeline130)((TaskHost)loaded.Session.Package.Executables[0]).InnerObject;
+                        var input = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                            .Single(component => component.ID == fixture.DestinationId).InputCollection[0].InputColumnCollection[0];
+                        Require(input.ID == fixture.InputColumnId && input.Length == 3, "shrink.input_identity");
+                        loaded.Session.Package.SaveToXML(out var afterXml, null);
+                        RequireOnlyWidthChanges(fixture.OriginalXml, afterXml, "4", "3");
+                    }
+                    finally { loaded.Session.Package.Dispose(); }
+                });
                 Case("missing-id", fixture => fixture.PreviewRefused(64, missingColumn: true));
                 Case("existing-destination", fixture =>
                 {
@@ -76,7 +145,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 {
                     fixture.Validator.AlterPackageName = true;
                     var result = fixture.Execute(fixture.Preview());
-                    Require(!result.Completed && result.DiagnosticCodes.Contains("mutation.width.unexpected_change"), "diff.refused");
+                    Require(!result.Completed && result.DiagnosticCodes.Contains("mutation.resize.unexpected_change"), "diff.refused");
                 });
                 Case("branched-flow", fixture =>
                 {
@@ -112,15 +181,17 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     });
                     fixture.PreviewRefused(64);
                 });
-                Console.WriteLine("Column widening lifecycle: PASS; 10 cases, native copy save/reload, exact IDs/mappings, stale-state/type/topology refusal, checkpoint/diff rejection; no DDL, Validate or Execute.");
+                Console.WriteLine("Column resizing lifecycle: PASS; " + casesPassed + " cases, quick analysis, acknowledged shrink/grow, observed-truncation refusal, native copy save/reload, exact IDs/mappings, stale-state/type/topology refusal; no DDL, Validate or Execute.");
                 return 0;
             }
             catch (Exception error)
             {
-                Console.Error.WriteLine("Column widening lifecycle failed at " + currentCase + ": " + error.Message);
+                Console.Error.WriteLine("Column resizing lifecycle failed at " + currentCase + ": " + error.Message);
                 return 1;
             }
         }
+
+        private static int casesPassed;
 
         private static void Case(string name, Action<Fixture> test)
         {
@@ -130,17 +201,20 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 test(fixture);
                 Require(Hash(fixture.Source) == fixture.CurrentHash, "source.unchanged_by_execution");
                 Require(Directory.GetFiles(fixture.DirectoryPath, ".ssis-mutation-*.dtsx").Length == 0, "staging.cleaned");
-                if (name != "success" && name != "existing-destination") { Require(!File.Exists(fixture.Destination), "not.published"); }
+                if (name != "resize-widen" && name != "resize-shrink" && name != "existing-destination")
+                { Require(!File.Exists(fixture.Destination), "not.published"); }
             }
-            Console.WriteLine("Column widening " + name + ": PASS.");
+            casesPassed++;
+            Console.WriteLine("Column resizing " + name + ": PASS.");
         }
 
         private sealed class Fixture : IDisposable
         {
-            public string DirectoryPath { get; } = Path.Combine(Path.GetTempPath(), "SsisWidening-" + Guid.NewGuid().ToString("N"));
+            public string DirectoryPath { get; } = Path.Combine(Path.GetTempPath(), "SsisColumnResize-" + Guid.NewGuid().ToString("N"));
             public string Source { get; }
             public string Destination { get; }
             public string CheckpointPath { get; }
+            public string InputDataPath { get; }
             public string CurrentHash { get; private set; }
             public string TaskId { get; }
             public int SourceId { get; }
@@ -158,9 +232,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Source = Path.Combine(DirectoryPath, "source.dtsx");
                 Destination = Path.Combine(DirectoryPath, "copy.dtsx");
                 CheckpointPath = Path.Combine(DirectoryPath, "checkpoint.dtsx");
-                using (var package = new Package { Name = "WidenFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                InputDataPath = Path.Combine(DirectoryPath, "input.csv");
+                using (var package = new Package { Name = "ResizeFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
                 {
-                    var inputConnection = Connection(package, Path.Combine(DirectoryPath, "input.csv"));
+                    var inputConnection = Connection(package, InputDataPath);
                     var outputConnection = Connection(package, Path.Combine(DirectoryPath, "output.csv"));
                     var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
                     TaskId = task.ID;
@@ -196,6 +271,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     NativeFlatFileColumnEditor.Add(pipeline, inputConnection, source, destination, "Unchanged", 12, outputConnection);
                     new Application().SaveToXml(Source, package, null);
                 }
+                WriteSamples("abc", "abcd");
                 CurrentHash = Hash(Source);
                 var loaded = new PackageLoader().Load(Source);
                 Require(loaded.Succeeded, "fixture.native_selector_load");
@@ -220,15 +296,26 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     new CorpusFingerprintProvider(), new MutationPreviewer(), Checkpoint, Validator, new MutationArtifactStager());
             }
 
-            public ColumnWideningPlan Preview(int width = 64) => host.PreviewColumnWidening(Source, TaskId, SourceId, ColumnId, DestinationId, width);
-            public MutationHostResult Execute(ColumnWideningPlan plan) => host.ExecuteAsync(
+            public ColumnResizeQuickAnalysis Analyze(int width, int sampleRowLimit = 1000) => host.AnalyzeColumnResize(
+                Source, TaskId, SourceId, ColumnId, DestinationId, width, sampleRowLimit);
+            public ColumnResizePlan Preview(int width = 64, ColumnResizeQuickAnalysis analysis = null,
+                bool acknowledgeDataLoss = false) => host.PreviewColumnResize(Source, TaskId, SourceId, ColumnId,
+                    DestinationId, width, analysis, acknowledgeDataLoss);
+            public MutationHostResult Execute(ColumnResizePlan plan) => host.ExecuteAsync(
                 new MutationHostRequest(Source, Destination, plan, plan.SourceArtifactHash), CancellationToken.None).GetAwaiter().GetResult();
-            public void PreviewRefused(int width, bool missingColumn = false)
+            public void PreviewRefused(int width, ColumnResizeQuickAnalysis analysis = null, bool missingColumn = false,
+                bool acknowledgeDataLoss = false, string expectedCode = null)
             {
-                var refused = false;
-                try { host.PreviewColumnWidening(Source, TaskId, SourceId, missingColumn ? int.MaxValue : ColumnId, DestinationId, width); }
-                catch (InvalidOperationException) { refused = true; }
-                Require(refused && Checkpoint.Calls == 0, "preview.refused");
+                var refusalCode = string.Empty;
+                try { host.PreviewColumnResize(Source, TaskId, SourceId, missingColumn ? int.MaxValue : ColumnId,
+                    DestinationId, width, analysis, acknowledgeDataLoss); }
+                catch (InvalidOperationException error) { refusalCode = error.Message; }
+                Require(refusalCode.Length > 0 && (expectedCode == null || refusalCode == expectedCode) &&
+                    Checkpoint.Calls == 0, "preview.refused:" + refusalCode);
+            }
+            public void WriteSamples(params string[] values)
+            {
+                File.WriteAllLines(InputDataPath, values.Select(value => value + ",unchanged"), System.Text.Encoding.Unicode);
             }
             public void ChangePackage(Action<Package> change)
             {
@@ -253,7 +340,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
         }
         private static string Find(string prefix) => new Application().PipelineComponentInfos.Cast<PipelineComponentInfo>()
             .First(info => info.CreationName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).CreationName;
-        private static void RequireOnlyWidthChanges(string beforeXml, string afterXml)
+        private static void RequireOnlyWidthChanges(string beforeXml, string afterXml, string oldWidth, string newWidth)
         {
             XNamespace dts = "www.microsoft.com/SqlServer/Dts";
             var before = XDocument.Parse(beforeXml);
@@ -270,7 +357,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 {
                     var nextAttribute = pair.Next.Attribute(attribute.Name);
                     if (nextAttribute == null || attribute.Value == nextAttribute.Value) { continue; }
-                    if (attribute.Value == "4" && nextAttribute.Value == "64" &&
+                    if (attribute.Value == oldWidth && nextAttribute.Value == newWidth &&
                         (attribute.Name.LocalName == "MaximumWidth" || attribute.Name.LocalName == "length" || attribute.Name.LocalName == "cachedLength") &&
                         ((string)pair.First.Attribute("name") == "Value" || (string)pair.First.Attribute("cachedName") == "Value" ||
                          (string)pair.First.Attribute(dts + "ObjectName") == "Value"))

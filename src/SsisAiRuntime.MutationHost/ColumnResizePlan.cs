@@ -23,10 +23,12 @@ namespace SsisAiRuntime.MutationHost
         public int ProposedWidth { get; }
     }
 
-    public sealed class ColumnWideningPlan
+    public sealed class ColumnResizePlan
     {
-        private ColumnWideningPlan(string sourceHash, string taskId, int sourceId, int outputColumnId,
-            int destinationId, int proposedWidth, string beforeSignature, string afterSignature,
+        private ColumnResizePlan(string sourceHash, string taskId, int sourceId, int outputColumnId,
+            int destinationId, int proposedWidth, ColumnResizeQuickAnalysis quickAnalysis,
+            bool shrinking, bool dataLossAcknowledged,
+            string beforeSignature, string afterSignature,
             IEnumerable<ColumnWidthChange> changes)
         {
             SourceArtifactHash = sourceHash;
@@ -35,10 +37,13 @@ namespace SsisAiRuntime.MutationHost
             SourceOutputColumnId = outputColumnId;
             DestinationComponentId = destinationId;
             ProposedWidth = proposedWidth;
+            QuickAnalysis = quickAnalysis;
+            IsShrinking = shrinking;
+            DataLossAcknowledged = shrinking && dataLossAcknowledged;
             BeforeSignature = beforeSignature;
             AfterSignature = afterSignature;
             Changes = new ReadOnlyCollection<ColumnWidthChange>(changes.ToArray());
-            Requirements = MutationExecutionPolicies.WidenColumn();
+            Requirements = MutationExecutionPolicies.ResizeColumn(DataLossAcknowledged);
         }
 
         public string SourceArtifactHash { get; }
@@ -47,44 +52,75 @@ namespace SsisAiRuntime.MutationHost
         public int SourceOutputColumnId { get; }
         public int DestinationComponentId { get; }
         public int ProposedWidth { get; }
+        public ColumnResizeQuickAnalysis QuickAnalysis { get; }
+        public int? MaximumObservedWidth => QuickAnalysis?.MaximumObservedWidth;
+        public bool IsShrinking { get; }
+        public bool DataLossAcknowledged { get; }
         public IReadOnlyList<ColumnWidthChange> Changes { get; }
         public MutationExecutionRequirements Requirements { get; }
         internal string BeforeSignature { get; }
         internal string AfterSignature { get; }
 
-        internal static ColumnWideningPlan Create(Package package, string sourceHash, string taskId,
-            int sourceId, int outputColumnId, int destinationId, int width)
+        internal static ColumnResizePlan Create(Package package, string sourceHash, string taskId,
+            int sourceId, int outputColumnId, int destinationId, int width, ColumnResizeQuickAnalysis quickAnalysis,
+            bool acknowledgeDataLoss)
         {
             if (string.IsNullOrWhiteSpace(taskId) || sourceId <= 0 || outputColumnId <= 0 || destinationId <= 0)
             { throw new ArgumentException("Exact native task/component/output-column IDs are required."); }
             if (width < 1 || width > 4000) { throw new ArgumentOutOfRangeException(nameof(width)); }
             var binding = Resolve(package, taskId, sourceId, outputColumnId, destinationId);
             var changes = binding.Widths.Select(entry => new ColumnWidthChange(entry.Key, entry.Value, width)).ToArray();
-            if (changes.Any(change => change.CurrentWidth > width) || !changes.Any(change => change.CurrentWidth < width))
-            { throw new InvalidOperationException("mutation.width.not_a_widening"); }
+            var shrinking = changes.Any(change => change.CurrentWidth > width);
+            var growing = changes.Any(change => change.CurrentWidth < width);
+            if (!shrinking && !growing) { throw new InvalidOperationException("mutation.resize.no_change"); }
+            if (shrinking && growing) { throw new InvalidOperationException("mutation.resize.direction_ambiguous"); }
+            if (shrinking && quickAnalysis == null)
+            { throw new InvalidOperationException("mutation.resize.analysis_required"); }
+            if (shrinking && !acknowledgeDataLoss)
+            { throw new InvalidOperationException("mutation.resize.data_loss_acknowledgement_required"); }
+            if (quickAnalysis != null)
+            {
+                if (!quickAnalysis.Succeeded) { throw new InvalidOperationException(quickAnalysis.DiagnosticCode); }
+                if (quickAnalysis.SourceArtifactHash != sourceHash || quickAnalysis.TaskNativeId != taskId ||
+                    quickAnalysis.SourceComponentId != sourceId || quickAnalysis.OutputColumnId != outputColumnId ||
+                    quickAnalysis.DestinationComponentId != destinationId || quickAnalysis.ProposedWidth != width)
+                { throw new InvalidOperationException("mutation.resize.analysis_mismatch"); }
+                if (!quickAnalysis.InputFileUnchanged()) { throw new InvalidOperationException("mutation.resize.analysis_source_changed"); }
+                if (quickAnalysis.WouldTruncateObservedData)
+                { throw new InvalidOperationException("mutation.resize.would_truncate_observed_data"); }
+            }
             var before = Serialize(package);
             using (var clone = new Package())
             {
                 clone.LoadFromXML(before, null);
                 var edited = Resolve(clone, taskId, sourceId, outputColumnId, destinationId);
-                edited.Apply(width);
-                return new ColumnWideningPlan(sourceHash, taskId, sourceId, outputColumnId, destinationId, width,
-                    Signature(before), Signature(Serialize(clone)), changes);
+                edited.Apply(width, shrinking);
+                return new ColumnResizePlan(sourceHash, taskId, sourceId, outputColumnId, destinationId, width,
+                    quickAnalysis, shrinking, acknowledgeDataLoss, Signature(before), Signature(Serialize(clone)), changes);
             }
+        }
+
+        internal static ColumnResizeQuickAnalysis Analyze(Package package, string sourceHash, string taskId,
+            int sourceId, int outputColumnId, int destinationId, int targetWidth, int sampleRowLimit)
+        {
+            return Resolve(package, taskId, sourceId, outputColumnId, destinationId).Analyze(
+                sourceHash, taskId, sourceId, outputColumnId, destinationId, targetWidth, sampleRowLimit);
         }
 
         internal void CheckCurrent(Package package, string artifactHash)
         {
+            if (QuickAnalysis != null && !QuickAnalysis.InputFileUnchanged())
+            { throw new InvalidOperationException("mutation.resize.analysis_source_changed"); }
             if (!string.Equals(SourceArtifactHash, artifactHash, StringComparison.Ordinal) ||
                 Signature(Serialize(package)) != BeforeSignature)
-            { throw new InvalidOperationException("mutation.width.plan_changed"); }
+            { throw new InvalidOperationException("mutation.resize.plan_changed"); }
             var binding = Resolve(package, TaskNativeId, SourceComponentId, SourceOutputColumnId, DestinationComponentId);
             if (Changes.Any(change => binding.Widths[change.Layer] != change.CurrentWidth))
-            { throw new InvalidOperationException("mutation.width.current_width_changed"); }
+            { throw new InvalidOperationException("mutation.resize.current_width_changed"); }
         }
 
         internal void Apply(Package package) => Resolve(package, TaskNativeId, SourceComponentId,
-            SourceOutputColumnId, DestinationComponentId).Apply(ProposedWidth);
+            SourceOutputColumnId, DestinationComponentId).Apply(ProposedWidth, IsShrinking);
 
         internal bool Verify(Package package)
         {
@@ -102,11 +138,11 @@ namespace SsisAiRuntime.MutationHost
             if (!IsRegistered(application, source.ComponentClassID, "DTSAdapter.FlatFileSource.") ||
                 (!IsRegistered(application, destination.ComponentClassID, "DTSAdapter.FlatFileDestination.") &&
                  !IsRegistered(application, destination.ComponentClassID, "DTSAdapter.OleDbDestination.")))
-            { throw new InvalidOperationException("mutation.width.component_unsupported"); }
+            { throw new InvalidOperationException("mutation.resize.component_unsupported"); }
             var output = source.OutputCollection.Cast<IDTSOutput100>().Single(port => !port.IsErrorOut);
             var paths = pipeline.PathCollection.Cast<IDTSPath100>().Where(path => path.StartPoint.ID == output.ID).ToArray();
             if (paths.Length != 1 || destination.InputCollection.Count != 1 || paths[0].EndPoint.ID != destination.InputCollection[0].ID)
-            { throw new InvalidOperationException("mutation.width.unsupported_topology"); }
+            { throw new InvalidOperationException("mutation.resize.unsupported_topology"); }
             var column = output.OutputColumnCollection.Cast<IDTSOutputColumn100>().Single(item => item.ID == outputColumnId);
             var input = destination.InputCollection[0];
             var selected = input.InputColumnCollection.Cast<IDTSInputColumn100>().Single(item => item.LineageID == column.LineageID);
@@ -124,14 +160,14 @@ namespace SsisAiRuntime.MutationHost
                 var file = (RuntimeWrapper.IDTSConnectionManagerFlatFile100)destinationConnection.InnerObject;
                 destinationFileColumn = file.Columns.Cast<RuntimeWrapper.IDTSConnectionManagerFlatFileColumn100>().Single(item =>
                     ((RuntimeWrapper.IDTSName100)item).Name == column.Name);
-                if (file.Format != "Delimited") { throw new InvalidOperationException("mutation.width.file_format_unsupported"); }
+                if (file.Format != "Delimited") { throw new InvalidOperationException("mutation.resize.file_format_unsupported"); }
             }
             if (sourceFile.Format != "Delimited" ||
                 (column.DataType != RuntimeWrapper.DataType.DT_WSTR && column.DataType != RuntimeWrapper.DataType.DT_STR) ||
                 fileColumn.DataType != column.DataType || sourceExternal.DataType != column.DataType ||
                 external.DataType != column.DataType || selected.DataType != column.DataType ||
                 (destinationFileColumn != null && destinationFileColumn.DataType != column.DataType))
-            { throw new InvalidOperationException("mutation.width.type_mismatch"); }
+            { throw new InvalidOperationException("mutation.resize.type_mismatch"); }
             var widths = new Dictionary<string, int>(StringComparer.Ordinal)
             {
                 ["sourceConnection"] = fileColumn.MaximumWidth,
@@ -208,7 +244,38 @@ namespace SsisAiRuntime.MutationHost
                 this.source = source; this.destination = destination; this.name = name; Widths = widths;
             }
             public Dictionary<string, int> Widths { get; }
-            public void Apply(int width) => NativeFlatFileColumnEditor.Widen(sourceConnection, source, destination, name, width, destinationConnection);
+            public ColumnResizeQuickAnalysis Analyze(string sourceHash, string taskId,
+                int sourceId, int outputColumnId, int destinationId, int targetWidth, int sampleRowLimit)
+            {
+                var file = (RuntimeWrapper.IDTSConnectionManagerFlatFile100)sourceConnection.InnerObject;
+                var columns = file.Columns.Cast<RuntimeWrapper.IDTSConnectionManagerFlatFileColumn100>().ToArray();
+                var columnIndex = Array.FindIndex(columns, column =>
+                    string.Equals(((RuntimeWrapper.IDTSName100)column).Name, name, StringComparison.Ordinal));
+                if (columnIndex < 0)
+                {
+                    return ColumnResizeQuickAnalysis.Unavailable(sourceHash, taskId, sourceId, outputColumnId,
+                        destinationId, targetWidth, sourceConnection.ConnectionString, sampleRowLimit,
+                        "mutation.resize.analysis.column_unavailable");
+                }
+                var delimiters = columns.Take(Math.Max(0, columns.Length - 1)).Select(column => column.ColumnDelimiter);
+                var output = source.OutputCollection.Cast<IDTSOutput100>().SelectMany(port =>
+                    port.OutputColumnCollection.Cast<IDTSOutputColumn100>()).Single(column => column.Name == name);
+                return ColumnResizeQuickAnalysis.Analyze(sourceConnection.ConnectionString, file.Unicode, file.CodePage,
+                    file.ColumnNamesInFirstDataRow, !string.IsNullOrEmpty(file.TextQualifier), delimiters,
+                    columnIndex, output.DataType, sourceHash, taskId, sourceId, outputColumnId, destinationId,
+                    targetWidth, sampleRowLimit);
+            }
+            public void Apply(int width, bool shrinking)
+            {
+                if (shrinking)
+                {
+                    NativeFlatFileColumnEditor.Shrink(sourceConnection, source, destination, name, width, true, destinationConnection);
+                }
+                else
+                {
+                    NativeFlatFileColumnEditor.Widen(sourceConnection, source, destination, name, width, destinationConnection);
+                }
+            }
         }
     }
 }
