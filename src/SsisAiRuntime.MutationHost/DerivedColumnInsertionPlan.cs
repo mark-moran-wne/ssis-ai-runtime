@@ -124,7 +124,6 @@ namespace SsisAiRuntime.MutationHost
             var task = FindPipelineTask(package, ownerTaskNativeId);
             if (package.Executables.Count != 1 || FindTaskHosts(package).Count() != 1)
             { throw new InvalidOperationException("mutation.insertion.package_shape_unsupported"); }
-            if (package.Connections.Count != 0) { throw new InvalidOperationException("mutation.insertion.package_connections_unsupported"); }
             if (package.Variables.Cast<Variable>().Any(variable => !variable.SystemVariable))
             { throw new InvalidOperationException("mutation.insertion.package_variables_unsupported"); }
             if (task.Variables.Cast<Variable>().Any(variable => !variable.SystemVariable))

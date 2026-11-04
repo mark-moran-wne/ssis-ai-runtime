@@ -116,9 +116,14 @@ Usage:
 	  SsisAiRuntime.Cli.exe ai corpus.diff <package.dtsx> --baseline <file>
 	  SsisAiRuntime.Cli.exe ai corpus.verify <package.dtsx> --baseline <file>
 	  SsisAiRuntime.Cli.exe ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]
+  SsisAiRuntime.Cli.exe ai mutation.capabilities
+  SsisAiRuntime.Cli.exe ai mutation.preview <package.dtsx> (versioned request JSON on stdin)
+  SsisAiRuntime.Cli.exe ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin)
 
 Output defaults to a bounded summary. Use --details for the full redacted projection.
 ```
+
+`ai mutation.capabilities` reports the insertion operations and their input schemas. `ai mutation.preview` reads a versioned JSON request from standard input and returns a placement preview for `insert_derived_column` or `insert_data_conversion`. `ai mutation.apply` accepts the same request plus a separate destination and checkpoint directory, then runs the MutationHost checkpoint/save/reload/verify lifecycle. It uses native `Package.Validate` in offline mode; this check does not connect to data sources or execute the package. A validation or semantic-verification failure prevents publication. The versioned result reports lifecycle status and safe diagnostic codes without returning expression text or package paths.
 
 ```bat
 cd src\SsisAiRuntime.Cli\bin\Release\net48

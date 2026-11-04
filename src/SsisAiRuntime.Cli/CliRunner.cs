@@ -92,6 +92,9 @@ namespace SsisAiRuntime.Cli
                         "  SsisAiRuntime.Cli.exe ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]",
                         "  SsisAiRuntime.Cli.exe ai impact.classified <package.dtsx> --node <node-key>",
                         "  SsisAiRuntime.Cli.exe ai question.plan <question>",
+                        "  SsisAiRuntime.Cli.exe ai mutation.capabilities",
+                        "  SsisAiRuntime.Cli.exe ai mutation.preview <package.dtsx> (versioned request JSON on stdin)",
+                        "  SsisAiRuntime.Cli.exe ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin)",
                         "",
                         "Output defaults to a bounded summary. Use --details for the full redacted projection."
                     });

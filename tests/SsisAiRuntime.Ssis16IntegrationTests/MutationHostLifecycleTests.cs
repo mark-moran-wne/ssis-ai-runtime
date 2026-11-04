@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
+using Newtonsoft.Json.Linq;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Corpus;
 using SsisAiRuntime.Inspectors;
@@ -209,10 +210,25 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     Require(fixture.Checkpoint.Calls == 0, "coverage.no_checkpoint");
                 });
                 Case("file-checkpoint-service", fixture => VerifyFileCheckpointService(fixture));
+                Case("native-package-validation", fixture =>
+                {
+                    var load = new PackageLoader().Load(fixture.Source);
+                    Require(load.Succeeded, "native-validation.load");
+                    try
+                    {
+                        var package = load.Session.Package;
+                        var previousOfflineMode = package.OfflineMode;
+                        var result = new NativePackageMutationValidator().Validate(load.Session);
+                        Require(result.Succeeded && !result.HasWarnings && result.DiagnosticCodes.Count == 0,
+                            "native-validation.result:" + string.Join(",", result.DiagnosticCodes));
+                        Require(package.OfflineMode == previousOfflineMode, "native-validation.offline-mode-restored");
+                    }
+                    finally { load.Session.Package.Dispose(); }
+                });
                 VerifyDerivedColumnInsertionLifecycle();
                 VerifyDataConversionInsertionLifecycle();
-                Require(passedCases == 25, "lifecycle.case_count_changed");
-                Console.WriteLine("Mutation host lifecycle: PASS; " + passedCases + " cases; rename and positioned Derived Column/Data Conversion insertion, file checkpoint, async checkpoint, duplicate-ID refusal, native reload, cleanup and source preservation. Validators are test doubles; no native Validate or Execute.");
+                Require(passedCases == 26, "lifecycle.case_count_changed");
+                Console.WriteLine("Mutation host lifecycle: PASS; " + passedCases + " cases; rename and positioned Derived Column/Data Conversion insertion, successful offline CLI apply, validation refusal, file checkpoint, async checkpoint, native reload, cleanup and source preservation. Successful host fault-path cases use validator doubles; no package Execute or data-source connection.");
                 return 0;
             }
             catch (Exception error)
@@ -256,6 +272,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             var sourcePath = Path.Combine(directory, "source.dtsx");
             var destinationPath = Path.Combine(directory, "output.dtsx");
             var checkpointPath = Path.Combine(directory, "checkpoint.dtsx");
+            var inputDataPath = Path.Combine(directory, "input.csv");
+            var outputDataPath = Path.Combine(directory, "output.csv");
+            File.WriteAllText(inputDataPath, "42" + Environment.NewLine, System.Text.Encoding.Unicode);
+            File.WriteAllText(outputDataPath, string.Empty, System.Text.Encoding.Unicode);
             string taskId;
             string sourceId;
             string destinationId;
@@ -269,16 +289,44 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     taskId = task.ID;
                     var pipeline = (IDTSPipeline130)task.InnerObject;
                     var app = new Application();
-                    var source = AddComponent(pipeline, app, "DTSAdapter.OleDbSource.", "Source");
-                    var destination = AddComponent(pipeline, app, "DTSAdapter.OleDbDestination.", "Destination");
+                    var inputConnection = CreateFlatFileConnection(package, inputDataPath, "InputValue", RuntimeWrapper.DataType.DT_I4, 4);
+                    var outputConnection = CreateFlatFileConnection(package, outputDataPath, "InputValue", RuntimeWrapper.DataType.DT_I4, 4);
+                    var source = pipeline.ComponentMetaDataCollection.New();
+                    source.ComponentClassID = FindComponent(app, "DTSAdapter.FlatFileSource.");
+                    var sourceDesign = source.Instantiate();
+                    sourceDesign.ProvideComponentProperties();
+                    source.Name = "Source";
+                    source.LocaleID = 1033;
+                    source.RuntimeConnectionCollection[0].ConnectionManagerID = inputConnection.ID;
+                    source.RuntimeConnectionCollection[0].ConnectionManager = DtsConvert.GetExtendedInterface(inputConnection);
+                    sourceDesign.AcquireConnections(null);
+                    try { sourceDesign.ReinitializeMetaData(); }
+                    finally { sourceDesign.ReleaseConnections(); }
+                    var sourceErrorOutput = source.OutputCollection.Cast<IDTSOutput100>().Single(port => port.IsErrorOut);
+                    var sourceErrorColumn = sourceErrorOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                        .Single(column => column.Name == "Flat File Source Error Output Column");
+                    sourceErrorColumn.SetDataTypeProperties(RuntimeWrapper.DataType.DT_TEXT, 0, 0, 0, 1252);
+                    var destination = pipeline.ComponentMetaDataCollection.New();
+                    destination.ComponentClassID = FindComponent(app, "DTSAdapter.FlatFileDestination.");
+                    var destinationDesign = destination.Instantiate();
+                    destinationDesign.ProvideComponentProperties();
+                    destination.Name = "Destination";
+                    destination.LocaleID = 1033;
+                    destination.RuntimeConnectionCollection[0].ConnectionManagerID = outputConnection.ID;
+                    destination.RuntimeConnectionCollection[0].ConnectionManager = DtsConvert.GetExtendedInterface(outputConnection);
                     sourceId = source.ID.ToString();
                     destinationId = destination.ID.ToString();
                     var output = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
-                    var inputColumn = output.OutputColumnCollection.New();
-                    inputColumn.Name = "InputValue";
-                    inputColumn.SetDataTypeProperties(RuntimeWrapper.DataType.DT_I4, 0, 0, 0, 0);
+                    var inputColumn = output.OutputColumnCollection.Cast<IDTSOutputColumn100>().Single();
                     lineageId = inputColumn.LineageID;
-                    pipeline.PathCollection.New().AttachPathAndPropagateNotifications(output, destination.InputCollection[0]);
+                    var input = destination.InputCollection[0];
+                    pipeline.PathCollection.New().AttachPathAndPropagateNotifications(output, input);
+                    destinationDesign.AcquireConnections(null);
+                    try { destinationDesign.ReinitializeMetaData(); }
+                    finally { destinationDesign.ReleaseConnections(); }
+                    var selected = destinationDesign.SetUsageType(input.ID, input.GetVirtualInput(), inputColumn.LineageID, DTSUsageType.UT_READONLY);
+                    var destinationExternal = input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Single();
+                    destinationDesign.MapInputColumn(input.ID, selected.ID, destinationExternal.ID);
                     package.DesignTimeProperties = "<Objects Version='8'><Package design-time-name='Package'><LayoutInfo><GraphLayout>" +
                         "<NodeLayout Id='Package\\InsertFlow' TopLeft='20,20' Size='180,42'/>" +
                         "</GraphLayout></LayoutInfo></Package><TaskHost design-time-name='Package\\InsertFlow'><LayoutInfo><GraphLayout>" +
@@ -292,7 +340,20 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(sourceLoad.Succeeded, "insert.source.load");
                 try
                 {
+                    var sourcePackage = sourceLoad.Session.Package;
+                    var sourceConnectionManagers = sourcePackage.Connections.Cast<ConnectionManager>().ToArray();
+                    Require(sourceConnectionManagers.All(connection =>
+                        ((RuntimeWrapper.IDTSConnectionManagerFlatFile100)connection.InnerObject).Unicode),
+                        "insert.flatfile.unicode_reloaded");
+                    var previousOfflineMode = sourcePackage.OfflineMode;
+                    sourcePackage.OfflineMode = true;
+                    sourcePackage.Validate(sourcePackage.Connections, sourcePackage.Variables, null, null);
+                    Require(sourcePackage.Errors.Count == 0, "insert.source.native_validation");
+                    sourcePackage.OfflineMode = previousOfflineMode;
                     var sourceTask = (TaskHost)sourceLoad.Session.Package.Executables[0];
+                    Require(sourceLoad.Session.Package.Connections.Cast<ConnectionManager>().All(connection =>
+                        ((RuntimeWrapper.IDTSConnectionManagerFlatFile100)connection.InnerObject).LocaleID == 1033),
+                        "insert.flatfile.locale_reloaded");
                     taskId = sourceTask.ID;
                     var sourcePipeline = (IDTSPipeline130)sourceTask.InnerObject;
                     var sourceComponent = sourcePipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
@@ -307,6 +368,58 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 finally { sourceLoad.Session.Package.Dispose(); }
 
                 var sourceHash = Hash(sourcePath);
+                var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
+                var capabilities = Program.RunExecutable(cli, new[] { "ai", "mutation.capabilities" }, 0);
+                Require((bool)capabilities["succeeded"] &&
+                    ((JArray)capabilities["results"]["operations"]).Count == 2 &&
+                    ((JArray)capabilities["results"]["operations"][1]["inputSchema"]["properties"]["outputDataType"]["enum"])
+                        .Any(value => (string)value == "DT_WSTR") &&
+                    ((JArray)capabilities["results"]["operations"][0]["inputSchema"]["properties"]["placement"]["properties"]["relation"]["enum"])
+                        .Any(value => (string)value == "RightOf") &&
+                    (bool)capabilities["results"]["applyAvailable"] &&
+                    ((JArray)capabilities["results"]["operations"][0]["actions"]).Any(value => (string)value == "apply"),
+                    "insert.ai.capabilities");
+                var previewRequest = new JObject
+                {
+                    ["schemaVersion"] = "1.0",
+                    ["operation"] = "insert_derived_column",
+                    ["taskId"] = taskId,
+                    ["sourceComponentId"] = sourceId,
+                    ["destinationComponentId"] = destinationId,
+                    ["sourceLineageId"] = lineageId,
+                    ["componentName"] = "AddCalculated",
+                    ["outputName"] = "CalculatedValue",
+                    ["expression"] = "#" + lineageId + " + 1",
+                    ["placement"] = new JObject
+                    {
+                        ["relation"] = "RightOf", ["anchorComponentId"] = destinationId,
+                        ["width"] = 140, ["height"] = 42
+                    }
+                };
+                var cliPreview = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", sourcePath }, previewRequest.ToString(), 0);
+                Require((bool)cliPreview["succeeded"], "insert.ai.preview.success");
+                Require((string)cliPreview["results"]["preview"]["operation"] == "InsertDerivedColumn",
+                    "insert.ai.preview.operation");
+                Require(!cliPreview.ToString().Contains("#" + lineageId + " + 1"), "insert.ai.preview.expression_redacted");
+                Require(!(bool)cliPreview["packageExecuted"] && !(bool)cliPreview["nativeValidationPerformed"],
+                    "insert.ai.preview.non_executing");
+                Require(Hash(sourcePath) == sourceHash, "insert.ai.preview.source_preserved");
+                var cliDestination = Path.Combine(directory, "cli-output.dtsx");
+                var cliCheckpointDirectory = Path.Combine(directory, "cli-checkpoints");
+                var cliApply = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.apply", sourcePath, cliDestination, cliCheckpointDirectory },
+                    previewRequest.ToString(), 0);
+                Require((bool)cliApply["succeeded"] && (int)cliApply["exitCode"] == 0 &&
+                    (string)cliApply["results"]["code"] == "mutation.completed" &&
+                    (bool)cliApply["nativeValidationPerformed"] && (bool)cliApply["results"]["validationSucceeded"] &&
+                    (bool)cliApply["results"]["semanticDiffMatched"] && (bool)cliApply["results"]["saveAsCompleted"] &&
+                    (bool)cliApply["results"]["reloadSucceeded"] && File.Exists(cliDestination),
+                    "insert.ai.apply.completed");
+                Require(((JArray)cliApply["diagnostics"]).Count == 0 &&
+                    Directory.GetFiles(cliCheckpointDirectory, "*.dtsx").Length == 1 && Hash(sourcePath) == sourceHash &&
+                    (string)cliApply["results"]["destinationArtifactHash"] == Hash(cliDestination),
+                    "insert.ai.apply.checkpoint_and_source_preserved");
                 var checkpoint = new TestCheckpoint(checkpointPath);
                 var validator = new TestValidator();
                 var host = new Host(new PackageLoader(), new PackageAnalysisSnapshotFactory(), new CorpusSnapshotBuilder(),
@@ -333,8 +446,12 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(loaded.Succeeded, "insert.destination.load");
                 try { Require(plan.Verify(loaded.Session.Package), "insert.destination.verify"); }
                 finally { loaded.Session.Package.Dispose(); }
+                var connectionCheck = new PackageLoader().Load(destinationPath);
+                Require(connectionCheck.Succeeded, "insert.connection.reload");
+                try { Require(connectionCheck.Session.Package.Connections.Count == 2, "insert.connection.preserved"); }
+                finally { connectionCheck.Session.Package.Dispose(); }
                 passedCases++;
-                Console.WriteLine("Mutation host derived-column insertion: PASS; checkpoint/save-as/reload/validation/layout verification; no DB connection, execution, or native validation.");
+                Console.WriteLine("Mutation host derived-column insertion: PASS; checkpoint/save-as/reload/layout verification with validator double; no data-source connection or package execution.");
             }
             finally
             {
@@ -363,8 +480,15 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     taskId = task.ID;
                     var pipeline = (IDTSPipeline130)task.InnerObject;
                     var application = new Application();
+                    var connection = package.Connections.Add("OLEDB");
+                    connection.Name = "OfflineTestDb";
+                    connection.ConnectionString = "Provider=SQLOLEDB;Data Source=ssis-runtime-offline.invalid;Initial Catalog=TestDB;Integrated Security=SSPI;";
                     var source = AddComponent(pipeline, application, "DTSAdapter.OleDbSource.", "Source");
                     var destination = AddComponent(pipeline, application, "DTSAdapter.OleDbDestination.", "Destination");
+                    source.RuntimeConnectionCollection[0].ConnectionManagerID = connection.ID;
+                    source.RuntimeConnectionCollection[0].ConnectionManager = DtsConvert.GetExtendedInterface(connection);
+                    destination.RuntimeConnectionCollection[0].ConnectionManagerID = connection.ID;
+                    destination.RuntimeConnectionCollection[0].ConnectionManager = DtsConvert.GetExtendedInterface(connection);
                     sourceId = source.ID.ToString();
                     destinationId = destination.ID.ToString();
                     var output = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
@@ -399,6 +523,33 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 finally { loaded.Session.Package.Dispose(); }
 
                 var hash = Hash(sourcePath);
+                var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
+                var previewRequest = new JObject
+                {
+                    ["schemaVersion"] = "1.0",
+                    ["operation"] = "insert_data_conversion",
+                    ["taskId"] = taskId,
+                    ["sourceComponentId"] = sourceId,
+                    ["destinationComponentId"] = destinationId,
+                    ["sourceLineageId"] = lineageId,
+                    ["componentName"] = "ConvertInteger",
+                    ["outputName"] = "IntegerText",
+                    ["outputDataType"] = "DT_WSTR",
+                    ["length"] = 32,
+                    ["placement"] = new JObject
+                    {
+                        ["relation"] = "RightOf", ["anchorComponentId"] = destinationId,
+                        ["width"] = 140, ["height"] = 42
+                    }
+                };
+                var cliPreview = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", sourcePath }, previewRequest.ToString(), 0);
+                Require((bool)cliPreview["succeeded"] &&
+                    (string)cliPreview["results"]["preview"]["operation"] == "InsertDataConversion" &&
+                    (string)cliPreview["results"]["preview"]["outputDataType"] == "DT_WSTR" &&
+                    !(bool)cliPreview["packageExecuted"] && !(bool)cliPreview["nativeValidationPerformed"],
+                    "dataconvert.ai.preview");
+                Require(Hash(sourcePath) == hash, "dataconvert.ai.preview.source_preserved");
                 var checkpoint = new TestCheckpoint(checkpointPath);
                 var validator = new TestValidator();
                 var host = new Host(new PackageLoader(), new PackageAnalysisSnapshotFactory(), new CorpusSnapshotBuilder(),
@@ -418,7 +569,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(checkpoint.Calls == 1 && validator.Calls == 1 && Hash(sourcePath) == hash &&
                     result.DestinationArtifactHash == Hash(destinationPath), "dataconvert.safety_evidence");
                 passedCases++;
-                Console.WriteLine("Mutation host Data Conversion insertion: PASS; positioned DT_WSTR conversion, source mapping, checkpoint/save-as/reload/verification; no DB connection, execution, or native validation.");
+                Console.WriteLine("Mutation host Data Conversion insertion: PASS; positioned DT_WSTR conversion, source mapping, checkpoint/save-as/reload/verification with validator double; no data-source connection or package execution.");
             }
             finally
             {
@@ -436,6 +587,30 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             component.Instantiate().ProvideComponentProperties();
             component.Name = name;
             return component;
+        }
+
+        private static string FindComponent(Application application, string creationNamePrefix) =>
+            application.PipelineComponentInfos.Cast<PipelineComponentInfo>()
+                .Single(item => item.CreationName.StartsWith(creationNamePrefix, StringComparison.OrdinalIgnoreCase))
+                .CreationName;
+
+        private static ConnectionManager CreateFlatFileConnection(Package package, string path, string columnName,
+            RuntimeWrapper.DataType dataType, int maximumWidth)
+        {
+            var connection = package.Connections.Add("FLATFILE");
+            connection.ConnectionString = path;
+            var file = (RuntimeWrapper.IDTSConnectionManagerFlatFile100)connection.InnerObject;
+            file.Format = "Delimited";
+            file.Unicode = true;
+            file.LocaleID = 1033;
+            file.ColumnNamesInFirstDataRow = false;
+            var column = file.Columns.Add();
+            column.ColumnType = "Delimited";
+            column.ColumnDelimiter = "\r\n";
+            column.DataType = dataType;
+            column.MaximumWidth = maximumWidth;
+            ((RuntimeWrapper.IDTSName100)column).Name = columnName;
+            return connection;
         }
 
         private static void Case(string name, Action<Fixture> test, bool nested = false, bool eventHandler = false)

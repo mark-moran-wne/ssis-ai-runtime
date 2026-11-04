@@ -1106,10 +1106,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
         private static JObject RunCli(string[] arguments, params int[] allowedExitCodes) =>
             RunExecutable(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe"), arguments, allowedExitCodes);
 
-        private static JObject RunExecutable(string cli, string[] arguments, params int[] allowedExitCodes) =>
+        internal static JObject RunExecutable(string cli, string[] arguments, params int[] allowedExitCodes) =>
             RunExecutableWithInput(cli, arguments, null, allowedExitCodes);
 
-        private static JObject RunExecutableWithInput(string cli, string[] arguments, string standardInput, params int[] allowedExitCodes)
+        internal static JObject RunExecutableWithInput(string cli, string[] arguments, string standardInput, params int[] allowedExitCodes)
         {
             Require(File.Exists(cli), "fixture.cli.missing");
             var argumentText = string.Join(" ", arguments.Select(Quote));

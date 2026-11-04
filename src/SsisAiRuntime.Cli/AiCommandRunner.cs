@@ -27,6 +27,10 @@ namespace SsisAiRuntime.Cli
                 }
 
                 tool = args[1];
+                if (tool == "mutation.capabilities" || tool == "mutation.preview" || tool == "mutation.apply")
+                {
+                    return new MutationAiCommandRunner().Run(args, Console.In, output);
+                }
                 if (tool == "question.plan")
                 {
                     if (args.Length != 3 || string.IsNullOrWhiteSpace(args[2]))
@@ -638,6 +642,8 @@ namespace SsisAiRuntime.Cli
             "ai impact.classified <package.dtsx> --node <node-key>; ai context <package.dtsx> [--include-sanitized-text]; " +
             "ai corpus.snapshot <package.dtsx>; ai corpus.diff <package.dtsx> --baseline <file>; " +
             "ai corpus.verify <package.dtsx> --baseline <file>; ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]; " +
-            "ai question.plan <question>.";
+            "ai question.plan <question>; ai mutation.capabilities; " +
+            "ai mutation.preview <package.dtsx> (versioned request JSON on stdin); " +
+            "ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin).";
     }
 }
