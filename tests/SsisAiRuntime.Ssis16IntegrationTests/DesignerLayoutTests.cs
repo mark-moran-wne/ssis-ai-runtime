@@ -16,6 +16,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 VerifyLayoutParsing();
                 VerifyPlacementAndComparison();
                 VerifyNativeExtraction();
+                VerifyNativeLayoutPropertyRoundTrip();
                 VerifyFixtureGeneration();
                 Console.WriteLine("Designer layout probe: PASS; native identity/topology, coordinate and route parsing, deterministic placement, refusal and layout comparison.");
                 return 0;
@@ -38,6 +39,25 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             Require(nodes.Count == 2 && nodes["101"].Left == 100 && nodes["101"].Top == 120 &&
                 nodes["101"].Width == 140 && nodes["101"].Height == 50, "parser.position");
             Require(nodes["102"].Left == 300 && nodes["102"].Height == 50, "parser.individual_coordinates");
+            var ssdtNodes = DesignerLayoutExtractor.ParseLayout(
+                "<Objects><Package><LayoutInfo><GraphLayout><NodeLayout Id='Package\\TwoComponentFlow' " +
+                "TopLeft='28.5,23.5' Size='180,42'/></GraphLayout></LayoutInfo></Package></Objects>");
+            Require(ssdtNodes.Count == 1 && ssdtNodes["Package\\TwoComponentFlow"].Left == 28.5m &&
+                ssdtNodes["Package\\TwoComponentFlow"].Top == 23.5m, "parser.ssdt_reference_id_and_fractional_coordinates");
+            const string dataFlowLayout = "<Objects><TaskHost design-time-name='Package\\Flow'><LayoutInfo><GraphLayout>" +
+                "<NodeLayout Id='Package\\Flow\\Source' TopLeft='286.5,40.5' Size='114,42'/>" +
+                "<EdgeLayout Id='Package\\Flow.Paths[Output]' TopLeft='100,200'><EdgeLayout.Curve>" +
+                "<Curve Start='0,0'><Curve.Segments><SegmentCollection>" +
+                "<CubicBezierSegment Point1='0,0' Point2='0,10' Point3='10,10'/>" +
+                "</SegmentCollection></Curve.Segments></Curve></EdgeLayout.Curve></EdgeLayout>" +
+                "</GraphLayout></LayoutInfo></TaskHost></Objects>";
+            var dataFlowNodes = DesignerLayoutExtractor.ParseLayout(dataFlowLayout);
+            Require(dataFlowNodes.Count == 1 && dataFlowNodes["Package\\Flow\\Source"].Left == 286.5m,
+                "parser.taskhost_component_layout");
+            var dataFlowRoutes = DesignerLayoutExtractor.ParseRoutePoints(dataFlowLayout);
+            var sampledRoute = dataFlowRoutes["Package\\Flow.Paths[Output]"];
+            Require(sampledRoute.Count == 9 && sampledRoute[0].Equals(new DesignerPoint(100m, 200m)) &&
+                sampledRoute[8].Equals(new DesignerPoint(110m, 210m)), "parser.edge_curve_samples");
             var routes = DesignerLayoutExtractor.ParseRoutePoints(xml);
             Require(routes.Count == 1 && routes["path-1"].SequenceEqual(new[]
             {
@@ -78,6 +98,22 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             Require(!new DesignerLayoutComparer().Compare(snapshot, afterMove).Matches, "compare.position_change");
             Require(!new DesignerLayoutComparer().ComparePreservingExisting(snapshot, afterMove).Matches,
                 "compare.existing_move_refused");
+
+            var rerouted = new DesignerConnection(owner, path.NativeId, path.SourceNativeId, path.SourcePortNativeId,
+                path.DestinationNativeId, path.DestinationPortNativeId, new[] { new DesignerPoint(210, 135) });
+            var afterReroute = new DesignerLayoutSnapshot(new[] { first, second, otherFlowNode }, new[] { rerouted });
+            Require(!new DesignerLayoutComparer().ComparePreservingExisting(snapshot, afterReroute).Matches,
+                "compare.existing_route_change_refused");
+            var afterDisconnect = new DesignerLayoutSnapshot(new[] { first, second, otherFlowNode }, Array.Empty<DesignerConnection>());
+            Require(!new DesignerLayoutComparer().ComparePreservingExisting(snapshot, afterDisconnect).Matches,
+                "compare.existing_connection_removal_refused");
+            var addedNode = new DesignerNode(owner, "103", "103", new DesignerNodePosition(420, 100, 60, 40));
+            var addedConnection = new DesignerConnection(owner, "path-2", second.NativeId, "output-2",
+                addedNode.NativeId, "input-2");
+            var afterInsertion = new DesignerLayoutSnapshot(new[] { first, second, otherFlowNode, addedNode },
+                new[] { path, addedConnection });
+            Require(new DesignerLayoutComparer().ComparePreservingExisting(snapshot, afterInsertion).Matches,
+                "compare.new_node_and_connection_allowed");
 
             var unknown = new DesignerLayoutSnapshot(new[] { first,
                 new DesignerNode(owner, "103", "103", null) }, Array.Empty<DesignerConnection>());
@@ -124,7 +160,94 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     "extractor.no_fabricated_coordinates");
                 RequireThrows(() => new DesignerLayoutService().FindOpenSpace(snapshot, task.ID, 40, 40),
                     "extractor.placement_blocked_without_layout");
+                var preview = new DesignerPlacementPreviewer().Preview(package,
+                    new ComponentPlacementIntent(task.ID, ComponentPlacementRelation.RightOf,
+                        components[0].NativeId, 120, 42));
+                Require(!preview.IsValid && preview.Placement == null &&
+                    preview.RefusalCode == "designer.layout.position_unavailable",
+                    "preview.unavailable_layout_refused");
 
+            }
+        }
+
+        private static void VerifyNativeLayoutPropertyRoundTrip()
+        {
+            var designTimeProperty = typeof(Package).GetProperty("DesignTimeProperties");
+            Require(designTimeProperty != null && designTimeProperty.PropertyType == typeof(string) &&
+                designTimeProperty.GetMethod?.IsPublic == true && designTimeProperty.SetMethod?.IsPublic == true,
+                "native_writer.public_package_property");
+            using (var package = new Package { Name = "NativeLayoutPropertyFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+            {
+                var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                task.Name = "LayoutFlow";
+                var pipeline = (IDTSPipeline130)task.InnerObject;
+                var source = NewComponent(pipeline, "DTSAdapter.FlatFileSource.");
+                source.Name = "Source";
+                var destination = NewComponent(pipeline, "DTSAdapter.FlatFileDestination.");
+                destination.Name = "Destination";
+                var output = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
+                pipeline.PathCollection.New().AttachPathAndPropagateNotifications(output, destination.InputCollection[0]);
+
+                package.DesignTimeProperties = "<Objects Version='8'><Package design-time-name='Package'><LayoutInfo><GraphLayout>" +
+                    "<NodeLayout Id='Package\\LayoutFlow' TopLeft='20.5,30.5' Size='180,42'/>" +
+                    "</GraphLayout></LayoutInfo></Package><TaskHost design-time-name='Package\\LayoutFlow'><LayoutInfo><GraphLayout>" +
+                    "<NodeLayout Id='Package\\LayoutFlow\\Source' TopLeft='80.5,50.5' Size='114,42'/>" +
+                    "<NodeLayout Id='Package\\LayoutFlow\\Destination' TopLeft='250.5,50.5' Size='134,42'/>" +
+                    "<EdgeLayout Id='Package\\LayoutFlow.Paths[Flat File Source Output]' TopLeft='194.5,71.5'>" +
+                    "<EdgeLayout.Curve><Curve Start='0,0'><Curve.Segments><SegmentCollection>" +
+                    "<LineSegment End='40,0'/></SegmentCollection></Curve.Segments></Curve></EdgeLayout.Curve>" +
+                    "</EdgeLayout></GraphLayout></LayoutInfo></TaskHost></Objects>";
+
+                string initialSerialization;
+                package.SaveToXML(out initialSerialization, null);
+                using (var baselinePackage = new Package())
+                {
+                    baselinePackage.LoadFromXML(initialSerialization, null);
+                    var before = new DesignerLayoutExtractor().Extract(baselinePackage);
+                    var flowTask = (TaskHost)baselinePackage.Executables[0];
+                    var components = before.Nodes.Where(node => node.OwnerNativeId == flowTask.ID).ToArray();
+                    Require(components.Length == 2 && components.All(node => node.HasPosition),
+                        "native_writer.component_positions_reloaded");
+                    Require(components.Single(node => node.LayoutId.EndsWith("\\Source", StringComparison.Ordinal)).Position.Left == 80.5m &&
+                        components.Single(node => node.LayoutId.EndsWith("\\Destination", StringComparison.Ordinal)).Position.Left == 250.5m,
+                        "native_writer.fractional_positions_preserved");
+                    Require(before.Connections.Single().RoutePoints.Count == 2,
+                        "native_writer.edge_curve_reloaded");
+
+                    var sourceNode = components.Single(node => node.LayoutId.EndsWith("\\Source", StringComparison.Ordinal));
+                    var sourceComponent = ((IDTSPipeline130)flowTask.InnerObject).ComponentMetaDataCollection
+                        .Cast<IDTSComponentMetaData100>().Single(component => component.Name == "Source");
+                    var placementPreview = new DesignerPlacementPreviewer().Preview(baselinePackage,
+                        new ComponentPlacementIntent(flowTask.ID, ComponentPlacementRelation.RightOf,
+                            components.Single(node => node.LayoutId.EndsWith("\\Destination", StringComparison.Ordinal)).NativeId,
+                            (int)sourceNode.Position.Width, (int)sourceNode.Position.Height));
+                    Require(placementPreview.IsValid, "native_writer.placement_intent_resolved");
+                    var placement = placementPreview.Placement;
+                    new DesignerLayoutWriter().SetComponentPosition(baselinePackage, flowTask.ID,
+                        sourceComponent.ID.ToString(), placement);
+                    var beforeSave = new DesignerLayoutExtractor().Extract(baselinePackage);
+                    var movedSource = beforeSave.Nodes.Single(node => node.NativeId == sourceNode.NativeId);
+                    var unchangedDestination = beforeSave.Nodes.Single(node => node.LayoutId.EndsWith("\\Destination", StringComparison.Ordinal));
+                    Require(movedSource.HasPosition && unchangedDestination.HasPosition,
+                        "native_writer.positions_extracted_after_write");
+                    Require(placement.Position.Left == 416.5m && placement.Position.Top == 50.5m &&
+                        movedSource.Position.Left == placement.Position.Left && movedSource.Position.Top == placement.Position.Top,
+                        "native_writer.component_position_applied");
+                    Require(unchangedDestination.Position.Left == 250.5m &&
+                        new DesignerLayoutComparer().ComparePreservingExisting(before, beforeSave,
+                            new[] { sourceNode.Key }).Matches, "native_writer.existing_layout_and_route_preserved");
+
+                    string serialized;
+                    baselinePackage.SaveToXML(out serialized, null);
+                    using (var reloaded = new Package())
+                    {
+                        reloaded.LoadFromXML(serialized, null);
+                        var after = new DesignerLayoutExtractor().Extract(reloaded);
+                        var comparison = new DesignerLayoutComparer().Compare(beforeSave, after);
+                        if (!comparison.Matches)
+                        { throw new InvalidOperationException("native_writer.layout_roundtrip_matches:" + string.Join(",", comparison.Differences)); }
+                    }
+                }
             }
         }
 
@@ -137,6 +260,12 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(paths.Count == 7 && paths.All(File.Exists), "fixtures.created");
                 DesignerLayoutFixtureGenerator.Verify(directory);
                 var original = File.ReadAllBytes(paths[0]);
+                var roundTripRefused = false;
+                try { DesignerLayoutFixtureGenerator.VerifyRoundTrip(directory); }
+                catch (InvalidOperationException error)
+                { roundTripRefused = error.Message.StartsWith("designer.fixtures.layout_missing:", StringComparison.Ordinal); }
+                Require(roundTripRefused && File.ReadAllBytes(paths[0]).SequenceEqual(original),
+                    "fixtures.roundtrip_requires_layout_and_preserves_source");
                 var refused = false;
                 try { DesignerLayoutFixtureGenerator.Create(directory); }
                 catch (IOException) { refused = true; }

@@ -68,5 +68,22 @@ namespace SsisAiRuntime.Mutations
             }.Concat(dataLossAcknowledgementRequired
                 ? new[] { "columnwidth.data_loss.acknowledged" }
                 : Array.Empty<string>()));
+
+        public static MutationExecutionRequirements ComponentInsertion() => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                "componentinsert.placement.required",
+                "componentinsert.layout_preservation.required"
+            });
     }
 }

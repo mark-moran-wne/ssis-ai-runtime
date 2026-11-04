@@ -91,6 +91,59 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
         }
 
+        public static void VerifyRoundTrip(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            { throw new DirectoryNotFoundException("designer.fixtures.directory_missing"); }
+            var roundTripDirectory = Path.Combine(Path.GetTempPath(), "SsisLayoutRoundTrip-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(roundTripDirectory);
+            try
+            {
+                foreach (var fixture in Fixtures)
+                {
+                    var path = Path.Combine(directory, fixture.FileName);
+                    if (!File.Exists(path)) { throw new FileNotFoundException("designer.fixtures.file_missing", fixture.FileName); }
+                    var originalBytes = File.ReadAllBytes(path);
+                    var package = new Application().LoadPackage(path, null);
+                    if (package == null) { throw new InvalidOperationException("designer.fixtures.reload_failed"); }
+                    DesignerLayoutSnapshot before;
+                    var roundTripPath = Path.Combine(roundTripDirectory, fixture.FileName);
+                    try
+                    {
+                        before = new DesignerLayoutExtractor().Extract(package, path);
+                        if (before.Nodes.Count == 0 || !before.Nodes.Any(node => node.HasPosition))
+                        { throw new InvalidOperationException("designer.fixtures.layout_missing:" + fixture.FileName); }
+                        new Application().SaveToXml(roundTripPath, package, null);
+                    }
+                    finally { package.Dispose(); }
+
+                    var reloaded = new Application().LoadPackage(roundTripPath, null);
+                    if (reloaded == null) { throw new InvalidOperationException("designer.fixtures.roundtrip_reload_failed"); }
+                    try
+                    {
+                        var after = new DesignerLayoutExtractor().Extract(reloaded, roundTripPath);
+                        var comparison = new DesignerLayoutComparer().Compare(before, after);
+                        if (!comparison.Matches)
+                        { throw new InvalidOperationException("designer.fixtures.layout_roundtrip_mismatch:" + string.Join(",", comparison.Differences)); }
+                        var nativeSnapshot = new DesignerLayoutExtractor().Extract(reloaded);
+                        var nativeComparison = new DesignerLayoutComparer().Compare(before, nativeSnapshot);
+                        if (!nativeComparison.Matches)
+                        { throw new InvalidOperationException("designer.fixtures.native_layout_unavailable:" + string.Join(",", nativeComparison.Differences)); }
+                        if (!File.ReadAllBytes(path).SequenceEqual(originalBytes))
+                        { throw new InvalidOperationException("designer.fixtures.source_changed"); }
+                        Console.WriteLine(fixture.FileName + ": round-trip PASS; nodes=" + after.Nodes.Count +
+                            ", positioned=" + after.Nodes.Count(node => node.HasPosition) + ", paths=" +
+                            after.Connections.Count + ", routed=" + after.Connections.Count(connection => connection.RoutePoints.Count > 0));
+                    }
+                    finally { reloaded.Dispose(); }
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(roundTripDirectory)) { Directory.Delete(roundTripDirectory, true); }
+            }
+        }
+
         public static void Inspect(string directory)
         {
             if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
@@ -103,15 +156,15 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 if (package == null) { throw new InvalidOperationException("designer.fixtures.reload_failed"); }
                 try
                 {
-                    var snapshot = new DesignerLayoutExtractor().Extract(package);
+                    var snapshot = new DesignerLayoutExtractor().Extract(package, path);
                     var positioned = snapshot.Nodes.Count(node => node.HasPosition);
                     var routed = snapshot.Connections.Count(connection => connection.RoutePoints.Count > 0);
-                    Console.WriteLine(fixture.FileName + ": nodes=" + snapshot.Nodes.Count + ", positioned=" + positioned +
+                    Console.WriteLine(fixture.FileName + ": packageId=" + package.ID + ", nodes=" + snapshot.Nodes.Count + ", positioned=" + positioned +
                         ", paths=" + snapshot.Connections.Count + ", routed=" + routed + ", diagnostics=" +
                         (snapshot.Diagnostics.Count == 0 ? "none" : string.Join(",", snapshot.Diagnostics)));
                     foreach (var node in snapshot.Nodes)
                     {
-                        Console.WriteLine("  node owner=" + node.OwnerNativeId + " id=" + node.NativeId +
+                        Console.WriteLine("  node owner=" + node.OwnerNativeId + " id=" + node.NativeId + " layoutId=" + node.LayoutId +
                             (node.HasPosition ? " position=" + node.Position.Left + "," + node.Position.Top + "," +
                                 node.Position.Width + "," + node.Position.Height : " position=unavailable"));
                     }

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Xml.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
+using SsisAiRuntime.MutationHost;
 using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
 
 namespace SsisAiRuntime.Ssis16IntegrationTests
@@ -43,6 +44,20 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     first.LineageID, DTSUsageType.UT_READONLY);
                 destinationDesign.MapInputColumn(destinationInput.ID, selected.ID, external.ID);
 
+                package.DesignTimeProperties = "<Objects Version='8'><Package design-time-name='Package'><LayoutInfo><GraphLayout>" +
+                    "<NodeLayout Id='Package\\ExistingFlow' TopLeft='20,20' Size='180,42'/>" +
+                    "</GraphLayout></LayoutInfo></Package><TaskHost design-time-name='Package\\ExistingFlow'><LayoutInfo><GraphLayout>" +
+                    "<NodeLayout Id='Package\\ExistingFlow\\Source' TopLeft='100,100' Size='114,42'/>" +
+                    "<NodeLayout Id='Package\\ExistingFlow\\Destination' TopLeft='350,100' Size='134,42'/>" +
+                    "</GraphLayout></LayoutInfo></TaskHost></Objects>";
+                var layoutBeforeInsertion = new DesignerLayoutExtractor().Extract(package);
+                var replacedConnectionKey = layoutBeforeInsertion.Connections.Single().Key;
+                var placementPreview = new DesignerPlacementPreviewer().Preview(package,
+                    new ComponentPlacementIntent(task.ID, ComponentPlacementRelation.RightOf,
+                        destination.ID.ToString(), 140, 42));
+                Require(placementPreview.IsValid, "derived.layout.placement_intent_resolved");
+                var derivedPlacement = placementPreview.Placement;
+
                 var original = Serialize(package);
                 var originalSource = Component(original, "Source");
                 AssertMapping(original, "FirstNumber", "Value");
@@ -57,22 +72,20 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(JointCount(remapped, "component") == 2 && JointCount(remapped, "path") == 1, "remap.structure");
                 Require(XNode.DeepEquals(originalSource, Component(remapped, "Source")), "remap.source.unchanged");
 
-                var derived = pipeline.ComponentMetaDataCollection.New();
-                derived.ComponentClassID = findComponent("DTSTransform.DerivedColumn.");
+                var insertionPlan = DerivedColumnInsertionPlan.Create(package, new string('a', 64), task.ID,
+                    source.ID.ToString(), destination.ID.ToString(), second.LineageID, "AddCalculatedValue",
+                    "CalculatedNumber", "#" + second.LineageID + " + 1",
+                    new ComponentPlacementIntent(task.ID, ComponentPlacementRelation.RightOf,
+                        destination.ID.ToString(), 140, 42));
+                Require(insertionPlan.MatchesCurrent(package, new string('a', 64)), "derived.plan.current");
+                insertionPlan.Apply(package);
+                Require(insertionPlan.Verify(package), "derived.plan.verify_immediately_after_insert");
+                var derived = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                    .Single(component => component.Name == insertionPlan.ComponentName);
                 var derivedDesign = derived.Instantiate();
-                derivedDesign.ProvideComponentProperties();
-                derived.Name = "AddCalculatedValue";
-                var derivedInput = derived.InputCollection[0];
-                pipeline.PathCollection.RemoveObjectByID(directPath.ID);
-                pipeline.PathCollection.New().AttachPathAndPropagateNotifications(sourceOutput, derivedInput);
-                derivedDesign.SetUsageType(derivedInput.ID, derivedInput.GetVirtualInput(),
-                    second.LineageID, DTSUsageType.UT_READONLY);
                 var derivedOutput = derived.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
-                var calculated = derivedDesign.InsertOutputColumnAt(derivedOutput.ID, 0, "CalculatedNumber", "");
-                derivedDesign.SetOutputColumnDataTypeProperties(derivedOutput.ID, calculated.ID,
-                    RuntimeWrapper.DataType.DT_I4, 0, 0, 0, 0);
-                derivedDesign.SetOutputColumnProperty(derivedOutput.ID, calculated.ID, "Expression", "#" + second.LineageID + " + 1");
-                pipeline.PathCollection.New().AttachPathAndPropagateNotifications(derivedOutput, destinationInput);
+                var calculated = derivedOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                    .Single(column => column.Name == insertionPlan.OutputName);
                 selected = destinationDesign.SetUsageType(destinationInput.ID, destinationInput.GetVirtualInput(),
                     second.LineageID, DTSUsageType.UT_READONLY);
                 destinationDesign.MapInputColumn(destinationInput.ID, selected.ID, external.ID);
@@ -105,6 +118,14 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 AssertPath(edited, Component(edited, "Source"), derivedXml);
                 AssertPath(edited, derivedXml, Component(edited, "Destination"));
                 Require(package.Name == "InMemoryEditFixture" && task.Name == "ExistingFlow", "package.identity");
+                var layoutAfterInsertion = new DesignerLayoutExtractor().Extract(package);
+                var insertedLayoutNode = layoutAfterInsertion.Nodes.Single(node => node.OwnerNativeId == task.ID &&
+                    node.NativeId == derived.ID.ToString());
+                Require(insertedLayoutNode.Position != null && insertedLayoutNode.Position.Left == derivedPlacement.Position.Left &&
+                    insertedLayoutNode.Position.Top == derivedPlacement.Position.Top, "derived.layout.placement_applied");
+                Require(new DesignerLayoutComparer().ComparePreservingExisting(layoutBeforeInsertion,
+                    layoutAfterInsertion, explicitlyReplacedConnectionKeys: new[] { replacedConnectionKey }).Matches,
+                    "derived.layout.existing_nodes_and_routes_preserved");
 
                 using (var reloaded = new Package())
                 {
@@ -118,9 +139,23 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     var roundTripDerived = Component(roundTrip, "AddCalculatedValue");
                     AssertPath(roundTrip, Component(roundTrip, "Source"), roundTripDerived);
                     AssertPath(roundTrip, roundTripDerived, Component(roundTrip, "Destination"));
+                    var roundTripLayout = new DesignerLayoutExtractor().Extract(reloaded);
+                    var roundTripSourceLayout = roundTripLayout.Nodes.Single(node =>
+                        node.LayoutId == "Package\\ExistingFlow\\Source");
+                    var roundTripDestinationLayout = roundTripLayout.Nodes.Single(node =>
+                        node.LayoutId == "Package\\ExistingFlow\\Destination");
+                    var roundTripDerivedLayout = roundTripLayout.Nodes.Single(node =>
+                        node.LayoutId == "Package\\ExistingFlow\\AddCalculatedValue");
+                    Require(roundTripSourceLayout.Position.Equals(layoutBeforeInsertion.Nodes.Single(node =>
+                        node.LayoutId == "Package\\ExistingFlow\\Source").Position) &&
+                        roundTripDestinationLayout.Position.Equals(layoutBeforeInsertion.Nodes.Single(node =>
+                            node.LayoutId == "Package\\ExistingFlow\\Destination").Position) &&
+                        roundTripDerivedLayout.Position.Left == derivedPlacement.Position.Left &&
+                        roundTripDerivedLayout.Position.Top == derivedPlacement.Position.Top,
+                        "derived.layout.positions_reloaded");
                 }
             }
-            Console.WriteLine("In-memory pipeline edits: PASS; destination remapping, Derived Column insertion, native XML assertions and reload; no files, database connection, execution, or validation.");
+            Console.WriteLine("In-memory pipeline edits: PASS; destination remapping, positioned Derived Column insertion, layout/path preservation and reload; no files, database connection, execution, or validation.");
         }
 
         private static XDocument Serialize(Package package)

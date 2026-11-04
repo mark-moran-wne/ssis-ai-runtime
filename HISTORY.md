@@ -1,5 +1,18 @@
 # SSIS AI Runtime History
 
+## 2026-11-03 Designer Layout Round-Trip
+
+- Added read-only extraction of SSDT `DTS:DesignTimeProperties` payloads from a bounded source DTSX parse. Actual Control Flow layout uses hierarchical `refId` paths and fractional coordinates; coordinates now retain decimal precision.
+- Added TaskHost component NodeLayout extraction and EdgeLayout curve sampling. The runtime normalizes design-time IDs to native numeric IDs after load; extraction accepts both forms. The public `Package.DesignTimeProperties` setter supports adding/updating a native component NodeLayout without editing DTSX XML.
+- Added immutable placement intents (`RightOf`, `Below`, `OpenSpace`) and a deterministic previewer that refuses missing/ambiguous targets or unavailable coordinates.
+- Added a source-hash-bound `DerivedColumnInsertionPlan`, stable layout-path rebinding across SSIS numeric-ID changes, a versioned/redacted preview JSON contract, and a MutationHost execution branch using the existing checkpoint, save-as, reload, validation, and semantic-verification pipeline.
+- Added `DataConversionInsertionPlan` for explicit `DT_WSTR`, `DT_STR`, integer, and floating-point conversions with source lineage mapping, stable placement, and the same host lifecycle.
+- Added `FileMutationCheckpointService` with create-new semantics, source artifact hash verification, cancellation cleanup, and overwrite refusal; lifecycle coverage verifies byte-identical checkpoint output and safe refusal on repeated operation IDs.
+- Added `--verify-designer-fixtures`, which saves each SSDT-authored fixture to a temporary artifact, reloads it, compares extracted positions/endpoints/routes, and confirms the authored source is unchanged.
+- All seven SSDT-authored fixtures pass native save/reload comparison. `TwoComponentHorizontal` includes two positioned Data Flow components and a 20-point sampled path curve.
+- The native scratch harness resolves a `RightOf` intent. MutationHost lifecycle cases checkpoint, insert positioned Derived Column and Data Conversion components, publish separate artifacts, reload, run an injected validator, preserve existing component metadata/layout/routes, and verify output mappings and positions. No DB connection or package Execute is used. The production file checkpoint is implemented; native validation remains an injected test double in this harness.
+- The focused designer-layout probe, default native scratch harness, 25-case MutationHost lifecycle probe, and portable suites pass on this SSIS 16 x64 host (200 runtime, 13 corpus, 23 mutation tests). The build retains the known GAC_32 `CS8012` warning. AI tool/client routing and a production native-validation policy remain outstanding.
+
 ## 2026-10-07 Component Support Tooling
 
 - Added developer FlowRunner `describe`, `probe`, `compare`, and `catalog validate` commands. Native Derived Column/Data Conversion descriptions expose initialized ports and synthetic column-template defaults; defaults remain observations rather than inferred mandatory configuration.

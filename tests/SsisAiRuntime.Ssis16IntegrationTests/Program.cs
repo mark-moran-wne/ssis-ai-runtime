@@ -28,6 +28,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             {
                 return InspectDesignerFixtures(args[1]);
             }
+            if (args.Length == 2 && args[0] == "--verify-designer-fixtures")
+            {
+                return VerifyDesignerFixtures(args[1]);
+            }
             if (args.Length == 1 && args[0] == "--designer-layout-probe")
             {
                 return DesignerLayoutTests.Run();
@@ -46,7 +50,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory>]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory> | --verify-designer-fixtures <directory>]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
@@ -188,6 +192,20 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             catch (Exception error)
             {
                 Console.Error.WriteLine("Designer fixture inspection failed: " + error.Message);
+                return 1;
+            }
+        }
+
+        private static int VerifyDesignerFixtures(string directory)
+        {
+            try
+            {
+                DesignerLayoutFixtureGenerator.VerifyRoundTrip(directory);
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine("Designer fixture round-trip failed: " + error.Message);
                 return 1;
             }
         }

@@ -13,7 +13,7 @@ namespace SsisAiRuntime.MutationHost
 {
     public sealed class DesignerNodePosition : IEquatable<DesignerNodePosition>
     {
-        public DesignerNodePosition(int left, int top, int width, int height)
+        public DesignerNodePosition(decimal left, decimal top, decimal width, decimal height)
         {
             if (width <= 0 || height <= 0) { throw new ArgumentOutOfRangeException(nameof(width)); }
             Left = left;
@@ -22,32 +22,33 @@ namespace SsisAiRuntime.MutationHost
             Height = height;
         }
 
-        public int Left { get; }
-        public int Top { get; }
-        public int Width { get; }
-        public int Height { get; }
-        public int Right => checked(Left + Width);
-        public int Bottom => checked(Top + Height);
+        public decimal Left { get; }
+        public decimal Top { get; }
+        public decimal Width { get; }
+        public decimal Height { get; }
+        public decimal Right => checked(Left + Width);
+        public decimal Bottom => checked(Top + Height);
 
         public bool Equals(DesignerNodePosition other) => other != null && Left == other.Left && Top == other.Top &&
             Width == other.Width && Height == other.Height;
         public override bool Equals(object obj) => Equals(obj as DesignerNodePosition);
-        public override int GetHashCode() => (((Left * 397) ^ Top) * 397 ^ Width) * 397 ^ Height;
+        public override int GetHashCode() => (((Left.GetHashCode() * 397) ^ Top.GetHashCode()) * 397 ^
+            Width.GetHashCode()) * 397 ^ Height.GetHashCode();
     }
 
     public sealed class DesignerPoint : IEquatable<DesignerPoint>
     {
-        public DesignerPoint(int x, int y) { X = x; Y = y; }
-        public int X { get; }
-        public int Y { get; }
+        public DesignerPoint(decimal x, decimal y) { X = x; Y = y; }
+        public decimal X { get; }
+        public decimal Y { get; }
         public bool Equals(DesignerPoint other) => other != null && X == other.X && Y == other.Y;
         public override bool Equals(object obj) => Equals(obj as DesignerPoint);
-        public override int GetHashCode() => (X * 397) ^ Y;
+        public override int GetHashCode() => (X.GetHashCode() * 397) ^ Y.GetHashCode();
     }
 
     public sealed class DesignerBounds : IEquatable<DesignerBounds>
     {
-        public DesignerBounds(int left, int top, int width, int height)
+        public DesignerBounds(decimal left, decimal top, decimal width, decimal height)
         {
             if (width < 0 || height < 0) { throw new ArgumentOutOfRangeException(nameof(width)); }
             Left = left;
@@ -56,16 +57,17 @@ namespace SsisAiRuntime.MutationHost
             Height = height;
         }
 
-        public int Left { get; }
-        public int Top { get; }
-        public int Width { get; }
-        public int Height { get; }
-        public int Right => checked(Left + Width);
-        public int Bottom => checked(Top + Height);
+        public decimal Left { get; }
+        public decimal Top { get; }
+        public decimal Width { get; }
+        public decimal Height { get; }
+        public decimal Right => checked(Left + Width);
+        public decimal Bottom => checked(Top + Height);
         public bool Equals(DesignerBounds other) => other != null && Left == other.Left && Top == other.Top &&
             Width == other.Width && Height == other.Height;
         public override bool Equals(object obj) => Equals(obj as DesignerBounds);
-        public override int GetHashCode() => (((Left * 397) ^ Top) * 397 ^ Width) * 397 ^ Height;
+        public override int GetHashCode() => (((Left.GetHashCode() * 397) ^ Top.GetHashCode()) * 397 ^
+            Width.GetHashCode()) * 397 ^ Height.GetHashCode();
     }
 
     public sealed class DesignerNode
@@ -85,14 +87,16 @@ namespace SsisAiRuntime.MutationHost
         public string LayoutId { get; }
         public DesignerNodePosition Position { get; }
         public bool HasPosition => Position != null;
-        public string Key => OwnerNativeId + "\u001f" + NativeId;
+        public string Key => OwnerNativeId + "\u001f" + (string.IsNullOrEmpty(LayoutId) ? NativeId : LayoutId);
     }
 
     public sealed class DesignerConnection
     {
         public DesignerConnection(string ownerNativeId, string nativeId, string sourceNativeId,
             string sourcePortNativeId, string destinationNativeId, string destinationPortNativeId,
-            IEnumerable<DesignerPoint> routePoints = null)
+            IEnumerable<DesignerPoint> routePoints = null, string layoutId = null,
+            string sourceLayoutId = null, string sourcePortLayoutId = null,
+            string destinationLayoutId = null, string destinationPortLayoutId = null)
         {
             OwnerNativeId = ownerNativeId ?? throw new ArgumentNullException(nameof(ownerNativeId));
             NativeId = nativeId ?? throw new ArgumentNullException(nameof(nativeId));
@@ -101,6 +105,11 @@ namespace SsisAiRuntime.MutationHost
             DestinationNativeId = destinationNativeId ?? throw new ArgumentNullException(nameof(destinationNativeId));
             DestinationPortNativeId = destinationPortNativeId ?? throw new ArgumentNullException(nameof(destinationPortNativeId));
             RoutePoints = new ReadOnlyCollection<DesignerPoint>((routePoints ?? Enumerable.Empty<DesignerPoint>()).ToArray());
+            LayoutId = layoutId ?? string.Empty;
+            SourceLayoutId = sourceLayoutId ?? string.Empty;
+            SourcePortLayoutId = sourcePortLayoutId ?? string.Empty;
+            DestinationLayoutId = destinationLayoutId ?? string.Empty;
+            DestinationPortLayoutId = destinationPortLayoutId ?? string.Empty;
         }
 
         public string OwnerNativeId { get; }
@@ -110,7 +119,12 @@ namespace SsisAiRuntime.MutationHost
         public string DestinationNativeId { get; }
         public string DestinationPortNativeId { get; }
         public IReadOnlyList<DesignerPoint> RoutePoints { get; }
-        public string Key => OwnerNativeId + "\u001f" + NativeId;
+        public string LayoutId { get; }
+        public string SourceLayoutId { get; }
+        public string SourcePortLayoutId { get; }
+        public string DestinationLayoutId { get; }
+        public string DestinationPortLayoutId { get; }
+        public string Key => OwnerNativeId + "\u001f" + (string.IsNullOrEmpty(LayoutId) ? NativeId : LayoutId);
     }
 
     public sealed class DesignerLayoutSnapshot
@@ -158,7 +172,7 @@ namespace SsisAiRuntime.MutationHost
 
     public sealed class DesignerPlacement
     {
-        public DesignerPlacement(string ownerNativeId, int left, int top, int width, int height)
+        public DesignerPlacement(string ownerNativeId, decimal left, decimal top, decimal width, decimal height)
         {
             if (width <= 0 || height <= 0) { throw new ArgumentOutOfRangeException(nameof(width)); }
             OwnerNativeId = ownerNativeId ?? throw new ArgumentNullException(nameof(ownerNativeId));
@@ -182,20 +196,32 @@ namespace SsisAiRuntime.MutationHost
     public sealed class DesignerLayoutExtractor
     {
         private const int MaxLayoutCharacters = 1024 * 1024;
+        private const long MaxSerializedPackageCharacters = 64L * 1024 * 1024;
 
         public DesignerLayoutSnapshot Extract(Package package)
+        {
+            return Extract(package, null);
+        }
+
+        public DesignerLayoutSnapshot Extract(Package package, string packagePath)
         {
             if (package == null) { throw new ArgumentNullException(nameof(package)); }
             var nodes = new List<DesignerNode>();
             var connections = new List<DesignerConnection>();
             var diagnostics = new List<string>();
             var containers = Containers(package).ToArray();
-            var packageLayout = ParseLayoutOrEmpty(ReadLayoutXml(package, diagnostics), diagnostics);
+            var containerLayoutIds = ContainerLayoutIds(package);
+            var serializedLayouts = ReadSerializedLayouts(package, packagePath, diagnostics);
+            var pathLayoutIds = ReadPathLayoutIds(package, packagePath, diagnostics);
+            var packageLayoutXml = ReadLayoutXml(package, serializedLayouts, diagnostics);
+            var packageLayout = ParseLayoutOrEmpty(packageLayoutXml, diagnostics);
 
             foreach (var container in containers.OfType<TaskHost>())
             {
-                packageLayout.TryGetValue(container.ID, out var position);
-                nodes.Add(new DesignerNode("package", container.ID, container.ID,
+                var layoutId = containerLayoutIds.TryGetValue(container.ID, out var referenceId)
+                    ? referenceId : container.ID;
+                packageLayout.TryGetValue(layoutId, out var position);
+                nodes.Add(new DesignerNode("package", container.ID, layoutId,
                     position));
             }
 
@@ -205,6 +231,8 @@ namespace SsisAiRuntime.MutationHost
             {
                 var pipeline = task.InnerObject as IDTSPipeline130;
                 if (pipeline == null) { continue; }
+                var taskLayoutId = containerLayoutIds.TryGetValue(task.ID, out var taskReferenceId)
+                    ? taskReferenceId : "Package\\" + task.Name;
 
                 var components = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>().ToArray();
                 var byOutput = new Dictionary<int, IDTSComponentMetaData100>();
@@ -212,7 +240,7 @@ namespace SsisAiRuntime.MutationHost
                 foreach (var component in components)
                 {
                     var nativeId = component.ID.ToString(CultureInfo.InvariantCulture);
-                    nodes.Add(new DesignerNode(task.ID, nativeId, nativeId, null));
+                    nodes.Add(new DesignerNode(task.ID, nativeId, taskLayoutId + "\\" + component.Name, null));
                     foreach (IDTSOutput100 output in component.OutputCollection)
                     {
                         byOutput[output.ID] = component;
@@ -223,7 +251,8 @@ namespace SsisAiRuntime.MutationHost
                     }
                 }
 
-                var taskLayoutXml = ReadLayoutXml(task, diagnostics);
+                var taskLayoutXml = ReadLayoutXml(task, serializedLayouts, diagnostics);
+                if (string.IsNullOrWhiteSpace(taskLayoutXml)) { taskLayoutXml = packageLayoutXml; }
                 var taskLayout = ParseLayoutOrEmpty(taskLayoutXml, diagnostics);
                 var routePoints = ParseRoutePointsOrEmpty(taskLayoutXml, diagnostics);
                 ApplyPositions(nodes, taskLayout, task.ID);
@@ -235,10 +264,21 @@ namespace SsisAiRuntime.MutationHost
                         diagnostics.Add("designer.layout.path_endpoint_unresolved");
                         continue;
                     }
+                    var nativeRouteId = path.ID.ToString(CultureInfo.InvariantCulture);
+                    var sourceLayoutId = taskLayoutId + "\\" + source.Name;
+                    var sourcePortLayoutId = sourceLayoutId + ".Outputs[" + path.StartPoint.Name + "]";
+                    var destinationLayoutId = taskLayoutId + "\\" + destination.Name;
+                    var destinationPortLayoutId = destinationLayoutId + ".Inputs[" + path.EndPoint.Name + "]";
+                    var endpointKey = PathEndpointKey(sourcePortLayoutId, destinationPortLayoutId);
+                    var routeLayoutId = pathLayoutIds.TryGetValue(endpointKey, out var savedPathId)
+                        ? savedPathId : taskLayoutId + ".Paths[" + path.Name + "]";
+                    var route = routePoints.TryGetValue(routeLayoutId, out var referenceRoute)
+                        ? referenceRoute
+                        : routePoints.TryGetValue(nativeRouteId, out var nativeRoute) ? nativeRoute : null;
                     connections.Add(new DesignerConnection(task.ID, path.ID.ToString(CultureInfo.InvariantCulture),
                         source.ID.ToString(CultureInfo.InvariantCulture), path.StartPoint.ID.ToString(CultureInfo.InvariantCulture),
                         destination.ID.ToString(CultureInfo.InvariantCulture), path.EndPoint.ID.ToString(CultureInfo.InvariantCulture),
-                        routePoints.TryGetValue(path.ID.ToString(CultureInfo.InvariantCulture), out var points) ? points : null));
+                        route, routeLayoutId, sourceLayoutId, sourcePortLayoutId, destinationLayoutId, destinationPortLayoutId));
                 }
             }
 
@@ -275,10 +315,14 @@ namespace SsisAiRuntime.MutationHost
             {
                 var id = Attribute(element, "Id");
                 if (string.IsNullOrWhiteSpace(id)) { continue; }
-                var points = element.Elements().Where(point => point.Name.LocalName == "Point" || point.Name.LocalName == "Waypoint")
-                    .Select(point => new { X = ParseInt(Attribute(point, "X")), Y = ParseInt(Attribute(point, "Y")) })
+                var points = ParseEdgeCurvePoints(element).ToArray();
+                if (points.Length == 0)
+                {
+                    points = element.Elements().Where(point => point.Name.LocalName == "Point" || point.Name.LocalName == "Waypoint")
+                    .Select(point => new { X = ParseDecimal(Attribute(point, "X")), Y = ParseDecimal(Attribute(point, "Y")) })
                     .Where(point => point.X.HasValue && point.Y.HasValue)
                     .Select(point => new DesignerPoint(point.X.Value, point.Y.Value)).ToArray();
+                }
                 if (points.Length == 0)
                 {
                     points = ParsePoints(Attribute(element, "Points") ?? Attribute(element, "Route") ?? Attribute(element, "Waypoints")).ToArray();
@@ -312,41 +356,240 @@ namespace SsisAiRuntime.MutationHost
             }
         }
 
+        private static IEnumerable<DesignerPoint> ParseEdgeCurvePoints(XElement edgeLayout)
+        {
+            var curve = edgeLayout.Descendants().FirstOrDefault(element => element.Name.LocalName == "Curve");
+            if (curve == null) { yield break; }
+            var start = ParsePair(Attribute(curve, "Start"));
+            var offset = ParsePair(Attribute(edgeLayout, "TopLeft")) ?? Tuple.Create(0m, 0m);
+            if (start == null) { yield break; }
+
+            var currentX = start.Item1;
+            var currentY = start.Item2;
+            yield return new DesignerPoint(offset.Item1 + currentX, offset.Item2 + currentY);
+            foreach (var segment in curve.Descendants().Where(element =>
+                element.Name.LocalName == "LineSegment" || element.Name.LocalName == "CubicBezierSegment"))
+            {
+                if (segment.Name.LocalName == "LineSegment")
+                {
+                    var end = ParsePair(Attribute(segment, "End"));
+                    if (end == null) { continue; }
+                    currentX = end.Item1;
+                    currentY = end.Item2;
+                    yield return new DesignerPoint(offset.Item1 + currentX, offset.Item2 + currentY);
+                    continue;
+                }
+
+                var firstControl = ParsePair(Attribute(segment, "Point1"));
+                var secondControl = ParsePair(Attribute(segment, "Point2"));
+                var endPoint = ParsePair(Attribute(segment, "Point3"));
+                if (firstControl == null || secondControl == null || endPoint == null) { continue; }
+                for (var sample = 1; sample <= 8; sample++)
+                {
+                    var t = sample / 8m;
+                    var inverse = 1m - t;
+                    var x = inverse * inverse * inverse * currentX +
+                        3m * inverse * inverse * t * firstControl.Item1 +
+                        3m * inverse * t * t * secondControl.Item1 + t * t * t * endPoint.Item1;
+                    var y = inverse * inverse * inverse * currentY +
+                        3m * inverse * inverse * t * firstControl.Item2 +
+                        3m * inverse * t * t * secondControl.Item2 + t * t * t * endPoint.Item2;
+                    yield return new DesignerPoint(offset.Item1 + x, offset.Item2 + y);
+                }
+                currentX = endPoint.Item1;
+                currentY = endPoint.Item2;
+            }
+        }
+
         private static DesignerNodePosition ParsePosition(XElement element)
         {
             var location = ParsePair(Attribute(element, "TopLeft") ?? Attribute(element, "Location") ?? Attribute(element, "Position"));
             var size = ParsePair(Attribute(element, "Size"));
-            var left = location?.Item1 ?? ParseInt(Attribute(element, "Left"));
-            var top = location?.Item2 ?? ParseInt(Attribute(element, "Top"));
-            var width = size?.Item1 ?? ParseInt(Attribute(element, "Width"));
-            var height = size?.Item2 ?? ParseInt(Attribute(element, "Height"));
+            var left = location?.Item1 ?? ParseDecimal(Attribute(element, "Left"));
+            var top = location?.Item2 ?? ParseDecimal(Attribute(element, "Top"));
+            var width = size?.Item1 ?? ParseDecimal(Attribute(element, "Width"));
+            var height = size?.Item2 ?? ParseDecimal(Attribute(element, "Height"));
             if (!left.HasValue || !top.HasValue || !width.HasValue || !height.HasValue || width <= 0 || height <= 0) { return null; }
             return new DesignerNodePosition(left.Value, top.Value, width.Value, height.Value);
         }
 
-        private static Tuple<int, int> ParsePair(string value)
+        private static Tuple<decimal, decimal> ParsePair(string value)
         {
             if (string.IsNullOrWhiteSpace(value)) { return null; }
             var parts = value.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length != 2 || !int.TryParse(parts[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var first) ||
-                !int.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var second)) { return null; }
+            if (parts.Length != 2 || !decimal.TryParse(parts[0].Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var first) ||
+                !decimal.TryParse(parts[1].Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var second)) { return null; }
             return Tuple.Create(first, second);
         }
 
-        private static int? ParseInt(string value) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : (int?)null;
+        private static decimal? ParseDecimal(string value) => decimal.TryParse(value, NumberStyles.Number,
+            CultureInfo.InvariantCulture, out var parsed) ? parsed : (decimal?)null;
         private static string Attribute(XElement element, string localName) =>
             (string)element.Attributes().FirstOrDefault(attribute => attribute.Name.LocalName == localName);
 
-        private static string ReadLayoutXml(DtsContainer owner, ICollection<string> diagnostics)
+        private static IReadOnlyDictionary<string, string> ReadSerializedLayouts(Package package, string packagePath,
+            ICollection<string> diagnostics)
+        {
+            if (!string.IsNullOrWhiteSpace(packagePath))
+            {
+                var sourceLayouts = ReadSerializedLayoutsFromFile(packagePath, diagnostics);
+                if (sourceLayouts.Count > 0) { return sourceLayouts; }
+            }
+            try
+            {
+                string packageXml;
+                package.SaveToXML(out packageXml, null);
+                if (packageXml.Length > MaxSerializedPackageCharacters)
+                {
+                    diagnostics.Add("designer.layout.package_size_limit");
+                    return new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+                }
+
+                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                    MaxCharactersInDocument = MaxSerializedPackageCharacters, IgnoreComments = true };
+                using (var text = new StringReader(packageXml))
+                using (var reader = XmlReader.Create(text, settings))
+                {
+                    var document = XDocument.Load(reader);
+                    var layouts = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var executable in document.Root.DescendantsAndSelf()
+                        .Where(element => element.Name.LocalName == "Executable"))
+                    {
+                        var nativeId = Attribute(executable, "DTSID");
+                        var layoutElement = executable.Elements().SingleOrDefault(element =>
+                            element.Name.LocalName == "DesignTimeProperties");
+                        var layoutXml = layoutElement?.Value;
+                        if (!string.IsNullOrWhiteSpace(nativeId) && !string.IsNullOrWhiteSpace(layoutXml))
+                        { layouts[nativeId] = layoutXml; }
+                    }
+                    return new ReadOnlyDictionary<string, string>(layouts);
+                }
+            }
+            catch (Exception)
+            {
+                diagnostics.Add("designer.layout.serialized_metadata_unavailable");
+                return new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+            }
+        }
+
+        private static IReadOnlyDictionary<string, string> ReadSerializedLayoutsFromFile(string packagePath,
+            ICollection<string> diagnostics)
         {
             try
             {
+                if (new FileInfo(packagePath).Length > MaxSerializedPackageCharacters)
+                {
+                    diagnostics.Add("designer.layout.package_size_limit");
+                    return new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+                }
+                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                    MaxCharactersInDocument = MaxSerializedPackageCharacters, IgnoreComments = true };
+                using (var stream = new FileStream(packagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var reader = XmlReader.Create(stream, settings))
+                {
+                    var document = XDocument.Load(reader);
+                    var layouts = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var executable in document.Root.DescendantsAndSelf()
+                        .Where(element => element.Name.LocalName == "Executable"))
+                    {
+                        var nativeId = Attribute(executable, "DTSID");
+                        var layoutElement = executable.Elements().SingleOrDefault(element =>
+                            element.Name.LocalName == "DesignTimeProperties");
+                        var layoutXml = layoutElement?.Value;
+                        if (!string.IsNullOrWhiteSpace(nativeId) && !string.IsNullOrWhiteSpace(layoutXml))
+                        { layouts[nativeId] = layoutXml; }
+                    }
+                    return new ReadOnlyDictionary<string, string>(layouts);
+                }
+            }
+            catch (Exception)
+            {
+                diagnostics.Add("designer.layout.source_metadata_unavailable");
+                return new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+            }
+        }
+
+        private static IReadOnlyDictionary<string, string> ReadPathLayoutIds(Package package, string packagePath,
+            ICollection<string> diagnostics)
+        {
+            try
+            {
+                XDocument document;
+                if (!string.IsNullOrWhiteSpace(packagePath))
+                {
+                    if (new FileInfo(packagePath).Length > MaxSerializedPackageCharacters)
+                    { throw new InvalidOperationException("designer.layout.package_size_limit"); }
+                    var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                        MaxCharactersInDocument = MaxSerializedPackageCharacters, IgnoreComments = true };
+                    using (var stream = new FileStream(packagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    using (var reader = XmlReader.Create(stream, settings)) { document = XDocument.Load(reader); }
+                }
+                else
+                {
+                    package.SaveToXML(out var xml, null);
+                    if (xml.Length > MaxSerializedPackageCharacters)
+                    { throw new InvalidOperationException("designer.layout.package_size_limit"); }
+                    document = XDocument.Parse(xml);
+                }
+
+                var result = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var path in document.Descendants().Where(element => element.Name.LocalName == "path"))
+                {
+                    var referenceId = Attribute(path, "refId");
+                    var startId = Attribute(path, "startId");
+                    var endId = Attribute(path, "endId");
+                    if (string.IsNullOrWhiteSpace(referenceId) || string.IsNullOrWhiteSpace(startId) ||
+                        string.IsNullOrWhiteSpace(endId)) { continue; }
+                    var endpointKey = PathEndpointKey(startId, endId);
+                    if (result.ContainsKey(endpointKey))
+                    {
+                        diagnostics.Add("designer.layout.path_identity_ambiguous");
+                        result.Remove(endpointKey);
+                        continue;
+                    }
+                    result.Add(endpointKey, referenceId);
+                }
+                return new ReadOnlyDictionary<string, string>(result);
+            }
+            catch (Exception error) when (error is XmlException || error is IOException ||
+                error is UnauthorizedAccessException || error is InvalidOperationException)
+            {
+                diagnostics.Add(error is InvalidOperationException && error.Message == "designer.layout.package_size_limit"
+                    ? error.Message : "designer.layout.path_metadata_unavailable");
+                return new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+            }
+        }
+
+        private static string PathEndpointKey(string startId, string endId) => startId + "\u001f" + endId;
+
+        private static string ReadLayoutXml(DtsContainer owner, IReadOnlyDictionary<string, string> serializedLayouts,
+            ICollection<string> diagnostics)
+        {
+            try
+            {
+                if (serializedLayouts.TryGetValue(owner.ID, out var sourceXml)) { return sourceXml; }
+                if (owner is Package layoutPackage && !string.IsNullOrWhiteSpace(layoutPackage.DesignTimeProperties))
+                { return layoutPackage.DesignTimeProperties; }
                 var properties = owner is Package package ? package.Properties : (owner as TaskHost)?.Properties;
-                if (properties == null) { return string.Empty; }
+                if (properties == null)
+                {
+                    if (serializedLayouts.Count == 0) { diagnostics.Add("designer.layout.owner_properties_unavailable"); }
+                    return string.Empty;
+                }
                 var property = properties.Cast<DtsProperty>().SingleOrDefault(item =>
                     string.Equals(item.Name, "DesignTimeProperties", StringComparison.OrdinalIgnoreCase));
-                if (property == null) { return string.Empty; }
-                return property.GetValue(owner) as string ?? string.Empty;
+                if (property == null)
+                {
+                    if (serializedLayouts.Count == 0) { diagnostics.Add("designer.layout.property_missing"); }
+                    return string.Empty;
+                }
+                var xml = property.GetValue(owner) as string;
+                if (string.IsNullOrWhiteSpace(xml))
+                {
+                    if (serializedLayouts.Count == 0) { diagnostics.Add("designer.layout.property_empty"); }
+                    return string.Empty;
+                }
+                return xml;
             }
             catch (Exception)
             {
@@ -384,7 +627,9 @@ namespace SsisAiRuntime.MutationHost
             for (var index = 0; index < nodes.Count; index++)
             {
                 var node = nodes[index];
-                if (node.OwnerNativeId == ownerNativeId && positions.TryGetValue(node.LayoutId, out var position))
+                var hasPosition = positions.TryGetValue(node.LayoutId, out var position) ||
+                    positions.TryGetValue(node.NativeId, out position);
+                if (node.OwnerNativeId == ownerNativeId && hasPosition)
                 {
                     nodes[index] = new DesignerNode(node.OwnerNativeId, node.NativeId, node.LayoutId, position);
                 }
@@ -402,6 +647,30 @@ namespace SsisAiRuntime.MutationHost
                 foreach (Executable executable in handler.Executables)
                 {
                     foreach (var container in Containers((DtsContainer)executable)) { yield return container; }
+                }
+            }
+        }
+
+        private static IReadOnlyDictionary<string, string> ContainerLayoutIds(Package package)
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (Executable executable in package.Executables)
+            {
+                AddContainerLayoutIds((DtsContainer)executable, "Package", result);
+            }
+            return result;
+        }
+
+        private static void AddContainerLayoutIds(DtsContainer container, string parentLayoutId,
+            IDictionary<string, string> layoutIds)
+        {
+            var layoutId = parentLayoutId + "\\" + container.Name;
+            layoutIds[container.ID] = layoutId;
+            if (container is IDTSSequence sequence)
+            {
+                foreach (Executable executable in sequence.Executables)
+                {
+                    AddContainerLayoutIds((DtsContainer)executable, layoutId, layoutIds);
                 }
             }
         }
@@ -425,6 +694,230 @@ namespace SsisAiRuntime.MutationHost
                         foreach (var child in Containers((DtsContainer)executable)) { yield return child; }
                     }
                 }
+            }
+        }
+    }
+
+    public sealed class DesignerLayoutWriter
+    {
+        private const int MaxLayoutCharacters = 1024 * 1024;
+        private const string GraphLayoutNamespace = "clr-namespace:Microsoft.SqlServer.IntegrationServices.Designer.Model.Serialization;assembly=Microsoft.SqlServer.IntegrationServices.Graph";
+
+        public void SetComponentPosition(Package package, string ownerTaskNativeId, string componentNativeId,
+            DesignerPlacement placement)
+        {
+            if (package == null) { throw new ArgumentNullException(nameof(package)); }
+            if (string.IsNullOrWhiteSpace(ownerTaskNativeId)) { throw new ArgumentException("An owner task ID is required.", nameof(ownerTaskNativeId)); }
+            if (string.IsNullOrWhiteSpace(componentNativeId)) { throw new ArgumentException("A component ID is required.", nameof(componentNativeId)); }
+            if (placement == null) { throw new ArgumentNullException(nameof(placement)); }
+            if (!string.Equals(placement.OwnerNativeId, ownerTaskNativeId, StringComparison.Ordinal))
+            { throw new InvalidOperationException("designer.placement.owner_mismatch"); }
+
+            var tasks = FindTaskHosts(package).Where(task => task.ID == ownerTaskNativeId).ToArray();
+            if (tasks.Length != 1) { throw new InvalidOperationException("designer.layout.owner_task_not_found"); }
+            var task = tasks[0];
+            var pipeline = task.InnerObject as IDTSPipeline130;
+            if (pipeline == null) { throw new InvalidOperationException("designer.layout.owner_not_pipeline"); }
+            var components = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                .Where(component => component.ID.ToString(CultureInfo.InvariantCulture) == componentNativeId).ToArray();
+            if (components.Length != 1) { throw new InvalidOperationException("designer.layout.component_not_found"); }
+
+            var taskLayoutId = ContainerLayoutIds(package).TryGetValue(task.ID, out var referenceId)
+                ? referenceId : "Package\\" + task.Name;
+            var componentLayoutId = componentNativeId;
+            var xml = package.DesignTimeProperties;
+            var document = ParseLayoutDocument(xml);
+            var taskLayouts = document.Root.DescendantsAndSelf().Where(element =>
+                element.Name.LocalName == "TaskHost" &&
+                (string.Equals((string)element.Attribute("design-time-name"), task.ID, StringComparison.Ordinal) ||
+                 string.Equals((string)element.Attribute("design-time-name"), taskLayoutId, StringComparison.Ordinal))).ToArray();
+            if (taskLayouts.Length > 1) { throw new InvalidOperationException("designer.layout.owner_task_ambiguous"); }
+            var taskLayout = taskLayouts.SingleOrDefault();
+            if (taskLayout == null)
+            {
+                taskLayout = new XElement(document.Root.Name.Namespace + "TaskHost",
+                    new XAttribute("design-time-name", task.ID));
+                document.Root.Add(taskLayout);
+            }
+            var layoutInfo = taskLayout.Elements().SingleOrDefault(element => element.Name.LocalName == "LayoutInfo");
+            if (layoutInfo == null)
+            {
+                layoutInfo = new XElement(taskLayout.Name.Namespace + "LayoutInfo");
+                taskLayout.Add(layoutInfo);
+            }
+            var graphLayout = layoutInfo.Elements().SingleOrDefault(element => element.Name.LocalName == "GraphLayout");
+            if (graphLayout == null)
+            {
+                graphLayout = new XElement(layoutInfo.Name.Namespace + "GraphLayout",
+                    new XAttribute("Capacity", "4"),
+                    new XAttribute(XNamespace.Xmlns + "clr-namespace", GraphLayoutNamespace));
+                layoutInfo.Add(graphLayout);
+            }
+
+            var matches = graphLayout.Elements().Where(element => element.Name.LocalName == "NodeLayout" &&
+                string.Equals((string)element.Attribute("Id"), componentLayoutId, StringComparison.Ordinal)).ToArray();
+            if (matches.Length > 1) { throw new InvalidOperationException("designer.layout.node_id_duplicate"); }
+            var nodeLayout = matches.SingleOrDefault();
+            if (nodeLayout == null)
+            {
+                nodeLayout = new XElement(graphLayout.Name.Namespace + "NodeLayout",
+                    new XAttribute("Id", componentLayoutId));
+                graphLayout.Add(nodeLayout);
+            }
+            nodeLayout.SetAttributeValue("TopLeft", FormatPair(placement.Position.Left, placement.Position.Top));
+            nodeLayout.SetAttributeValue("Size", FormatPair(placement.Position.Width, placement.Position.Height));
+            package.DesignTimeProperties = document.ToString(SaveOptions.DisableFormatting);
+        }
+
+        private static XDocument ParseLayoutDocument(string xml)
+        {
+            if (string.IsNullOrWhiteSpace(xml))
+            {
+                return new XDocument(new XElement("Objects", new XAttribute("Version", "8"),
+                    new XElement("Package", new XAttribute("design-time-name", "Package"))));
+            }
+            if (xml.Length > MaxLayoutCharacters) { throw new InvalidOperationException("designer.layout.size_limit"); }
+            try
+            {
+                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                    MaxCharactersInDocument = MaxLayoutCharacters, IgnoreComments = true };
+                using (var text = new StringReader(xml))
+                using (var reader = XmlReader.Create(text, settings)) { return XDocument.Load(reader); }
+            }
+            catch (Exception error) when (error is XmlException || error is InvalidOperationException)
+            { throw new InvalidOperationException("designer.layout.xml_invalid"); }
+        }
+
+        private static string FormatPair(decimal first, decimal second) =>
+            first.ToString("0.############################", CultureInfo.InvariantCulture) + "," +
+            second.ToString("0.############################", CultureInfo.InvariantCulture);
+
+        private static IEnumerable<TaskHost> FindTaskHosts(Package package)
+        {
+            foreach (Executable executable in package.Executables)
+            {
+                foreach (var task in FindTaskHosts((DtsContainer)executable)) { yield return task; }
+            }
+        }
+
+        private static IEnumerable<TaskHost> FindTaskHosts(DtsContainer container)
+        {
+            if (container is TaskHost task) { yield return task; }
+            if (container is IDTSSequence sequence)
+            {
+                foreach (Executable executable in sequence.Executables)
+                {
+                    foreach (var child in FindTaskHosts((DtsContainer)executable)) { yield return child; }
+                }
+            }
+        }
+
+        private static IReadOnlyDictionary<string, string> ContainerLayoutIds(Package package)
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (Executable executable in package.Executables)
+            {
+                AddContainerLayoutIds((DtsContainer)executable, "Package", result);
+            }
+            return result;
+        }
+
+        private static void AddContainerLayoutIds(DtsContainer container, string parentLayoutId,
+            IDictionary<string, string> layoutIds)
+        {
+            var layoutId = parentLayoutId + "\\" + container.Name;
+            layoutIds[container.ID] = layoutId;
+            if (container is IDTSSequence sequence)
+            {
+                foreach (Executable executable in sequence.Executables)
+                {
+                    AddContainerLayoutIds((DtsContainer)executable, layoutId, layoutIds);
+                }
+            }
+        }
+    }
+
+    public enum ComponentPlacementRelation
+    {
+        RightOf,
+        Below,
+        OpenSpace
+    }
+
+    public sealed class ComponentPlacementIntent
+    {
+        public ComponentPlacementIntent(string ownerNativeId, ComponentPlacementRelation relation,
+            string anchorNativeId, int width, int height)
+        {
+            if (string.IsNullOrWhiteSpace(ownerNativeId)) { throw new ArgumentException("An owner native ID is required.", nameof(ownerNativeId)); }
+            if (!Enum.IsDefined(typeof(ComponentPlacementRelation), relation)) { throw new ArgumentOutOfRangeException(nameof(relation)); }
+            if (relation != ComponentPlacementRelation.OpenSpace && string.IsNullOrWhiteSpace(anchorNativeId))
+            { throw new ArgumentException("An anchor component ID is required for relative placement.", nameof(anchorNativeId)); }
+            if (width <= 0 || height <= 0) { throw new ArgumentOutOfRangeException(nameof(width)); }
+            OwnerNativeId = ownerNativeId;
+            Relation = relation;
+            AnchorNativeId = anchorNativeId ?? string.Empty;
+            Width = width;
+            Height = height;
+        }
+
+        public string OwnerNativeId { get; }
+        public ComponentPlacementRelation Relation { get; }
+        public string AnchorNativeId { get; }
+        public int Width { get; }
+        public int Height { get; }
+    }
+
+    public sealed class ComponentPlacementPreview
+    {
+        internal ComponentPlacementPreview(ComponentPlacementIntent intent, DesignerPlacement placement, string refusalCode)
+        {
+            Intent = intent;
+            Placement = placement;
+            RefusalCode = refusalCode ?? string.Empty;
+        }
+
+        public ComponentPlacementIntent Intent { get; }
+        public DesignerPlacement Placement { get; }
+        public string RefusalCode { get; }
+        public bool IsValid => Placement != null && RefusalCode.Length == 0;
+    }
+
+    public sealed class DesignerPlacementPreviewer
+    {
+        private readonly DesignerLayoutExtractor extractor = new DesignerLayoutExtractor();
+        private readonly DesignerLayoutService placementService = new DesignerLayoutService();
+
+        public ComponentPlacementPreview Preview(Package package, ComponentPlacementIntent intent, string packagePath = null)
+        {
+            if (package == null) { throw new ArgumentNullException(nameof(package)); }
+            if (intent == null) { throw new ArgumentNullException(nameof(intent)); }
+            try
+            {
+                var snapshot = extractor.Extract(package, packagePath);
+                DesignerPlacement placement;
+                switch (intent.Relation)
+                {
+                    case ComponentPlacementRelation.RightOf:
+                        placement = placementService.PlaceRightOf(snapshot, intent.OwnerNativeId,
+                            intent.AnchorNativeId, intent.Width, intent.Height);
+                        break;
+                    case ComponentPlacementRelation.Below:
+                        placement = placementService.PlaceBelow(snapshot, intent.OwnerNativeId,
+                            intent.AnchorNativeId, intent.Width, intent.Height);
+                        break;
+                    case ComponentPlacementRelation.OpenSpace:
+                        placement = placementService.FindOpenSpace(snapshot, intent.OwnerNativeId,
+                            intent.Width, intent.Height);
+                        break;
+                    default:
+                        throw new InvalidOperationException("designer.placement.intent_invalid");
+                }
+                return new ComponentPlacementPreview(intent, placement, string.Empty);
+            }
+            catch (InvalidOperationException error)
+            {
+                return new ComponentPlacementPreview(intent, null, error.Message);
             }
         }
     }
@@ -491,12 +984,14 @@ namespace SsisAiRuntime.MutationHost
             var connections = snapshot.Connections.Select(connection => connection.OwnerNativeId != ownerNativeId ? connection :
                 new DesignerConnection(connection.OwnerNativeId, connection.NativeId, connection.SourceNativeId,
                     connection.SourcePortNativeId, connection.DestinationNativeId, connection.DestinationPortNativeId,
-                    connection.RoutePoints.Select(point => new DesignerPoint(checked(point.X + shiftX), checked(point.Y + shiftY)))));
+                    connection.RoutePoints.Select(point => new DesignerPoint(checked(point.X + shiftX), checked(point.Y + shiftY))),
+                    connection.LayoutId, connection.SourceLayoutId, connection.SourcePortLayoutId,
+                    connection.DestinationLayoutId, connection.DestinationPortLayoutId));
             return new DesignerLayoutSnapshot(nodes, connections, snapshot.Diagnostics, margin);
         }
 
         private static DesignerPlacement Place(DesignerLayoutSnapshot snapshot, string ownerNativeId,
-            int left, int top, int width, int height)
+            decimal left, decimal top, int width, int height)
         {
             ValidateDimensions(width, height, 0);
             if (Overlaps(snapshot, ownerNativeId, left, top, width, height))
@@ -519,7 +1014,7 @@ namespace SsisAiRuntime.MutationHost
             { throw new InvalidOperationException("designer.layout.position_unavailable"); }
         }
 
-        private static bool Overlaps(DesignerLayoutSnapshot snapshot, string ownerNativeId, int left, int top, int width, int height)
+        private static bool Overlaps(DesignerLayoutSnapshot snapshot, string ownerNativeId, decimal left, decimal top, int width, int height)
         {
             var right = checked(left + width);
             var bottom = checked(top + height);
@@ -566,8 +1061,10 @@ namespace SsisAiRuntime.MutationHost
             foreach (var pair in expectedConnections)
             {
                 if (!actualConnections.TryGetValue(pair.Key, out var connection)) { continue; }
-                if (pair.Value.SourceNativeId != connection.SourceNativeId || pair.Value.SourcePortNativeId != connection.SourcePortNativeId ||
-                    pair.Value.DestinationNativeId != connection.DestinationNativeId || pair.Value.DestinationPortNativeId != connection.DestinationPortNativeId ||
+                if (!SameIdentity(pair.Value.SourceNativeId, pair.Value.SourceLayoutId, connection.SourceNativeId, connection.SourceLayoutId) ||
+                    !SameIdentity(pair.Value.SourcePortNativeId, pair.Value.SourcePortLayoutId, connection.SourcePortNativeId, connection.SourcePortLayoutId) ||
+                    !SameIdentity(pair.Value.DestinationNativeId, pair.Value.DestinationLayoutId, connection.DestinationNativeId, connection.DestinationLayoutId) ||
+                    !SameIdentity(pair.Value.DestinationPortNativeId, pair.Value.DestinationPortLayoutId, connection.DestinationPortNativeId, connection.DestinationPortLayoutId) ||
                     !pair.Value.RoutePoints.SequenceEqual(connection.RoutePoints))
                 { differences.Add("designer.layout.connection_changed"); }
             }
@@ -575,11 +1072,14 @@ namespace SsisAiRuntime.MutationHost
         }
 
         public DesignerLayoutComparison ComparePreservingExisting(DesignerLayoutSnapshot before,
-            DesignerLayoutSnapshot after, IEnumerable<string> explicitlyMovedNodeKeys = null)
+            DesignerLayoutSnapshot after, IEnumerable<string> explicitlyMovedNodeKeys = null,
+            IEnumerable<string> explicitlyReplacedConnectionKeys = null)
         {
             if (before == null) { throw new ArgumentNullException(nameof(before)); }
             if (after == null) { throw new ArgumentNullException(nameof(after)); }
             var allowedMoves = new HashSet<string>(explicitlyMovedNodeKeys ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
+            var allowedConnectionReplacements = new HashSet<string>(
+                explicitlyReplacedConnectionKeys ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             var afterNodes = after.Nodes.ToDictionary(node => node.Key, StringComparer.Ordinal);
             var differences = new List<string>();
             foreach (var node in before.Nodes)
@@ -588,7 +1088,31 @@ namespace SsisAiRuntime.MutationHost
                 else if (!allowedMoves.Contains(node.Key) && !Equals(node.Position, afterNode.Position))
                 { differences.Add("designer.layout.existing_node_moved"); }
             }
+
+            var afterConnections = after.Connections.ToDictionary(connection => connection.Key, StringComparer.Ordinal);
+            foreach (var connection in before.Connections)
+            {
+                if (allowedConnectionReplacements.Contains(connection.Key)) { continue; }
+                if (!afterConnections.TryGetValue(connection.Key, out var afterConnection))
+                { differences.Add("designer.layout.existing_connection_missing"); }
+                else if (!SameIdentity(connection.SourceNativeId, connection.SourceLayoutId,
+                        afterConnection.SourceNativeId, afterConnection.SourceLayoutId) ||
+                    !SameIdentity(connection.SourcePortNativeId, connection.SourcePortLayoutId,
+                        afterConnection.SourcePortNativeId, afterConnection.SourcePortLayoutId) ||
+                    !SameIdentity(connection.DestinationNativeId, connection.DestinationLayoutId,
+                        afterConnection.DestinationNativeId, afterConnection.DestinationLayoutId) ||
+                    !SameIdentity(connection.DestinationPortNativeId, connection.DestinationPortLayoutId,
+                        afterConnection.DestinationPortNativeId, afterConnection.DestinationPortLayoutId) ||
+                    !connection.RoutePoints.SequenceEqual(afterConnection.RoutePoints))
+                { differences.Add("designer.layout.existing_connection_changed"); }
+            }
             return new DesignerLayoutComparison(differences);
         }
+
+        private static bool SameIdentity(string firstNativeId, string firstLayoutId,
+            string secondNativeId, string secondLayoutId) =>
+            !string.IsNullOrEmpty(firstLayoutId) && !string.IsNullOrEmpty(secondLayoutId)
+                ? string.Equals(firstLayoutId, secondLayoutId, StringComparison.Ordinal)
+                : string.Equals(firstNativeId, secondNativeId, StringComparison.Ordinal);
     }
 }

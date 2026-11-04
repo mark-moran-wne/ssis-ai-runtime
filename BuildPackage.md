@@ -101,9 +101,9 @@ dotnet test .\tests\SsisAiRuntime.Mutations.Tests\SsisAiRuntime.Mutations.Tests.
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --mutation-host-probe
 ```
 
-Every command must exit `0`. The lifecycle suite must report 22 passed cases, including a checkpoint task that is still pending when returned and resumes on another thread, plus refusal of duplicate native IDs in a deliberately malformed scratch artifact. Malformed XML construction is test-only and is never the production editing path. The suite checks source preservation and absence of staging files for every case. When adding a case, update its expected count and documented coverage; do not delete or relax an existing case simply to obtain a pass.
+Every command must exit `0`. The lifecycle suite must report 25 passed cases, including file-checkpoint overwrite refusal, positioned Derived Column and Data Conversion insertion, a checkpoint task that is still pending when returned and resumes on another thread, and refusal of duplicate native IDs in a deliberately malformed scratch artifact. Malformed XML construction is test-only and is never the production editing path. The suite checks source preservation and absence of staging files for every case. When adding a case, update its expected count and documented coverage; do not delete or relax an existing case simply to obtain a pass.
 
-The checkpoints and validators remain controlled test implementations. A pass proves the bounded orchestration and native rename/save/reload path, not production checkpoint storage, native validation, or arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
+The lifecycle suite exercises `FileMutationCheckpointService` for hash verification and overwrite refusal; metadata/native validators remain controlled test doubles, not an installed production validation policy. A pass proves the bounded insertion/rename save/reload orchestration, not arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
 
 ## Required Column Resizing Gate
 
@@ -128,12 +128,20 @@ Run the focused designer-layout parser, placement, comparison, and native topolo
 
 ```console
 dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16IntegrationTests.csproj -c Release
-.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --create-designer-fixtures .\tests\LayoutFixtures
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --create-designer-fixtures C:\Temp\SsisAiRuntimeDesignerFixtures
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --designer-layout-probe
-.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --inspect-designer-fixtures .\tests\LayoutFixtures
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --inspect-designer-fixtures C:\Temp\SsisAiRuntimeDesignerFixtures
 ```
 
-The generator refuses to overwrite any fixture and verifies native load/reload task/component/path counts. Its packages deliberately have no layout coordinates. In SSDT, arrange the horizontal/vertical, branch, merge, and crossed-path cases, save each package, then run the inspection command. It reports native owner/node/port IDs, positions, route-point counts, and fixed diagnostics; it does not validate or execute packages. Preserve an untouched generated copy if you want a before/after comparison. Review the SSDT-saved fixtures before checking them into `tests/LayoutFixtures`; persistence remains unverified until that real round-trip is inspected.
+Use a fresh temporary directory because the generator refuses to overwrite fixtures. It verifies native load/reload task/component/path counts; generated packages intentionally have no layout coordinates. In SSDT, arrange the task on Control Flow, then open its Data Flow and arrange the components/routes; save, close, and reopen the packages before inspection. The inspector reports native owner/node/port IDs, positions, route-point counts, and fixed diagnostics. All seven saved fixtures currently have Control Flow task positions; `TwoComponentHorizontal` also has both Data Flow component positions and one persisted path curve.
+
+After inspection confirms the expected layout entries for the canvas under test, verify persistence through native SSIS serialization:
+
+```console
+.\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --verify-designer-fixtures C:\Temp\SsisAiRuntimeDesignerFixtures
+```
+
+The verifier saves each fixture with at least one positioned node to a separate temporary copy, reloads it, compares all extracted node positions, path endpoints, and route points, and confirms the authored source files remain unchanged. It refuses fixtures with no positioned nodes. It does not validate or execute packages or acquire database connections; these generated layout fixtures require no database. Review SSDT-saved fixtures before checking them into `tests/LayoutFixtures`.
 
 The parser/placement/comparer test mode is:
 
@@ -142,7 +150,7 @@ dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16In
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --designer-layout-probe
 ```
 
-The current native fixture has no designer-authored layout property; the probe verifies explicit refusal rather than fabricated positions. Do not claim real-package layout extraction is verified until a designer-authored saved fixture confirms native load/save/reload behavior and exact ID correlation. This is a documented follow-up gate, not a configured CI check.
+The checked-in native fixtures have no designer-authored layout property; the probe and round-trip verifier refuse missing coordinates rather than fabricate positions. The SSDT-authored horizontal fixture verifies Data Flow component positions and an EdgeLayout curve through native save/reload. The native scratch harness also verifies a positioned Derived Column insertion. AI preview and production MutationHost execution remain follow-up work; this is not yet a production component-insertion capability or configured CI check.
 
 ## Package Smoke Test
 

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Corpus;
@@ -13,6 +14,7 @@ using SsisAiRuntime.Mutations;
 using SsisAiRuntime.MutationHost;
 using SsisAiRuntime.Ssis16;
 using Host = SsisAiRuntime.MutationHost.MutationHost;
+using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
 
 namespace SsisAiRuntime.Ssis16IntegrationTests
 {
@@ -206,8 +208,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     fixture.Refused("mutation.preview.no_longer_valid");
                     Require(fixture.Checkpoint.Calls == 0, "coverage.no_checkpoint");
                 });
-                Require(passedCases == 22, "lifecycle.case_count_changed");
-                Console.WriteLine("Mutation host lifecycle: PASS; " + passedCases + " cases; scratch rename, async checkpoint, duplicate-ID refusal, native reload, cleanup and source preservation. Validators are test doubles; no native Validate or Execute.");
+                Case("file-checkpoint-service", fixture => VerifyFileCheckpointService(fixture));
+                VerifyDerivedColumnInsertionLifecycle();
+                VerifyDataConversionInsertionLifecycle();
+                Require(passedCases == 25, "lifecycle.case_count_changed");
+                Console.WriteLine("Mutation host lifecycle: PASS; " + passedCases + " cases; rename and positioned Derived Column/Data Conversion insertion, file checkpoint, async checkpoint, duplicate-ID refusal, native reload, cleanup and source preservation. Validators are test doubles; no native Validate or Execute.");
                 return 0;
             }
             catch (Exception error)
@@ -215,6 +220,222 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Console.Error.WriteLine("Mutation host lifecycle failed at " + currentCase + ": " + error.Message);
                 return 1;
             }
+        }
+
+        private static void VerifyFileCheckpointService(Fixture fixture)
+        {
+            var loaded = new PackageLoader().Load(fixture.Source);
+            Require(loaded.Succeeded, "file_checkpoint.source_load");
+            CorpusFingerprint fingerprint;
+            try
+            {
+                var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                fingerprint = new CorpusFingerprintProvider().Create(new CorpusSnapshotBuilder().Build(snapshot));
+            }
+            finally { loaded.Session.Package.Dispose(); }
+
+            var directory = Path.Combine(fixture.Directory, "durable-checkpoints");
+            var service = new FileMutationCheckpointService(directory);
+            var request = new MutationCheckpointRequest(fixture.Source, fixture.ExpectedHash, fingerprint,
+                "checkpoint-operation-1", "mutation.test");
+            var result = service.CreateAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+            var artifact = Path.Combine(directory, "checkpoint-operation-1.dtsx");
+            Require(result.Succeeded && result.ArtifactHash == fixture.ExpectedHash && File.Exists(artifact) &&
+                File.ReadAllBytes(artifact).SequenceEqual(File.ReadAllBytes(fixture.Source)), "file_checkpoint.created_and_hashed");
+            var originalCheckpoint = File.ReadAllBytes(artifact);
+            var refused = service.CreateAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+            Require(!refused.Succeeded && refused.Code == "mutation.checkpoint.exists" &&
+                File.ReadAllBytes(artifact).SequenceEqual(originalCheckpoint), "file_checkpoint.overwrite_refused");
+        }
+
+        private static void VerifyDerivedColumnInsertionLifecycle()
+        {
+            currentCase = "derived-column-insertion-lifecycle";
+            var directory = Path.Combine(Path.GetTempPath(), "SsisDerivedInsertion-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var sourcePath = Path.Combine(directory, "source.dtsx");
+            var destinationPath = Path.Combine(directory, "output.dtsx");
+            var checkpointPath = Path.Combine(directory, "checkpoint.dtsx");
+            string taskId;
+            string sourceId;
+            string destinationId;
+            int lineageId;
+            try
+            {
+                using (var package = new Package { Name = "DerivedInsertionFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                {
+                    var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                    task.Name = "InsertFlow";
+                    taskId = task.ID;
+                    var pipeline = (IDTSPipeline130)task.InnerObject;
+                    var app = new Application();
+                    var source = AddComponent(pipeline, app, "DTSAdapter.OleDbSource.", "Source");
+                    var destination = AddComponent(pipeline, app, "DTSAdapter.OleDbDestination.", "Destination");
+                    sourceId = source.ID.ToString();
+                    destinationId = destination.ID.ToString();
+                    var output = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
+                    var inputColumn = output.OutputColumnCollection.New();
+                    inputColumn.Name = "InputValue";
+                    inputColumn.SetDataTypeProperties(RuntimeWrapper.DataType.DT_I4, 0, 0, 0, 0);
+                    lineageId = inputColumn.LineageID;
+                    pipeline.PathCollection.New().AttachPathAndPropagateNotifications(output, destination.InputCollection[0]);
+                    package.DesignTimeProperties = "<Objects Version='8'><Package design-time-name='Package'><LayoutInfo><GraphLayout>" +
+                        "<NodeLayout Id='Package\\InsertFlow' TopLeft='20,20' Size='180,42'/>" +
+                        "</GraphLayout></LayoutInfo></Package><TaskHost design-time-name='Package\\InsertFlow'><LayoutInfo><GraphLayout>" +
+                        "<NodeLayout Id='Package\\InsertFlow\\Source' TopLeft='100,100' Size='114,42'/>" +
+                        "<NodeLayout Id='Package\\InsertFlow\\Destination' TopLeft='400,100' Size='134,42'/>" +
+                        "</GraphLayout></LayoutInfo></TaskHost></Objects>";
+                    app.SaveToXml(sourcePath, package, null);
+                }
+
+                var sourceLoad = new PackageLoader().Load(sourcePath);
+                Require(sourceLoad.Succeeded, "insert.source.load");
+                try
+                {
+                    var sourceTask = (TaskHost)sourceLoad.Session.Package.Executables[0];
+                    taskId = sourceTask.ID;
+                    var sourcePipeline = (IDTSPipeline130)sourceTask.InnerObject;
+                    var sourceComponent = sourcePipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                        .Single(component => component.Name == "Source");
+                    var destinationComponent = sourcePipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                        .Single(component => component.Name == "Destination");
+                    sourceId = sourceComponent.ID.ToString();
+                    destinationId = destinationComponent.ID.ToString();
+                    lineageId = sourceComponent.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut)
+                        .OutputColumnCollection.Cast<IDTSOutputColumn100>().Single(column => column.Name == "InputValue").LineageID;
+                }
+                finally { sourceLoad.Session.Package.Dispose(); }
+
+                var sourceHash = Hash(sourcePath);
+                var checkpoint = new TestCheckpoint(checkpointPath);
+                var validator = new TestValidator();
+                var host = new Host(new PackageLoader(), new PackageAnalysisSnapshotFactory(), new CorpusSnapshotBuilder(),
+                    new CorpusFingerprintProvider(), new MutationPreviewer(), checkpoint, validator, new MutationArtifactStager());
+                var plan = host.PreviewDerivedColumnInsertion(sourcePath, taskId, sourceId, destinationId, lineageId,
+                    "AddCalculated", "CalculatedValue", "#" + lineageId + " + 1",
+                    new ComponentPlacementIntent(taskId, ComponentPlacementRelation.RightOf, destinationId, 140, 42));
+                var previewJson = plan.SerializePreviewContract();
+                Require(previewJson == plan.SerializePreviewContract() &&
+                    previewJson.Contains("InsertDerivedColumn") && previewJson.Contains("RightOf") &&
+                    previewJson.Contains("Package\\\\InsertFlow\\\\Destination") &&
+                    !previewJson.Contains("#" + lineageId + " + 1") &&
+                    !previewJson.Contains("sourceNativeId") && !previewJson.Contains("destinationNativeId"),
+                    "insert.preview_contract.stable_and_redacted");
+                Require(!File.Exists(destinationPath), "insert.preview_no_publication");
+                var result = host.ExecuteAsync(new MutationHostRequest(sourcePath, destinationPath, plan, sourceHash),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                Require(result.Completed && result.CheckpointCreated && result.SaveAsCompleted && result.ReloadSucceeded &&
+                    result.ValidationSucceeded && result.SemanticDiffMatched, "insert.lifecycle.completed:" + result.Code + ":" +
+                    string.Join(",", result.DiagnosticCodes));
+                Require(checkpoint.Calls == 1 && validator.Calls == 1 && Hash(sourcePath) == sourceHash &&
+                    result.DestinationArtifactHash == Hash(destinationPath), "insert.lifecycle.safety_evidence");
+                var loaded = new PackageLoader().Load(destinationPath);
+                Require(loaded.Succeeded, "insert.destination.load");
+                try { Require(plan.Verify(loaded.Session.Package), "insert.destination.verify"); }
+                finally { loaded.Session.Package.Dispose(); }
+                passedCases++;
+                Console.WriteLine("Mutation host derived-column insertion: PASS; checkpoint/save-as/reload/validation/layout verification; no DB connection, execution, or native validation.");
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) { Directory.Delete(directory, true); }
+            }
+        }
+
+        private static void VerifyDataConversionInsertionLifecycle()
+        {
+            currentCase = "data-conversion-insertion-lifecycle";
+            var directory = Path.Combine(Path.GetTempPath(), "SsisDataConversionInsertion-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var sourcePath = Path.Combine(directory, "source.dtsx");
+            var destinationPath = Path.Combine(directory, "output.dtsx");
+            var checkpointPath = Path.Combine(directory, "checkpoint.dtsx");
+            string taskId;
+            string sourceId;
+            string destinationId;
+            int lineageId;
+            try
+            {
+                using (var package = new Package { Name = "DataConversionInsertionFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                {
+                    var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                    task.Name = "ConvertFlow";
+                    taskId = task.ID;
+                    var pipeline = (IDTSPipeline130)task.InnerObject;
+                    var application = new Application();
+                    var source = AddComponent(pipeline, application, "DTSAdapter.OleDbSource.", "Source");
+                    var destination = AddComponent(pipeline, application, "DTSAdapter.OleDbDestination.", "Destination");
+                    sourceId = source.ID.ToString();
+                    destinationId = destination.ID.ToString();
+                    var output = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
+                    var sourceColumn = output.OutputColumnCollection.New();
+                    sourceColumn.Name = "IntegerValue";
+                    sourceColumn.SetDataTypeProperties(RuntimeWrapper.DataType.DT_I4, 0, 0, 0, 0);
+                    lineageId = sourceColumn.LineageID;
+                    pipeline.PathCollection.New().AttachPathAndPropagateNotifications(output, destination.InputCollection[0]);
+                    package.DesignTimeProperties = "<Objects Version='8'><Package design-time-name='Package'><LayoutInfo><GraphLayout>" +
+                        "<NodeLayout Id='Package\\ConvertFlow' TopLeft='20,20' Size='180,42'/>" +
+                        "</GraphLayout></LayoutInfo></Package><TaskHost design-time-name='Package\\ConvertFlow'><LayoutInfo><GraphLayout>" +
+                        "<NodeLayout Id='Package\\ConvertFlow\\Source' TopLeft='100,100' Size='114,42'/>" +
+                        "<NodeLayout Id='Package\\ConvertFlow\\Destination' TopLeft='400,100' Size='134,42'/>" +
+                        "</GraphLayout></LayoutInfo></TaskHost></Objects>";
+                    application.SaveToXml(sourcePath, package, null);
+                }
+
+                var loaded = new PackageLoader().Load(sourcePath);
+                Require(loaded.Succeeded, "dataconvert.source.load");
+                try
+                {
+                    var task = (TaskHost)loaded.Session.Package.Executables[0];
+                    taskId = task.ID;
+                    var pipeline = (IDTSPipeline130)task.InnerObject;
+                    var source = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>().Single(component => component.Name == "Source");
+                    var destination = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>().Single(component => component.Name == "Destination");
+                    sourceId = source.ID.ToString();
+                    destinationId = destination.ID.ToString();
+                    lineageId = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut)
+                        .OutputColumnCollection.Cast<IDTSOutputColumn100>().Single(column => column.Name == "IntegerValue").LineageID;
+                }
+                finally { loaded.Session.Package.Dispose(); }
+
+                var hash = Hash(sourcePath);
+                var checkpoint = new TestCheckpoint(checkpointPath);
+                var validator = new TestValidator();
+                var host = new Host(new PackageLoader(), new PackageAnalysisSnapshotFactory(), new CorpusSnapshotBuilder(),
+                    new CorpusFingerprintProvider(), new MutationPreviewer(), checkpoint, validator, new MutationArtifactStager());
+                var plan = host.PreviewDataConversionInsertion(sourcePath, taskId, sourceId, destinationId, lineageId,
+                    "ConvertInteger", "IntegerText", RuntimeWrapper.DataType.DT_WSTR, 32, 0, 0, 0,
+                    new ComponentPlacementIntent(taskId, ComponentPlacementRelation.RightOf, destinationId, 140, 42));
+                var preview = plan.SerializePreviewContract();
+                Require(preview.Contains("InsertDataConversion") && preview.Contains("DT_WSTR") &&
+                    preview.Contains("RightOf") && !preview.Contains("sourceNativeId") &&
+                    !preview.Contains("destinationNativeId"), "dataconvert.preview_contract");
+                var result = host.ExecuteAsync(new MutationHostRequest(sourcePath, destinationPath, plan, hash),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                Require(result.Completed && result.CheckpointCreated && result.SaveAsCompleted && result.ReloadSucceeded &&
+                    result.ValidationSucceeded && result.SemanticDiffMatched, "dataconvert.lifecycle:" + result.Code + ":" +
+                    string.Join(",", result.DiagnosticCodes));
+                Require(checkpoint.Calls == 1 && validator.Calls == 1 && Hash(sourcePath) == hash &&
+                    result.DestinationArtifactHash == Hash(destinationPath), "dataconvert.safety_evidence");
+                passedCases++;
+                Console.WriteLine("Mutation host Data Conversion insertion: PASS; positioned DT_WSTR conversion, source mapping, checkpoint/save-as/reload/verification; no DB connection, execution, or native validation.");
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) { Directory.Delete(directory, true); }
+            }
+        }
+
+        private static IDTSComponentMetaData100 AddComponent(IDTSPipeline130 pipeline, Application application,
+            string creationNamePrefix, string name)
+        {
+            var info = application.PipelineComponentInfos.Cast<PipelineComponentInfo>()
+                .Single(item => item.CreationName.StartsWith(creationNamePrefix, StringComparison.OrdinalIgnoreCase));
+            var component = pipeline.ComponentMetaDataCollection.New();
+            component.ComponentClassID = info.CreationName;
+            component.Instantiate().ProvideComponentProperties();
+            component.Name = name;
+            return component;
         }
 
         private static void Case(string name, Action<Fixture> test, bool nested = false, bool eventHandler = false)
