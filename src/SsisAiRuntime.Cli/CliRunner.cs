@@ -95,6 +95,7 @@ namespace SsisAiRuntime.Cli
                         "  SsisAiRuntime.Cli.exe ai mutation.capabilities",
                         "  SsisAiRuntime.Cli.exe ai mutation.preview <package.dtsx> (versioned request JSON on stdin)",
                         "  SsisAiRuntime.Cli.exe ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin)",
+                        "  SsisAiRuntime.Cli.exe ai task.properties <package.dtsx> --task <native-id>",
                         "",
                         "Output defaults to a bounded summary. Use --details for the full redacted projection."
                     });

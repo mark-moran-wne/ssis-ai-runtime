@@ -88,7 +88,7 @@ Run the separate opt-in RenameTask lifecycle suite:
 
 This mode calls the actual MutationHost on scratch DTSX files, uses a test checkpoint artifact copy and metadata-only validator doubles, and checks rename/save/reload/publication plus refusal/cleanup paths. It covers nested/event-handler targets, stale names and hashes, missing requirements/targets, blocking coverage, checkpoint failure, injected save/reload failure, validator exceptions, unexpected semantic changes, destination races, source locking, and cancellation. It does not invoke native validation or package execution and cannot be combined with a caller-supplied package. A passed suite verifies orchestration, not a production checkpoint or native-validator implementation. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
 
-## Required RenameTask Gate
+## Required Native MutationHost Gate
 
 Before merging changes to native executable discovery, rename preview/coverage policy, corpus verification, artifact staging, or MutationHost execution, run the following from the repository root on Windows x64 with SSIS 16 and the .NET 10 SDK installed. The native host cannot be certified by portable tests alone.
 
@@ -101,9 +101,9 @@ dotnet test .\tests\SsisAiRuntime.Mutations.Tests\SsisAiRuntime.Mutations.Tests.
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --mutation-host-probe
 ```
 
-Every command must exit `0`. The lifecycle suite must report 25 passed cases, including file-checkpoint overwrite refusal, positioned Derived Column and Data Conversion insertion, a checkpoint task that is still pending when returned and resumes on another thread, and refusal of duplicate native IDs in a deliberately malformed scratch artifact. Malformed XML construction is test-only and is never the production editing path. The suite checks source preservation and absence of staging files for every case. When adding a case, update its expected count and documented coverage; do not delete or relax an existing case simply to obtain a pass.
+Every command must exit `0`. The lifecycle suite must report 30 passed cases, including generic TaskHost property discovery and scalar/enum edits, StringCollection Replace/Add/Remove, Transfer table selection and CopyAll behavior, positioned Derived Column and Data Conversion insertion, file-checkpoint overwrite refusal, save/reload/validation/semantic verification, and source preservation. Malformed XML construction is test-only and is never the production editing path. The suite checks source preservation and absence of staging files for every case. When adding a case, update its expected count and documented coverage; do not delete or relax an existing case simply to obtain a pass.
 
-The lifecycle suite exercises `FileMutationCheckpointService` for hash verification and overwrite refusal; metadata/native validators remain controlled test doubles, not an installed production validation policy. A pass proves the bounded insertion/rename save/reload orchestration, not arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
+The lifecycle suite exercises `FileMutationCheckpointService` for hash verification and overwrite refusal, native offline validation, and CLI publication; injected test doubles remain in use for selected failure-path cases. A pass verifies only the listed operation contracts and lifecycle paths, not arbitrary mutation safety. Record the tested commit, SSIS version/architecture, and command outcomes in the PR or review evidence. If no SSIS-enabled host is available, report the gate as unverified, not passed. This is a documented merge requirement, not a configured GitHub required check; an SSIS-enabled CI runner and branch-protection setup are still pending. FlowRunner execution changes additionally require `--execute-flow-probe`.
 
 ## Required Column Resizing Gate
 
@@ -150,7 +150,7 @@ dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16In
 .\tests\SsisAiRuntime.Ssis16IntegrationTests\bin\Release\net48\SsisAiRuntime.Ssis16IntegrationTests.exe --designer-layout-probe
 ```
 
-The checked-in native fixtures have no designer-authored layout property; the probe and round-trip verifier refuse missing coordinates rather than fabricate positions. The SSDT-authored horizontal fixture verifies Data Flow component positions and an EdgeLayout curve through native save/reload. The native scratch harness also verifies a positioned Derived Column insertion. AI preview and production MutationHost execution remain follow-up work; this is not yet a production component-insertion capability or configured CI check.
+The checked-in native fixtures have no designer-authored layout property; the probe and round-trip verifier refuse missing coordinates rather than fabricate positions. The SSDT-authored horizontal fixture verifies Data Flow component positions and an EdgeLayout curve through native save/reload. The native scratch harness verifies positioned Derived Column and Data Conversion insertion through MutationHost save/reload, and the CLI exposes their preview/apply lifecycle. Broader component insertion and route-splitting remain follow-up work; this is not a configured CI check.
 
 ## Package Smoke Test
 

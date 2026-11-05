@@ -15,15 +15,20 @@ using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
 
 namespace SsisAiRuntime.MutationHost
 {
-    public interface IComponentInsertionPlan
+    public interface IPackageMutationPlan
     {
         string SourceArtifactHash { get; }
         string OperationName { get; }
         MutationExecutionRequirements Requirements { get; }
-        IComponentInsertionPlan RebindCurrent(Package package, string sourceArtifactHash, string packagePath = null);
+        IPackageMutationPlan RebindCurrent(Package package, string sourceArtifactHash, string packagePath = null);
         void Apply(Package package);
         string VerifyFailureCode(Package package);
         string SerializePreviewContract();
+    }
+
+    public interface IComponentInsertionPlan : IPackageMutationPlan
+    {
+        new IComponentInsertionPlan RebindCurrent(Package package, string sourceArtifactHash, string packagePath = null);
     }
 
     public sealed class DerivedColumnInsertionPlan : IComponentInsertionPlan
@@ -102,6 +107,9 @@ namespace SsisAiRuntime.MutationHost
         }
 
         IComponentInsertionPlan IComponentInsertionPlan.RebindCurrent(Package package, string sourceArtifactHash,
+            string packagePath) => RebindCurrent(package, sourceArtifactHash, packagePath);
+
+        IPackageMutationPlan IPackageMutationPlan.RebindCurrent(Package package, string sourceArtifactHash,
             string packagePath) => RebindCurrent(package, sourceArtifactHash, packagePath);
 
         public static DerivedColumnInsertionPlan Create(Package package, string sourceArtifactHash,

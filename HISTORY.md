@@ -1,5 +1,12 @@
 # SSIS AI Runtime History
 
+## 2026-11-04 Native TaskHost Mutation Operations
+
+- Added `TransferTablesMutationPlan` over the native `ITransferSqlServerObjectsTask.TablesList` API. It supports explicit `Replace`, `Add`, and `Remove` modes, preserves unrelated task settings, binds to the task identity and source artifact hash, and previews before/after selection. `Replace` disables catch-all `CopyAllObjects`/`CopyAllTables`; `Add` and `Remove` refuse when those flags make selection semantics ambiguous.
+- Generalized the MutationHost package-plan contract and exposed `update_transfer_tables` through `ai mutation.capabilities`, stdin-based `ai mutation.preview`, and `ai mutation.apply`.
+- Added native scratch tests for Transfer task TablesList save/reload, each edit mode, capability/schema discovery, preview, and host checkpoint/save/reload/verify lifecycle. No package Execute or database connection is used; the user-provided EAB package is not modified.
+- Added generic `ai task.properties` discovery plus typed `set_task_property` and `update_task_collection` preview/apply plans for writable TaskHost scalars and StringCollections. Enum-valued properties expose names and accept enum names instead of guessed numeric codes. Transfer collection modes update/refuse on their corresponding CopyAll flags; `TablesList` remains routed through its specialized plan. Native tests cover scalar apply and enum/property discovery without database connections.
+
 ## 2026-11-03 Designer Layout Round-Trip
 
 - Added read-only extraction of SSDT `DTS:DesignTimeProperties` payloads from a bounded source DTSX parse. Actual Control Flow layout uses hierarchical `refId` paths and fractional coordinates; coordinates now retain decimal precision.

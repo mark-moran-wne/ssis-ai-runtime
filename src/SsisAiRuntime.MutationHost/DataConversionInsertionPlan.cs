@@ -197,6 +197,9 @@ namespace SsisAiRuntime.MutationHost
             return current;
         }
 
+        IPackageMutationPlan IPackageMutationPlan.RebindCurrent(Package package, string sourceArtifactHash,
+            string packagePath) => RebindCurrent(package, sourceArtifactHash, packagePath);
+
         public void Apply(Package package)
         {
             var task = FindPipelineTask(package, OwnerTaskNativeId);

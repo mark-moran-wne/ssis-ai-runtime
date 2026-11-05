@@ -85,5 +85,39 @@ namespace SsisAiRuntime.Mutations
                 "componentinsert.placement.required",
                 "componentinsert.layout_preservation.required"
             });
+
+        public static MutationExecutionRequirements TransferTablesUpdate() => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                "transfertask.tables.selection.required",
+                "transfertask.other_settings.preserved"
+            });
+
+        public static MutationExecutionRequirements TaskPropertyUpdate(bool collectionUpdate) => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                collectionUpdate ? "taskproperty.collection.update" : "taskproperty.scalar.update",
+                "taskproperty.other_settings.preserved"
+            });
     }
 }

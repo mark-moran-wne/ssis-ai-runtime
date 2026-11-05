@@ -238,11 +238,17 @@ namespace SsisAiRuntime.MutationHost
 
         public MutationHostRequest(string sourcePackagePath, string destinationPackagePath,
             IComponentInsertionPlan plan, string expectedSourceHash)
+            : this(sourcePackagePath, destinationPackagePath, (IPackageMutationPlan)plan, expectedSourceHash)
+        {
+        }
+
+        public MutationHostRequest(string sourcePackagePath, string destinationPackagePath,
+            IPackageMutationPlan plan, string expectedSourceHash)
             : this(sourcePackagePath, destinationPackagePath, expectedSourceHash)
         {
-            InsertionPlan = plan ?? throw new ArgumentNullException(nameof(plan));
+            PackageMutationPlan = plan ?? throw new ArgumentNullException(nameof(plan));
             if (plan.SourceArtifactHash != expectedSourceHash)
-            { throw new ArgumentException("The insertion plan must bind the expected source artifact.", nameof(expectedSourceHash)); }
+            { throw new ArgumentException("The package mutation plan must bind the expected source artifact.", nameof(expectedSourceHash)); }
         }
 
         private MutationHostRequest(string sourcePackagePath, string destinationPackagePath, string expectedSourceHash)
@@ -281,7 +287,8 @@ namespace SsisAiRuntime.MutationHost
 
         public MutationExecutionPlan Plan { get; }
         public ColumnResizePlan ResizePlan { get; }
-        public IComponentInsertionPlan InsertionPlan { get; }
+        public IPackageMutationPlan PackageMutationPlan { get; }
+        public IComponentInsertionPlan InsertionPlan => PackageMutationPlan as IComponentInsertionPlan;
 
         public string ExpectedSourceHash { get; }
     }
@@ -520,7 +527,7 @@ namespace SsisAiRuntime.MutationHost
 
             PackageSession<Package> originalSession = null;
             FileStream sourceGuard = null;
-            var insertionPlan = request.InsertionPlan;
+            var packageMutationPlan = request.PackageMutationPlan;
 
             try
             {
@@ -582,11 +589,11 @@ namespace SsisAiRuntime.MutationHost
                 {
                     request.ResizePlan.CheckCurrent(originalSession.Package, sourceHash);
                 }
-                else if (request.InsertionPlan != null)
+                else if (request.PackageMutationPlan != null)
                 {
                     try
                     {
-                        insertionPlan = request.InsertionPlan.RebindCurrent(originalSession.Package, sourceHash,
+                        packageMutationPlan = request.PackageMutationPlan.RebindCurrent(originalSession.Package, sourceHash,
                             request.SourcePackagePath);
                     }
                     catch (InvalidOperationException exception)
@@ -627,7 +634,7 @@ namespace SsisAiRuntime.MutationHost
 
                     }
 
-                    var requirements = request.ResizePlan?.Requirements ?? insertionPlan?.Requirements ?? request.Plan.Requirements;
+                    var requirements = request.ResizePlan?.Requirements ?? packageMutationPlan?.Requirements ?? request.Plan.Requirements;
 
                 if (!AllRenameRequirementsPresent(requirements))
                 {
@@ -645,7 +652,7 @@ namespace SsisAiRuntime.MutationHost
                 beforeFingerprint =
                     fingerprintProvider.Create(beforeCorpus);
 
-                if (!CanVerifyOperation(beforeAnalysis, request.ResizePlan != null || request.InsertionPlan != null))
+                if (!CanVerifyOperation(beforeAnalysis, request.ResizePlan != null || request.PackageMutationPlan != null))
                 {
                     return Failure(
                         MutationExecutionStatus.ValidationFailed,
@@ -664,7 +671,7 @@ namespace SsisAiRuntime.MutationHost
                             beforeFingerprint,
                             operationId,
                             request.ResizePlan != null ? "mutation.resize_column.before" :
-                                insertionPlan != null ? "mutation." + insertionPlan.OperationName + ".before" : "mutation.rename_task.before"),
+                                packageMutationPlan != null ? "mutation." + packageMutationPlan.OperationName + ".before" : "mutation.rename_task.before"),
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -701,7 +708,7 @@ namespace SsisAiRuntime.MutationHost
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (request.ResizePlan != null) { request.ResizePlan.Apply(originalSession.Package); }
-                else if (insertionPlan != null) { insertionPlan.Apply(originalSession.Package); }
+                else if (packageMutationPlan != null) { packageMutationPlan.Apply(originalSession.Package); }
                 else { ApplyRename(
                     originalSession.Package,
                     request.Plan); }
@@ -786,7 +793,7 @@ namespace SsisAiRuntime.MutationHost
                         afterFingerprint =
                             fingerprintProvider.Create(afterCorpus);
 
-                        if (!CanVerifyOperation(stagedAnalysis, request.ResizePlan != null || request.InsertionPlan != null))
+                        if (!CanVerifyOperation(stagedAnalysis, request.ResizePlan != null || request.PackageMutationPlan != null))
                         {
                             diagnosticCodes.Add(
                                 "mutation.after.coverage_incomplete");
@@ -798,8 +805,8 @@ namespace SsisAiRuntime.MutationHost
                             ? (request.ResizePlan.Verify(stagedPackage)
                                 ? RenameSemanticVerification.Success()
                                 : RenameSemanticVerification.Failure("mutation.resize.unexpected_change"))
-                            : insertionPlan != null
-                                ? VerifyInsertion(insertionPlan, stagedPackage)
+                            : packageMutationPlan != null
+                                ? VerifyPackageMutation(packageMutationPlan, stagedPackage)
                                 : VerifyRenameOnly(beforeCorpus, afterCorpus, request.Plan);
 
                         if (!semanticVerification.Succeeded)
@@ -998,7 +1005,7 @@ namespace SsisAiRuntime.MutationHost
         {
             var operationCount = (request.Plan == null ? 0 : 1) +
                 (request.ResizePlan == null ? 0 : 1) +
-                (request.InsertionPlan == null ? 0 : 1);
+                (request.PackageMutationPlan == null ? 0 : 1);
             if (operationCount != 1)
             { throw new InvalidOperationException("mutation.request.operation_invalid"); }
 
@@ -1429,8 +1436,8 @@ namespace SsisAiRuntime.MutationHost
                 StringComparer.Ordinal);
         }
 
-        private static RenameSemanticVerification VerifyInsertion(
-            IComponentInsertionPlan plan,
+        private static RenameSemanticVerification VerifyPackageMutation(
+            IPackageMutationPlan plan,
             Package package)
         {
             var failureCode = plan.VerifyFailureCode(package);

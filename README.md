@@ -1,6 +1,6 @@
 # SSIS AI Runtime (Experimental)
 
-A headless toolkit for inspecting SSIS packages and testing synthetic data flows through the native SSIS runtime. The inspection CLI stays read-only; a separate development harness constructs and executes contrived flows and probes coordinated metadata edits. The native package object remains authoritative; projections are intended for tools and AI context, not for serialization back into DTSX.
+A headless toolkit for inspecting and making supported, user-requested SSIS package adjustments through the native runtime. Inspection routes remain read-only; separate typed AI mutation routes use the MutationHost checkpoint/save/reload/offline-validation/verification lifecycle. The native package object remains authoritative; projections are not serialized back into DTSX.
 
 ## Milestone Progress
 
@@ -12,18 +12,18 @@ Current local implementation as of 2026-11-04. Implemented does not imply genera
 | Dependency and control-flow graphs | Implemented | Native identity, selectors, impact queries, and projected precedence relationships |
 | Expression and SQL dependencies | Implemented | Native column observations, heuristic lexical/scope bindings, and parsed T-SQL evidence |
 | Corpus baselines and fingerprints | Implemented | Versioned snapshots, diff/verify/approve, canonical SHA-256 fingerprints, and transient-ID normalization |
-| Mutation contracts and requirements | Implemented, limited | Generic schema 1.1 `MutationContracts` remain RenameTask-focused; MutationHost has separate versioned/redacted Derived Column and Data Conversion placement preview contracts |
-| Artifact staging and checkpoints | Implemented, bounded | Separate destination, verification-gated publication, overwrite refusal, and hash-verified `FileMutationCheckpointService`; native validation remains injected |
+| Mutation contracts and requirements | Implemented, limited | Generic schema 1.1 `MutationContracts` remain RenameTask-focused; MutationHost has typed plans for scalar/collection TaskHost edits, component insertion, and Transfer task table selection |
+| Artifact staging and checkpoints | Implemented, bounded | Separate destination, verification-gated publication, overwrite refusal, hash-verified `FileMutationCheckpointService`, and offline native validation |
 | Synthetic flow execution | Implemented | Native Derived Column, Int32-to-Int16/Int64 Data Conversion, and Unicode Flat File text probes with output assertions |
 | Coordinated column resizing | Bounded lifecycle verified | Exact-ID resize analysis and copy-edit plan supports grow/shrink; add/remove remain in-memory schema edits |
 | Designer layout | Implemented, bounded | Fractional Control Flow/Data Flow positions, TaskHost layout, sampled EdgeLayout routes, stable refId/native-ID rebinding, native writer and round-trip verification |
 | Shared component catalog | Foundation implemented | 59 seeded SSIS 16 definitions and local matching; discovery is distinct from runnable recipe support |
 | Component support tooling and diagnostics | Implemented, bounded | Native describe, recipe probes, structural XML compare, catalog validation, native errors and output mismatch details; catalog PR guide remains pending |
-| Real-package editing lifecycle | Bounded operations implemented | MutationHost supports constrained Derived Column and Data Conversion insertion with placement, file checkpoint, save-as, reload, injected validation, and layout/topology verification; AI tool route and production validation policy remain open |
+| Real-package editing lifecycle | Typed operations implemented | MutationHost supports writable scalar/collection TaskHost properties, constrained component insertion, and Transfer SQL Server Objects Task table-selection updates. The AI CLI exposes discovery, preview, and apply with offline validation and semantic verification |
 
-`SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes scratch-tested RenameTask, bounded column-resize, and constrained Derived Column/Data Conversion insertion lifecycles, plus designer-layout extraction, placement, writing, and comparison. It includes a hash-verified file checkpoint service; native validation remains an injected policy. No AI tool/client route or general-purpose editing command is provided.
+`SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes scratch-tested RenameTask, bounded column-resize, generic writable scalar/collection TaskHost edits, positioned Derived Column/Data Conversion insertion, and Transfer SQL Server Objects Task table-selection updates. It includes designer-layout extraction/placement and a hash-verified file checkpoint service. The AI CLI discovers, previews, and applies supported operations through native save/reload, offline validation, and semantic verification; it does not execute packages or connect to data sources.
 
-The 25-case MutationHost probe covers positioned Derived Column and Data Conversion insertion, stable-ID rebinding, hash-verified file checkpointing, save-as, reload, refusal paths, and source preservation. Data Conversion currently supports explicit Unicode/ANSI strings, integers, and floating-point outputs. The insertion allowlist is intentionally narrow: one pipeline task with two components and one connecting path, no package connections or user variables, and no event handlers. Validators are test doubles; the suite never calls native `Validate` or `Execute`. The generic mutation-contract serializer and CLI remain read-only/RenameTask-focused. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
+The 30-case MutationHost probe covers generic TaskHost property discovery/scalar apply, StringCollection Replace/Add/Remove, positioned component insertion, Transfer task table selection, stable-ID rebinding, hash-verified file checkpointing, save-as, reload, validation, refusal paths, and source preservation. Data Conversion supports explicit Unicode/ANSI strings, integers, and floating-point outputs. Insertion retains its narrow two-component/one-path package shape; Transfer table edits target the selected task and preserve unrelated settings. Native tests do not execute packages or connect to databases. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
 
 Column resizing currently covers grow/shrink on a direct Flat File Source-to-Flat File or OLE DB Destination path. `AnalyzeColumnResize` scans the source file configured on the selected connection and reports rows scanned, maximum observed width (UTF-16 code units for `DT_WSTR`, encoded bytes for `DT_STR`), and whether EOF was reached; it never returns values or paths. `PreviewColumnResize` binds that analysis to the package, native selectors, target width, and input-file hash. Shrink requires successful analysis and explicit user acknowledgement. A target below the observed maximum is refused; a partial scan warns that unseen or future data may be longer. The analysis and file hash are checked again before execution. The host writes a separate copy, checkpoints the original, and verifies coordinated native metadata changes; it does not alter physical database schema or invoke native Validate/Execute. Add/remove remain in-memory schema edits. The hash-verified file checkpoint service is implemented; native validation and editing CLI integration remain deferred. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md), [BuildPackage.md](BuildPackage.md#required-column-resizing-gate), and [Plan.md](Plan.md) for boundaries and verification.
 
@@ -34,16 +34,16 @@ Column resizing currently covers grow/shrink on a direct Flat File Source-to-Fla
 - `SsisAiRuntime.Inspectors` targets .NET Standard 2.0 and defines runtime-neutral immutable inspector results, focused SQL/lineage/configuration contexts, session-scoped semantic handles, and a control-flow graph. The SSIS 16 adapter provides package, connection, variable, parameter, SQL task, expression-presence, executable hierarchy, and data-flow projections with column lineage/type metadata, runtime connection references, and allowlisted source/destination settings. Sensitive values are omitted or sanitized, and detailed reports expose incomplete/unsupported coverage.
 - `SsisAiRuntime.AI` targets .NET Standard 2.0 and provides deterministic read-only tools over inspector projections. It does not call an LLM or load SSIS packages; the SSIS host composes one immutable snapshot per package session.
 - `SsisAiRuntime.Corpus` targets .NET Standard 2.0 and projects analysis snapshots into versioned dependency/evidence baselines with compatibility checks, structural comparison, and deterministic semantic fingerprints.
-- `SsisAiRuntime.Mutations` targets .NET Standard 2.0 and provides native-ID-only `RenameTask` preview, versioned deterministic contracts, and explicit execution lifecycle statuses. Component insertion uses a separate host-side preview contract; generic mutation serialization is not yet extended for insertions.
-- `SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes RenameTask, bounded column resize, and constrained Derived Column/Data Conversion insertion lifecycles. It includes a hash-verified file checkpoint service and designer layout extraction/placement/writing; native validation remains an injected policy. Agent-facing AI/CLI integration is follow-on work.
+- `SsisAiRuntime.Mutations` targets .NET Standard 2.0 and provides native-ID-only `RenameTask` preview, versioned deterministic contracts, and explicit execution lifecycle statuses. Component insertion and Transfer task table updates use typed, versioned host-side plans.
+- `SsisAiRuntime.MutationHost` targets .NET Framework 4.8 x64 and composes RenameTask, bounded column resize, component insertion, and Transfer task table-selection updates. It includes hash-verified checkpointing, designer layout services, and offline native validation.
 - `SsisAiRuntime.Tests` tests the portable Core contract without requiring SSIS.
 - `SsisAiRuntime.Corpus.Tests` exercises snapshot projection, baseline validation, and corpus comparison without requiring SSIS.
 - `SsisAiRuntime.Mutations.Tests` exercises mutation target validation, graph-based impact, and incomplete-coverage refusal without requiring SSIS.
-- `SsisAiRuntime.Cli` is a Windows .NET Framework 4.8 x64 console app over the existing loader and inspectors. Its first release is strictly read-only.
+- `SsisAiRuntime.Cli` is a Windows .NET Framework 4.8 x64 console app. Inspection and AI-analysis routes remain read-only; typed mutation capability, preview, and apply routes use the MutationHost lifecycle for supported operations.
 - `SsisAiRuntime.FlowRunner` is a separate trusted-developer SSIS 16 x64 execution executable. `components` discovers installed registrations and matches shared definitions; `demo` and JSON-stdin `run` execute contrived flows. Recipes cover Derived Column expressions, numeric Data Conversion, and Unicode text width checks. Native column-edit methods coordinate in-memory changes. This is a development harness, not a security sandbox or a service for executing real jobs. See [src/SsisAiRuntime.FlowRunner/README.md](src/SsisAiRuntime.FlowRunner/README.md).
 - [catalog/components/ssis16.json](catalog/components/ssis16.json) contains shared component definitions, not package corpus data or machine paths. Definitions do not automatically authorize execution or create configuration recipes.
 
-A personal package-inspection skill exists outside this repository. A repository-registered Copilot skill and an AI tool/client route to the Derived Column insertion preview remain follow-on work.
+The personal `ssis-pkg-tool` skill invokes the AI CLI for inspection and supported mutations. A repository-registered Copilot skill remains optional follow-on work.
 
 ## Runtime Requirements
 
@@ -119,11 +119,24 @@ Usage:
   SsisAiRuntime.Cli.exe ai mutation.capabilities
   SsisAiRuntime.Cli.exe ai mutation.preview <package.dtsx> (versioned request JSON on stdin)
   SsisAiRuntime.Cli.exe ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin)
+  SsisAiRuntime.Cli.exe ai task.properties <package.dtsx> --task <native-id>
 
 Output defaults to a bounded summary. Use --details for the full redacted projection.
 ```
 
-`ai mutation.capabilities` reports the insertion operations and their input schemas. `ai mutation.preview` reads a versioned JSON request from standard input and returns a placement preview for `insert_derived_column` or `insert_data_conversion`. `ai mutation.apply` accepts the same request plus a separate destination and checkpoint directory, then runs the MutationHost checkpoint/save/reload/verify lifecycle. It uses native `Package.Validate` in offline mode; this check does not connect to data sources or execute the package. A validation or semantic-verification failure prevents publication. The versioned result reports lifecycle status and safe diagnostic codes without returning expression text or package paths.
+`ai task.properties <package.dtsx> --task <native-id>` lists native TaskHost property names, types, read/write availability, enum choices, and safe scalar or string-collection metadata. String setting values are omitted. `ai mutation.capabilities` reports available operations and their input schemas; it describes implemented tooling, not a restriction on user intent. Unsupported requests are surfaced as missing native capability, not rewritten as additive-only edits or manual XML changes. `ai mutation.preview` accepts schema `1.0` JSON on standard input for positioned insertions, `set_task_property`, `update_task_collection`, or `update_transfer_tables`. Scalar edits are type-checked against the native DtsProperty; enum-valued properties use the discovered names, not guessed integers. StringCollection edits support Replace/Add/Remove. For Transfer task collections, matching CopyAll flags are checked and updated as needed. The `update_transfer_tables` operation requires `taskId`, `mode` (`Replace`, `Add`, or `Remove`), and `tableNames`: Replace sets the exact selection, Add preserves existing names and appends missing ones, and Remove preserves unlisted names. Add/Remove refuse when catch-all flags are active; Replace explicitly disables the relevant flags. `ai mutation.apply` accepts the same request plus a separate destination and checkpoint directory, then runs the MutationHost checkpoint/save/reload/validate/verify lifecycle. Native `Package.Validate` runs offline; no package execution or data-source connection occurs. Failure prevents publication, and results contain safe diagnostic codes rather than expressions or package paths.
+
+Transfer table-selection request example:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "operation": "update_transfer_tables",
+  "taskId": "<transfer-task-native-id>",
+  "mode": "Replace",
+  "tableNames": ["ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards"]
+}
+```
 
 ```bat
 cd src\SsisAiRuntime.Cli\bin\Release\net48
@@ -141,7 +154,7 @@ Run the first example from the repository root. The following examples assume th
 
 ### AI Analysis Tools
 
-The `ai` routes expose bounded, deterministic read-only tools over the same inspector projections. `dependency.query` and `impact.analysis` accept node keys returned by `dependency.graph`; `question.plan` selects an intent only and never resolves package objects or runs a planned tool.
+The AI analysis routes expose bounded, deterministic read-only tools over the same inspector projections. `dependency.query` and `impact.analysis` accept node keys returned by `dependency.graph`; `question.plan` selects an intent only and never resolves package objects or runs a planned tool. Mutation routes are separate and use explicit typed operations through MutationHost.
 
 ```bat
 SsisAiRuntime.Cli.exe ai package.summary "C:\path\to\Package.dtsx"
@@ -272,12 +285,12 @@ Coverage codes are allowlisted at the inspector boundary: `coverage.intentional_
 
 For `inspect`, exit `0` means every operation completed with full coverage, exit `5` means at least one was incomplete but none failed, and exit `3` or `4` identifies the first failure, with earlier reports retained.
 
-The CLI never executes, validates, saves, or edits packages. It omits connection strings, variable/parameter values, raw expression/SQL text, data-flow setting values, descriptions, supplied paths, and native diagnostic/exception details. Only `ai context --include-sanitized-text` exposes bounded sanitized syntax under its distinct policy. Object names and IDs remain visible for navigation; do not place secrets in metadata names. There is no raw-output or password option. Password-protected or unreadable packages may fail to load; packages with unavailable encrypted fields may produce partial metadata. This is inspection coverage, not a guarantee that a package will execute successfully.
+Read-only inspection commands never execute, validate, save, or edit packages. The separate `ai mutation.apply` route saves a distinct artifact and runs native `Package.Validate` offline; it does not execute the package or connect to a data source. Results omit connection strings, variable/parameter values, raw expression/SQL text, data-flow setting values, descriptions, package paths, and native diagnostic/exception details. Only `ai context --include-sanitized-text` exposes bounded sanitized syntax under its distinct policy. Object names and IDs remain visible for navigation; do not place secrets in metadata names. There is no raw-output or password option. Password-protected or unreadable packages may fail to load; packages with unavailable encrypted fields may produce partial metadata. Inspection coverage is not a guarantee that a package will execute successfully.
 
 In GitHub Copilot Chat, ask Copilot to inspect a package with the built CLI:
 
-> Inspect `"C:\path\to\Package.dtsx"` with `src\SsisAiRuntime.Cli\bin\Release\net48\SsisAiRuntime.Cli.exe inspect`. Use its default summary output, treat exit 5 as incomplete coverage, and report counts, diagnostics, coverage reason codes, omitted-detail totals, and redaction status. Inspect only; never execute or modify the package, and do not print SQL or secrets.
+> Use `/ssis-pkg-tool` to inspect `"C:\path\to\Package.dtsx"` or make a supported, explicitly requested adjustment. Use the CLI's preview/apply lifecycle; never execute the package or connect to a data source, and do not print SQL or secrets.
 
 For repeatable native fixture and package smoke checks, see [BuildPackage.md](BuildPackage.md#native-integration-tests).
 
-This is a standalone read-only CLI with a Copilot Chat invocation example, not a registered Copilot skill. A dedicated skill remains follow-on work.
+The user-level `ssis-pkg-tool` skill invokes these routes. A repository-registered Copilot skill remains optional follow-on work.

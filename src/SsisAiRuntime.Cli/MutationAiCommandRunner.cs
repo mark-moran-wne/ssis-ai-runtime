@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -24,6 +25,13 @@ namespace SsisAiRuntime.Cli
         public int Run(string[] args, TextReader input, TextWriter output)
         {
             var tool = args != null && args.Length > 1 ? args[1] : null;
+            if (tool == "task.properties")
+            {
+                if (args!.Length != 5 || args[3] != "--task" || string.IsNullOrWhiteSpace(args[2]) ||
+                    string.IsNullOrWhiteSpace(args[4]))
+                { return WriteError(output, tool, 2, "ai.task_properties.usage"); }
+                return RunTaskPropertyInspection(args[2], args[4], output);
+            }
             if (tool == "mutation.capabilities")
             {
                 if (args!.Length != 2) { return WriteError(output, tool, 2, "ai.mutation.usage"); }
@@ -45,7 +53,9 @@ namespace SsisAiRuntime.Cli
             { return WriteError(output, tool, 2, "ai.mutation.request.schema_unsupported"); }
 
             var operation = (string?)request["operation"];
-            if (operation != "insert_derived_column" && operation != "insert_data_conversion")
+            if (operation != "insert_derived_column" && operation != "insert_data_conversion" &&
+                operation != "update_transfer_tables" && operation != "set_task_property" &&
+                operation != "update_task_collection")
             { return WriteError(output, tool, 2, "ai.mutation.operation.unsupported"); }
 
             try
@@ -57,7 +67,7 @@ namespace SsisAiRuntime.Cli
                     if (!load.Succeeded || load.Session == null)
                     { return WriteError(output, tool, 3, "ssis.package.load_failed"); }
 
-                    IComponentInsertionPlan plan;
+                    IPackageMutationPlan plan;
                     try
                     {
                         plan = CreatePlan(load.Session.Package, args[2], sourceHash, request, operation!);
@@ -82,9 +92,51 @@ namespace SsisAiRuntime.Cli
             }
         }
 
-        private static IComponentInsertionPlan CreatePlan(Microsoft.SqlServer.Dts.Runtime.Package package,
+        private static IPackageMutationPlan CreatePlan(Microsoft.SqlServer.Dts.Runtime.Package package,
             string packagePath, string sourceHash, JObject request, string operation)
         {
+            if (operation == "set_task_property")
+            {
+                var propertyTaskId = RequiredString(request, "taskId");
+                var propertyName = RequiredString(request, "propertyName");
+                var type = TaskHostPropertyMutationPlan.GetPropertyTypeCode(package, propertyTaskId, propertyName);
+                var valueToken = request["value"] ?? throw new ArgumentException("value");
+                var enumValues = TaskHostPropertyMutationPlan.GetPropertyEnumValues(package, propertyTaskId, propertyName);
+                var propertyValue = enumValues.Length > 0
+                    ? valueToken.Type == JTokenType.String
+                        ? TaskHostPropertyMutationPlan.ParsePropertyEnumValue(package, propertyTaskId, propertyName, valueToken.ToString())
+                        : throw new ArgumentException("value.enum_name_required")
+                    : ParsePropertyValue(valueToken, type);
+                return TaskHostPropertyMutationPlan.CreateScalar(package, sourceHash, propertyTaskId, propertyName,
+                    propertyValue);
+            }
+            if (operation == "update_task_collection")
+            {
+                var collectionTaskId = RequiredString(request, "taskId");
+                var propertyName = RequiredString(request, "propertyName");
+                var modeName = RequiredString(request, "mode");
+                if (!Enum.TryParse(modeName, true, out TaskStringCollectionEditMode mode) ||
+                    !Enum.IsDefined(typeof(TaskStringCollectionEditMode), mode))
+                { throw new ArgumentException("mode"); }
+                var values = RequiredStringArray(request, "values");
+                if (string.Equals(propertyName, "TablesList", StringComparison.OrdinalIgnoreCase) &&
+                    TaskHostPropertyMutationPlan.IsTransferTask(package, collectionTaskId))
+                {
+                    var transferMode = (TransferTableUpdateMode)Enum.Parse(typeof(TransferTableUpdateMode), mode.ToString(), true);
+                    return TransferTablesMutationPlan.Create(package, sourceHash, collectionTaskId, transferMode, values);
+                }
+                return TaskHostPropertyMutationPlan.CreateStringCollection(package, sourceHash, collectionTaskId,
+                    propertyName, mode, values);
+            }
+            if (operation == "update_transfer_tables")
+            {
+                if (!Enum.TryParse(RequiredString(request, "mode"), true, out TransferTableUpdateMode mode) ||
+                    !Enum.IsDefined(typeof(TransferTableUpdateMode), mode))
+                { throw new ArgumentException("mode"); }
+                return TransferTablesMutationPlan.Create(package, sourceHash, RequiredString(request, "taskId"),
+                    mode, RequiredStringArray(request, "tableNames"));
+            }
+
             var placement = request["placement"] as JObject ?? throw new ArgumentException("placement");
             var relationName = RequiredString(placement, "relation");
             if (!Enum.TryParse(relationName, true, out ComponentPlacementRelation relation) ||
@@ -118,6 +170,166 @@ namespace SsisAiRuntime.Cli
                 OptionalInt(request, "codePage"), placementIntent, packagePath);
         }
 
+        private static int RunTaskPropertyInspection(string packagePath, string taskId, TextWriter output)
+        {
+            if (!File.Exists(packagePath)) { return WriteError(output, "task.properties", 3, "package.path.not_found"); }
+            var load = new PackageLoader().Load(packagePath);
+            if (!load.Succeeded || load.Session == null)
+            { return WriteError(output, "task.properties", 3, "ssis.package.load_failed"); }
+            try
+            {
+                var inventory = TaskHostPropertyMutationPlan.Inspect(load.Session.Package, taskId);
+                var properties = new JArray(inventory.Properties.Select(property =>
+                {
+                    var item = new JObject
+                    {
+                        ["name"] = property.Name,
+                        ["type"] = property.Type,
+                        ["typeConverter"] = property.TypeConverter,
+                        ["canRead"] = property.CanRead,
+                        ["canWrite"] = property.CanWrite,
+                        ["valueKind"] = property.ValueKind,
+                        ["valueRedacted"] = property.ValueRedacted,
+                        ["mutationAction"] = MutationAction(property)
+                    };
+                    if (property.CollectionCount.HasValue) { item["collectionCount"] = property.CollectionCount.Value; }
+                    if (property.EnumValues.Count > 0) { item["enumValues"] = new JArray(property.EnumValues); }
+                    if (property.ValueKind == "StringCollection" && !property.ValueRedacted)
+                    { item["currentItems"] = new JArray(property.CollectionItems); }
+                    if (!string.IsNullOrEmpty(property.SafeValue))
+                    { item["currentValue"] = JToken.FromObject(SafeCurrentValue(property.SafeValue, property.Type, property.ValueKind)); }
+                    if (!string.IsNullOrEmpty(property.SpecializedOperation))
+                    { item["specializedOperation"] = property.SpecializedOperation; }
+                    return item;
+                }));
+                var envelope = new JObject
+                {
+                    ["schemaVersion"] = "1.0",
+                    ["tool"] = "task.properties",
+                    ["succeeded"] = true,
+                    ["exitCode"] = 0,
+                    ["results"] = new JObject
+                    {
+                        ["task"] = new JObject
+                        {
+                            ["nativeId"] = inventory.TaskId,
+                            ["name"] = inventory.TaskName,
+                            ["creationName"] = inventory.CreationName
+                        },
+                        ["propertyCount"] = properties.Count,
+                        ["properties"] = properties
+                    },
+                    ["diagnostics"] = new JArray(),
+                    ["packageExecuted"] = false,
+                    ["nativeValidationPerformed"] = false,
+                    ["redaction"] = new JObject
+                    {
+                        ["policy"] = "task-property-descriptor",
+                        ["stringValuesOmitted"] = true,
+                        ["sensitiveCollectionItemsOmitted"] = true,
+                        ["packagePathOmitted"] = true
+                    }
+                };
+                output.WriteLine(envelope.ToString(Formatting.None));
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                var code = SafeCode(exception.Message) ?? "ai.task_properties.failed";
+                return WriteError(output, "task.properties", 4, code);
+            }
+            finally { load.Session.Package.Dispose(); }
+        }
+
+        private static string MutationAction(TaskHostPropertyDescriptor property)
+        {
+            if (!string.IsNullOrEmpty(property.SpecializedOperation)) { return property.SpecializedOperation; }
+            if (!property.CanWrite) { return "read_only"; }
+            if (property.ValueKind == "StringCollection") { return "update_task_collection"; }
+            return Enum.TryParse(property.Type, out TypeCode type) && IsSupportedPropertyType(type)
+                ? "set_task_property" : "unsupported_value_type";
+        }
+
+        private static object SafeCurrentValue(string value, string typeName, string valueKind)
+        {
+            if (valueKind == "Enum") { return value; }
+            if (!Enum.TryParse(typeName, out TypeCode type)) { return value; }
+            switch (type)
+            {
+                case TypeCode.Boolean: return bool.Parse(value);
+                case TypeCode.Byte: return byte.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.SByte: return sbyte.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.Int16: return short.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.UInt16: return ushort.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.Int32: return int.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.UInt32: return uint.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.Int64: return long.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.UInt64: return ulong.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.Single: return float.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.Double: return double.Parse(value, CultureInfo.InvariantCulture);
+                case TypeCode.Decimal: return decimal.Parse(value, CultureInfo.InvariantCulture);
+                default: return value;
+            }
+        }
+
+        private static object ParsePropertyValue(JToken token, TypeCode type)
+        {
+            if (token == null) { throw new ArgumentException("value"); }
+            switch (type)
+            {
+                case TypeCode.String:
+                    if (token.Type == JTokenType.String) { return (string)token!; }
+                    break;
+                case TypeCode.Boolean:
+                    if (token.Type == JTokenType.Boolean) { return (bool)token; }
+                    break;
+                case TypeCode.Byte:
+                    if (token.Type == JTokenType.Integer) { return checked((byte)(long)token); }
+                    break;
+                case TypeCode.SByte:
+                    if (token.Type == JTokenType.Integer) { return checked((sbyte)(long)token); }
+                    break;
+                case TypeCode.Int16:
+                    if (token.Type == JTokenType.Integer) { return checked((short)(long)token); }
+                    break;
+                case TypeCode.UInt16:
+                    if (token.Type == JTokenType.Integer) { return checked((ushort)(long)token); }
+                    break;
+                case TypeCode.Int32:
+                    if (token.Type == JTokenType.Integer) { return checked((int)(long)token); }
+                    break;
+                case TypeCode.UInt32:
+                    if (token.Type == JTokenType.Integer) { return checked((uint)(long)token); }
+                    break;
+                case TypeCode.Int64:
+                    if (token.Type == JTokenType.Integer) { return (long)token; }
+                    break;
+                case TypeCode.UInt64:
+                    if (token.Type == JTokenType.Integer) { return token.ToObject<ulong>(); }
+                    break;
+                case TypeCode.Single:
+                    if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float) { return (float)(double)token; }
+                    break;
+                case TypeCode.Double:
+                    if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float) { return (double)token; }
+                    break;
+                case TypeCode.Decimal:
+                    if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float) { return (decimal)token; }
+                    break;
+                case TypeCode.DateTime:
+                    if (token.Type == JTokenType.String && DateTime.TryParse(token.ToString(), CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var dateTime)) { return dateTime; }
+                    break;
+            }
+            throw new ArgumentException("value.type_mismatch");
+        }
+
+        private static bool IsSupportedPropertyType(TypeCode type) =>
+            type == TypeCode.String || type == TypeCode.Boolean || type == TypeCode.Byte || type == TypeCode.SByte ||
+            type == TypeCode.Int16 || type == TypeCode.UInt16 || type == TypeCode.Int32 || type == TypeCode.UInt32 ||
+            type == TypeCode.Int64 || type == TypeCode.UInt64 || type == TypeCode.Single || type == TypeCode.Double ||
+            type == TypeCode.Decimal || type == TypeCode.DateTime;
+
         private static int WriteCapabilities(TextWriter output)
         {
             var envelope = new JObject
@@ -136,10 +348,16 @@ namespace SsisAiRuntime.Cli
                             DerivedColumnInputProperties()),
                         OperationCapability("insert_data_conversion", "Preview a positioned Data Conversion insertion.",
                             new[] { "taskId", "sourceComponentId", "destinationComponentId", "sourceLineageId", "componentName", "outputName", "outputDataType", "placement" },
-                            DataConversionInputProperties())
+                            DataConversionInputProperties()),
+                        OperationCapability("update_transfer_tables", "Replace, add, or remove tables in one Transfer SQL Server Objects Task.",
+                            new[] { "taskId", "mode", "tableNames" }, TransferTablesInputProperties()),
+                        OperationCapability("set_task_property", "Set a writable scalar property on a selected TaskHost.",
+                            new[] { "taskId", "propertyName", "value" }, TaskPropertyInputProperties()),
+                        OperationCapability("update_task_collection", "Replace, add, or remove values in a writable native string collection.",
+                            new[] { "taskId", "propertyName", "mode", "values" }, TaskCollectionInputProperties())
                     },
                     ["placementRelations"] = new JArray(PlacementRelations),
-                    ["packageShape"] = "Current insertion plans support one pipeline task with two components and one path; user variables and event handlers are not yet supported. Package connection managers are retained and validated offline.",
+                    ["packageShape"] = "Insertion operations currently support one pipeline task with two components and one path. Transfer table updates target the selected Transfer SQL Server Objects Task. User variables and event handlers are unsupported by insertion plans. Package connection managers are retained and validated offline.",
                     ["applyAvailable"] = true,
                     ["applyCommand"] = "ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory>",
                     ["applyValidation"] = "Native Package.Validate runs offline and does not execute the package or connect to data sources."
@@ -189,6 +407,54 @@ namespace SsisAiRuntime.Cli
             properties["codePage"] = IntegerField("Required and positive for DT_STR; otherwise zero.", 0);
             return properties;
         }
+
+        private static JObject TransferTablesInputProperties() => new JObject
+        {
+            ["taskId"] = StringField("Native ID of the Transfer SQL Server Objects Task."),
+            ["mode"] = new JObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JArray("Replace", "Add", "Remove"),
+                ["description"] = "Replace sets the exact table selection and disables CopyAllObjects and CopyAllTables. Add preserves existing names and appends missing ones; Remove preserves unlisted names. Add and Remove require both CopyAll flags to be false; use Replace when changing a catch-all selection."
+            },
+            ["tableNames"] = new JObject
+            {
+                ["type"] = "array",
+                ["items"] = new JObject { ["type"] = "string" },
+                ["description"] = "Exact table names as used by the task, including schema qualification when required."
+            }
+        };
+
+        private static JObject TaskPropertyInputProperties() => new JObject
+        {
+            ["taskId"] = StringField("Native ID of the TaskHost."),
+            ["propertyName"] = StringField("Writable scalar property name returned by ai task.properties."),
+            ["value"] = new JObject
+            {
+                ["description"] = "Typed JSON scalar matching the native property type; for enum-valued properties use an enumValues name from ai task.properties, not a numeric code.",
+                ["oneOf"] = new JArray
+                {
+                    new JObject { ["type"] = "string" },
+                    new JObject { ["type"] = "boolean" },
+                    new JObject { ["type"] = "integer" },
+                    new JObject { ["type"] = "number" }
+                }
+            }
+        };
+
+        private static JObject TaskCollectionInputProperties() => new JObject
+        {
+            ["taskId"] = StringField("Native ID of the TaskHost."),
+            ["propertyName"] = StringField("Writable StringCollection property name returned by ai task.properties."),
+            ["mode"] = new JObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JArray("Replace", "Add", "Remove"),
+                ["description"] = "Replace sets the exact collection; Add preserves existing items; Remove preserves unlisted items. Transfer task collections also check/update matching CopyAll flags."
+                ["description"] = "Replace sets the exact list; Add preserves existing items; Remove preserves unlisted items. Transfer task collections also update or check their matching CopyAll flags."
+            },
+            ["values"] = new JObject { ["type"] = "array", ["items"] = new JObject { ["type"] = "string" } }
+        };
 
         private static JObject CommonInsertionInputProperties() => new JObject
         {
@@ -342,6 +608,14 @@ namespace SsisAiRuntime.Cli
         {
             var token = value[name];
             return token?.Type == JTokenType.String ? (string)token! : string.Empty;
+        }
+
+        private static string[] RequiredStringArray(JObject value, string name)
+        {
+            if (!(value[name] is JArray array)) { throw new ArgumentException(name); }
+            return array.Select(token => token.Type == JTokenType.String
+                ? token.ToString()
+                : throw new ArgumentException(name)).ToArray();
         }
 
         private static int RequiredInt(JObject value, string name)

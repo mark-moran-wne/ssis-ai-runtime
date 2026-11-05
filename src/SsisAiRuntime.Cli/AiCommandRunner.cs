@@ -27,7 +27,8 @@ namespace SsisAiRuntime.Cli
                 }
 
                 tool = args[1];
-                if (tool == "mutation.capabilities" || tool == "mutation.preview" || tool == "mutation.apply")
+                if (tool == "task.properties" || tool == "mutation.capabilities" ||
+                    tool == "mutation.preview" || tool == "mutation.apply")
                 {
                     return new MutationAiCommandRunner().Run(args, Console.In, output);
                 }
@@ -644,6 +645,7 @@ namespace SsisAiRuntime.Cli
             "ai corpus.verify <package.dtsx> --baseline <file>; ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]; " +
             "ai question.plan <question>; ai mutation.capabilities; " +
             "ai mutation.preview <package.dtsx> (versioned request JSON on stdin); " +
-            "ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin).";
+            "ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin); " +
+            "ai task.properties <package.dtsx> --task <native-id>.";
     }
 }

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
+using Microsoft.SqlServer.Dts.Tasks.TransferSqlServerObjectsTask;
 using Newtonsoft.Json.Linq;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Corpus;
@@ -210,6 +211,9 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     Require(fixture.Checkpoint.Calls == 0, "coverage.no_checkpoint");
                 });
                 Case("file-checkpoint-service", fixture => VerifyFileCheckpointService(fixture));
+                VerifyTransferTableUpdateModes();
+                VerifyNativeTaskPropertySet();
+                VerifyTransferTablesHostLifecycle();
                 Case("native-package-validation", fixture =>
                 {
                     var load = new PackageLoader().Load(fixture.Source);
@@ -225,9 +229,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     }
                     finally { load.Session.Package.Dispose(); }
                 });
+                VerifyTransferTaskTablesRoundTrip();
                 VerifyDerivedColumnInsertionLifecycle();
                 VerifyDataConversionInsertionLifecycle();
-                Require(passedCases == 26, "lifecycle.case_count_changed");
+                Require(passedCases == 30, "lifecycle.case_count_changed");
                 Console.WriteLine("Mutation host lifecycle: PASS; " + passedCases + " cases; rename and positioned Derived Column/Data Conversion insertion, successful offline CLI apply, validation refusal, file checkpoint, async checkpoint, native reload, cleanup and source preservation. Successful host fault-path cases use validator doubles; no package Execute or data-source connection.");
                 return 0;
             }
@@ -262,6 +267,332 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             var refused = service.CreateAsync(request, CancellationToken.None).GetAwaiter().GetResult();
             Require(!refused.Succeeded && refused.Code == "mutation.checkpoint.exists" &&
                 File.ReadAllBytes(artifact).SequenceEqual(originalCheckpoint), "file_checkpoint.overwrite_refused");
+        }
+
+        private static void VerifyTransferTaskTablesRoundTrip()
+        {
+            currentCase = "transfer-task-tables-round-trip";
+            var directory = Path.Combine(Path.GetTempPath(), "SsisTransferTask-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "source.dtsx");
+            try
+            {
+                var application = new Application();
+                var creationName = application.TaskInfos.Cast<TaskInfo>()
+                    .Single(info => info.Name == "Transfer SQL Server Objects Task").CreationName;
+                using (var package = new Package { Name = "TransferTaskFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                {
+                    var host = (TaskHost)package.Executables.Add(creationName);
+                    host.Name = "CopySelectedObjects";
+                    var transfer = (ITransferSqlServerObjectsTask)host.InnerObject;
+                    transfer.CopyAllObjects = false;
+                    transfer.CopyAllTables = false;
+                    transfer.TablesList.Clear();
+                    transfer.TablesList.Add("PersonCards");
+                    application.SaveToXml(path, package, null);
+                }
+
+                var loaded = new PackageLoader().Load(path);
+                Require(loaded.Succeeded, "transfer-task.reload");
+                try
+                {
+                    var host = (TaskHost)loaded.Session.Package.Executables[0];
+                    var transfer = (ITransferSqlServerObjectsTask)host.InnerObject;
+                    Require(!transfer.CopyAllObjects && !transfer.CopyAllTables &&
+                        transfer.TablesList.Cast<string>().SequenceEqual(new[] { "PersonCards" }),
+                        "transfer-task.tables.persisted");
+                    var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
+                    var inventory = Program.RunExecutable(cli,
+                        new[] { "ai", "task.properties", path, "--task", host.ID }, 0);
+                    var tableProperty = ((JArray)inventory["results"]["properties"])
+                        .Single(item => (string)item["name"] == "TablesList");
+                    var viewProperty = ((JArray)inventory["results"]["properties"])
+                        .Single(item => (string)item["name"] == "ViewsList");
+                    Require((string)tableProperty["specializedOperation"] == "update_transfer_tables" &&
+                        (string)viewProperty["mutationAction"] == "update_task_collection",
+                        "transfer-task.property-discovery");
+                    var existingDataProperty = ((JArray)inventory["results"]["properties"])
+                        .Single(item => (string)item["name"] == "ExistingData");
+                    Require((string)existingDataProperty["valueKind"] == "Enum" &&
+                        ((JArray)existingDataProperty["enumValues"]).Any(value => (string)value == "Append") &&
+                        ((JArray)existingDataProperty["enumValues"]).Any(value => (string)value == "Replace"),
+                        "transfer-task.enum-discovery");
+                    var enumRequest = new JObject
+                    {
+                        ["schemaVersion"] = "1.0", ["operation"] = "set_task_property",
+                        ["taskId"] = host.ID, ["propertyName"] = "ExistingData", ["value"] = "Append"
+                    };
+                    var enumPreview = Program.RunExecutableWithInput(cli,
+                        new[] { "ai", "mutation.preview", path }, enumRequest.ToString(), 0);
+                    Require((bool)enumPreview["succeeded"] &&
+                        (string)enumPreview["results"]["preview"]["resultingValue"] == "Append",
+                        "transfer-task.enum-name-preview");
+                    var request = new JObject
+                    {
+                        ["schemaVersion"] = "1.0",
+                        ["operation"] = "update_transfer_tables",
+                        ["taskId"] = host.ID,
+                        ["mode"] = "Add",
+                        ["tableNames"] = new JArray("ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards")
+                    };
+                    var preview = Program.RunExecutableWithInput(cli,
+                        new[] { "ai", "mutation.preview", path }, request.ToString(), 0);
+                    Require((bool)preview["succeeded"] &&
+                        (string)preview["results"]["preview"]["operation"] == "UpdateTransferTables" &&
+                        ((JArray)preview["results"]["preview"]["resultingTables"]).Select(item => (string)item)
+                            .SequenceEqual(new[] { "PersonCards", "ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS" }) &&
+                        !(bool)preview["packageExecuted"] && !(bool)preview["nativeValidationPerformed"],
+                        "transfer-task.cli.preview");
+                    var collectionRequest = new JObject
+                    {
+                        ["schemaVersion"] = "1.0", ["operation"] = "update_task_collection",
+                        ["taskId"] = host.ID, ["propertyName"] = "ViewsList", ["mode"] = "Replace",
+                        ["values"] = new JArray("PersonCardsView")
+                    };
+                    var collectionPreview = Program.RunExecutableWithInput(cli,
+                        new[] { "ai", "mutation.preview", path }, collectionRequest.ToString(), 0);
+                    Require((bool)collectionPreview["succeeded"] &&
+                        (string)collectionPreview["results"]["preview"]["operation"] == "TaskPropertyMutation" &&
+                        ((JArray)collectionPreview["results"]["preview"]["resultingCollection"])
+                            .Any(value => (string)value == "PersonCardsView"),
+                        "transfer-task.generic-collection-preview");
+                }
+                finally { loaded.Session.Package.Dispose(); }
+                passedCases++;
+                Console.WriteLine("Transfer task native API: PASS; TablesList save/reload; no database connection or package validation/execution.");
+            }
+            finally { if (Directory.Exists(directory)) { Directory.Delete(directory, true); } }
+        }
+
+        private static void VerifyTransferTableUpdateModes()
+        {
+            currentCase = "transfer-table-update-modes";
+            const string sourceHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            using (var package = new Package { Name = "TransferTableModes", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+            {
+                var application = new Application();
+                var creationName = application.TaskInfos.Cast<TaskInfo>()
+                    .Single(info => info.Name == "Transfer SQL Server Objects Task").CreationName;
+                var host = (TaskHost)package.Executables.Add(creationName);
+                host.Name = "CopySelectedObjects";
+                var transfer = (ITransferSqlServerObjectsTask)host.InnerObject;
+                transfer.CopyAllObjects = false;
+                transfer.CopyAllTables = false;
+                transfer.TablesList.Clear();
+                transfer.TablesList.Add("PersonCards");
+
+                var viewsAdd = TaskHostPropertyMutationPlan.CreateStringCollection(package, sourceHash, host.ID,
+                    "ViewsList", TaskStringCollectionEditMode.Add, new[] { "PersonCardsView" });
+                viewsAdd.Apply(package);
+                Require(viewsAdd.VerifyFailureCode(package).Length == 0 &&
+                    transfer.ViewsList.Cast<string>().SequenceEqual(new[] { "PersonCardsView" }),
+                    "transfer-collections.generic-add");
+                transfer.CopyAllViews = true;
+                var viewsReplace = TaskHostPropertyMutationPlan.CreateStringCollection(package, sourceHash, host.ID,
+                    "ViewsList", TaskStringCollectionEditMode.Replace, new[] { "CurrentPersonCardsView" });
+                var viewsPreview = JObject.Parse(viewsReplace.SerializePreviewContract());
+                Require(((JArray)viewsPreview["ChangedFlags"]).Any(item =>
+                    (string)item["Name"] == "CopyAllViews" && (bool)item["Before"] && !(bool)item["After"]),
+                    "transfer-collections.preview-copy-all-delta");
+                viewsReplace.Apply(package);
+                Require(viewsReplace.VerifyFailureCode(package).Length == 0 && !transfer.CopyAllViews &&
+                    transfer.ViewsList.Cast<string>().SequenceEqual(new[] { "CurrentPersonCardsView" }),
+                    "transfer-collections.generic-replace-copy-all");
+
+                var existingDataProperty = TaskHostPropertyMutationPlan.Inspect(package, host.ID).Properties
+                    .Single(item => item.Name == "ExistingData");
+                Require(existingDataProperty.ValueKind == "Enum" && existingDataProperty.EnumValues.Contains("Append") &&
+                    existingDataProperty.EnumValues.Contains("Replace"), "transfer-task.enum-values-discovered");
+                var enumPlan = TaskHostPropertyMutationPlan.CreateScalar(package, sourceHash, host.ID,
+                    "ExistingData", TaskHostPropertyMutationPlan.ParsePropertyEnumValue(package, host.ID, "ExistingData", "Append"));
+                Require(enumPlan.SafeResultingValue == "Append", "transfer-task.enum-name-preview");
+                enumPlan.Apply(package);
+                Require(enumPlan.VerifyFailureCode(package).Length == 0 && transfer.ExistingData.ToString() == "Append",
+                    "transfer-task.enum-name-apply");
+
+                var requested = new[] { "ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards" };
+                transfer.CopyAllTables = true;
+                var addWithCopyAllRefused = false;
+                try
+                {
+                    TransferTablesMutationPlan.Create(package, sourceHash, host.ID,
+                        TransferTableUpdateMode.Add, requested);
+                }
+                catch (InvalidOperationException error)
+                { addWithCopyAllRefused = error.Message == "mutation.transfer.tables.copy_all_enabled_use_replace"; }
+                Require(addWithCopyAllRefused, "transfer-tables.add.copy-all-refused");
+                transfer.CopyAllTables = false;
+
+                var add = TransferTablesMutationPlan.Create(package, sourceHash, host.ID,
+                    TransferTableUpdateMode.Add, requested);
+                Require(add.OriginalTables.SequenceEqual(new[] { "PersonCards" }) &&
+                    add.ResultingTables.SequenceEqual(new[] { "PersonCards", "ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS" }),
+                    "transfer-tables.add.preview");
+                var rebound = add.RebindCurrent(package, sourceHash);
+                rebound.Apply(package);
+                Require(rebound.VerifyFailureCode(package).Length == 0, "transfer-tables.add.verify");
+
+                var remove = TransferTablesMutationPlan.Create(package, sourceHash, host.ID,
+                    TransferTableUpdateMode.Remove, new[] { "SPT_CS_ACYR" });
+                Require(remove.ResultingTables.SequenceEqual(new[] { "PersonCards", "ODS_APPLICANTS", "ODS_FA_TERM_AWARDS" }),
+                    "transfer-tables.remove.preview");
+                remove.Apply(package);
+                Require(remove.VerifyFailureCode(package).Length == 0, "transfer-tables.remove.verify");
+
+                transfer.CopyAllObjects = true;
+                transfer.CopyAllTables = true;
+                var replace = TransferTablesMutationPlan.Create(package, sourceHash, host.ID,
+                    TransferTableUpdateMode.Replace, new[] { "PersonCards", "ODS_APPLICANTS" });
+                Require(replace.ResultingTables.SequenceEqual(new[] { "PersonCards", "ODS_APPLICANTS" }) &&
+                    !replace.ResultingCopyAllObjects && !replace.ResultingCopyAllTables,
+                    "transfer-tables.replace.preview");
+                replace.Apply(package);
+                Require(replace.VerifyFailureCode(package).Length == 0 && transfer.TablesList.Cast<string>()
+                    .SequenceEqual(new[] { "PersonCards", "ODS_APPLICANTS" }), "transfer-tables.replace.verify");
+            }
+            passedCases++;
+            Console.WriteLine("Transfer task table update modes: PASS; replace/add/remove and catch-all handling; no database connection or package execution.");
+        }
+
+        private static void VerifyNativeTaskPropertySet()
+        {
+            currentCase = "native-task-property-set";
+            var directory = Path.Combine(Path.GetTempPath(), "SsisTaskProperty-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "source.dtsx");
+            var destinationPath = Path.Combine(directory, "output.dtsx");
+            var checkpointDirectory = Path.Combine(directory, "checkpoints");
+            try
+            {
+                using (var package = new Package { Name = "TaskPropertyFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                {
+                    var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                    task.Name = "PropertyTarget";
+                    var property = task.Properties["DefaultBufferMaxRows"];
+                    Require(property.Get && property.Set && property.Type == TypeCode.Int32,
+                        "task-property.native-descriptor");
+                    new Application().SaveToXml(path, package, null);
+                }
+
+                var loaded = new PackageLoader().Load(path);
+                Require(loaded.Succeeded, "task-property.reload");
+                string taskId;
+                int original;
+                try
+                {
+                    var task = (TaskHost)loaded.Session.Package.Executables[0];
+                    taskId = task.ID;
+                    original = (int)task.Properties["DefaultBufferMaxRows"].GetValue(task);
+                }
+                finally { loaded.Session.Package.Dispose(); }
+                var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
+                var inventory = Program.RunExecutable(cli,
+                    new[] { "ai", "task.properties", path, "--task", taskId }, 0, 3, 4);
+                Require((bool)inventory["succeeded"], "task-property.cli.describe.failed:" +
+                    string.Join(",", ((JArray)inventory["diagnostics"]).Select(item => (string)item["code"])));
+                var rowsProperty = ((JArray)inventory["results"]["properties"])
+                    .Single(item => (string)item["name"] == "DefaultBufferMaxRows");
+                Require((bool)rowsProperty["canRead"] && (bool)rowsProperty["canWrite"] &&
+                    (string)rowsProperty["type"] == "Int32" && (int)rowsProperty["currentValue"] == original,
+                    "task-property.cli.describe");
+                var request = new JObject
+                {
+                    ["schemaVersion"] = "1.0", ["operation"] = "set_task_property",
+                    ["taskId"] = taskId, ["propertyName"] = "DefaultBufferMaxRows", ["value"] = original + 1
+                };
+                var preview = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", path }, request.ToString(), 0, 4);
+                Require((bool)preview["succeeded"], "task-property.cli.preview.failed:" +
+                    string.Join(",", ((JArray)preview["diagnostics"]).Select(item => (string)item["code"])));
+                Require((bool)preview["succeeded"] &&
+                    (string)preview["results"]["preview"]["operation"] == "TaskPropertyMutation" &&
+                    (string)preview["results"]["preview"]["propertyName"] == "DefaultBufferMaxRows",
+                    "task-property.cli.preview");
+                var sourceHash = Hash(path);
+                var apply = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.apply", path, destinationPath, checkpointDirectory }, request.ToString(), 0, 4);
+                Require((bool)apply["succeeded"], "task-property.cli.apply.failed:" +
+                    string.Join(",", ((JArray)apply["diagnostics"]).Select(item => (string)item["code"])));
+                Require((bool)apply["succeeded"] && (bool)apply["results"]["validationSucceeded"] &&
+                    (bool)apply["results"]["semanticDiffMatched"] && Hash(path) == sourceHash &&
+                    Directory.GetFiles(checkpointDirectory, "*.dtsx").Length == 1,
+                    "task-property.cli.apply");
+                var output = new PackageLoader().Load(destinationPath);
+                Require(output.Succeeded, "task-property.output-load");
+                try
+                {
+                    var task = (TaskHost)output.Session.Package.Executables[0];
+                    Require((int)task.Properties["DefaultBufferMaxRows"].GetValue(task) == original + 1,
+                        "task-property.value-persisted");
+                }
+                finally { output.Session.Package.Dispose(); }
+            }
+            finally { if (Directory.Exists(directory)) { Directory.Delete(directory, true); } }
+            passedCases++;
+            Console.WriteLine("Native task property API: PASS; typed scalar set and save/reload; no database connection or package execution.");
+        }
+
+        private static void VerifyTransferTablesHostLifecycle()
+        {
+            currentCase = "transfer-tables-host-lifecycle";
+            var directory = Path.Combine(Path.GetTempPath(), "SsisTransferApply-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var sourcePath = Path.Combine(directory, "source.dtsx");
+            var destinationPath = Path.Combine(directory, "output.dtsx");
+            var checkpointPath = Path.Combine(directory, "checkpoint.dtsx");
+            try
+            {
+                var application = new Application();
+                var creationName = application.TaskInfos.Cast<TaskInfo>()
+                    .Single(info => info.Name == "Transfer SQL Server Objects Task").CreationName;
+                using (var package = new Package { Name = "TransferApplyFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                {
+                    var host = (TaskHost)package.Executables.Add(creationName);
+                    host.Name = "CopySelectedObjects";
+                    var transfer = (ITransferSqlServerObjectsTask)host.InnerObject;
+                    transfer.CopyAllObjects = false;
+                    transfer.CopyAllTables = false;
+                    transfer.TablesList.Clear();
+                    transfer.TablesList.Add("PersonCards");
+                    application.SaveToXml(sourcePath, package, null);
+                }
+
+                var loaded = new PackageLoader().Load(sourcePath);
+                Require(loaded.Succeeded, "transfer-host.source-load");
+                TransferTablesMutationPlan plan;
+                try
+                {
+                    var task = (TaskHost)loaded.Session.Package.Executables[0];
+                    plan = TransferTablesMutationPlan.Create(loaded.Session.Package, Hash(sourcePath), task.ID,
+                        TransferTableUpdateMode.Add, new[] { "ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS" });
+                }
+                finally { loaded.Session.Package.Dispose(); }
+
+                var checkpoint = new TestCheckpoint(checkpointPath);
+                var validator = new TestValidator();
+                var hostService = new Host(new PackageLoader(), new PackageAnalysisSnapshotFactory(), new CorpusSnapshotBuilder(),
+                    new CorpusFingerprintProvider(), new MutationPreviewer(), checkpoint, validator, new MutationArtifactStager());
+                var sourceHash = Hash(sourcePath);
+                var result = hostService.ExecuteAsync(new MutationHostRequest(sourcePath, destinationPath, plan, sourceHash),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                Require(result.Completed && checkpoint.Calls == 1 && validator.Calls == 1 && Hash(sourcePath) == sourceHash,
+                    "transfer-host.lifecycle:" + result.Code + ":" + string.Join(",", result.DiagnosticCodes));
+                var output = new PackageLoader().Load(destinationPath);
+                Require(output.Succeeded, "transfer-host.output-load");
+                try
+                {
+                    var task = (TaskHost)output.Session.Package.Executables[0];
+                    var transfer = (ITransferSqlServerObjectsTask)task.InnerObject;
+                    Require(plan.VerifyFailureCode(output.Session.Package).Length == 0 &&
+                        transfer.TablesList.Cast<string>().SequenceEqual(new[]
+                            { "PersonCards", "ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS" }),
+                        "transfer-host.output-verified");
+                }
+                finally { output.Session.Package.Dispose(); }
+            }
+            finally { if (Directory.Exists(directory)) { Directory.Delete(directory, true); } }
+            passedCases++;
+            Console.WriteLine("Transfer task host lifecycle: PASS; replace/add/remove table selection, checkpoint/save/reload/verify; no database connection or package execution.");
         }
 
         private static void VerifyDerivedColumnInsertionLifecycle()
@@ -371,9 +702,14 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
                 var capabilities = Program.RunExecutable(cli, new[] { "ai", "mutation.capabilities" }, 0);
                 Require((bool)capabilities["succeeded"] &&
-                    ((JArray)capabilities["results"]["operations"]).Count == 2 &&
+                    ((JArray)capabilities["results"]["operations"]).Count == 5 &&
                     ((JArray)capabilities["results"]["operations"][1]["inputSchema"]["properties"]["outputDataType"]["enum"])
                         .Any(value => (string)value == "DT_WSTR") &&
+                    (string)capabilities["results"]["operations"][2]["name"] == "update_transfer_tables" &&
+                    ((JArray)capabilities["results"]["operations"][2]["inputSchema"]["properties"]["mode"]["enum"])
+                        .Select(value => (string)value).SequenceEqual(new[] { "Replace", "Add", "Remove" }) &&
+                    (string)capabilities["results"]["operations"][3]["name"] == "set_task_property" &&
+                    (string)capabilities["results"]["operations"][4]["name"] == "update_task_collection" &&
                     ((JArray)capabilities["results"]["operations"][0]["inputSchema"]["properties"]["placement"]["properties"]["relation"]["enum"])
                         .Any(value => (string)value == "RightOf") &&
                     (bool)capabilities["results"]["applyAvailable"] &&
