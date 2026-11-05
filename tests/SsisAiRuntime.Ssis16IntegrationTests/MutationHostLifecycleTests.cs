@@ -538,6 +538,44 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     (string)apply["result"]["semanticVerification"]["status"] == "Succeeded" && Hash(path) == sourceHash &&
                     Directory.GetFiles(checkpointDirectory, "*.dtsx").Length == 1,
                     "task-property.cli.apply");
+                var renameRequest = new JObject
+                {
+                    ["schemaVersion"] = "2.0",
+                    ["operation"] = "rename_task",
+                    ["target"] = new JObject { ["kind"] = "Executable", ["nativeId"] = taskId },
+                    ["request"] = new JObject { ["proposedName"] = "RenamedPropertyTarget" },
+                    ["sourceArtifactHash"] = sourceHash
+                };
+                var renamePreview = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", path }, renameRequest.ToString(), 0, 4);
+                Require((bool)renamePreview["succeeded"] &&
+                    (string)renamePreview["operation"] == "rename_task" &&
+                    (string)renamePreview["result"]["adapter"]["kind"] == "ssis16.task-host-rename" &&
+                    (string)renamePreview["preview"]["status"] == "Valid" &&
+                    !renamePreview.ToString().Contains("RenamedPropertyTarget") &&
+                    !renamePreview.ToString().Contains("PropertyTarget"),
+                    "task-property.rename.cli.preview");
+                var renameDestination = Path.Combine(directory, "renamed-task.dtsx");
+                var renameCheckpoints = Path.Combine(directory, "rename-checkpoints");
+                var renameApply = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.apply", path, renameDestination, renameCheckpoints }, renameRequest.ToString(), 0, 4);
+                Require((bool)renameApply["succeeded"] &&
+                    (string)renameApply["result"]["mutation"]["outcome"] == "AppliedAndVerified" &&
+                    (string)renameApply["result"]["validation"]["status"] == "Succeeded" &&
+                    (string)renameApply["result"]["semanticVerification"]["status"] == "Succeeded" &&
+                    (string)renameApply["result"]["rollback"]["status"] == "NotRequired" &&
+                    Hash(path) == sourceHash && File.Exists(renameDestination),
+                    "task-property.rename.cli.apply");
+                var renamed = new PackageLoader().Load(renameDestination);
+                Require(renamed.Succeeded, "task-property.rename.output-load");
+                try
+                {
+                    Require(renamed.Session.Package.Executables.Count == 1 &&
+                        ((TaskHost)renamed.Session.Package.Executables[0]).ID == taskId &&
+                        ((TaskHost)renamed.Session.Package.Executables[0]).Name == "RenamedPropertyTarget",
+                        "task-property.rename.invariants");
+                }
+                finally { renamed.Session.Package.Dispose(); }
                 var refusedApply = Program.RunExecutableWithInput(cli,
                     new[] { "ai", "mutation.apply", path, destinationPath, checkpointDirectory }, request.ToString(), 4);
                 Require(!(bool)refusedApply["succeeded"] &&
@@ -733,7 +771,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
                 var capabilities = Program.RunExecutable(cli, new[] { "ai", "mutation.capabilities" }, 0);
                 Require((bool)capabilities["succeeded"] &&
-                    ((JArray)capabilities["results"]["operations"]).Count == 5 &&
+                    ((JArray)capabilities["results"]["operations"]).Count == 6 &&
                     (string)capabilities["results"]["requestEnvelopeSchema"]["properties"]["schemaVersion"]["const"] == "2.0" &&
                     (string)capabilities["results"]["operations"][0]["targetKind"] == "DataFlowPath" &&
                     (string)capabilities["results"]["operations"][1]["targetKind"] == "DataFlowPath" &&
@@ -746,6 +784,9 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                         .Select(value => (string)value).SequenceEqual(new[] { "Replace", "Add", "Remove" }) &&
                     (string)capabilities["results"]["operations"][3]["name"] == "set_task_property" &&
                     (string)capabilities["results"]["operations"][4]["name"] == "update_task_collection" &&
+                    (string)capabilities["results"]["operations"][5]["name"] == "rename_task" &&
+                    (string)capabilities["results"]["operations"][5]["targetKind"] == "Executable" &&
+                    ((JArray)capabilities["results"]["operations"][5]["actions"]).Any(value => (string)value == "apply") &&
                     ((JArray)capabilities["results"]["operations"][0]["inputSchema"]["properties"]["placement"]["properties"]["relation"]["enum"])
                         .Any(value => (string)value == "RightOf") &&
                     (bool)capabilities["results"]["applyAvailable"] &&

@@ -1,5 +1,14 @@
 # SSIS AI Runtime History
 
+## 2026-11-05 Structural Corpus and Graph Regression Gate
+
+- Added seven checked-in layout packages as a starter structural corpus with approved snapshots under `tests/LayoutFixtures/CorpusBaselines`. `Invoke-CorpusBaselineGate.ps1` repeats each CLI snapshot, verifies semantic equality and approved-baseline match, and never writes or approves baselines. Known coverage gaps remain part of the snapshots; matching incomplete snapshots are accepted with their gaps visible.
+- Wired the read-only corpus gate into `Invoke-Ssis16MutationGate.ps1`. The native harness now repeats snapshot analysis and independently recomputes the fingerprint for the same package, requiring stable results.
+- Added exact portable dependency-graph assertions for package/task containment, Execute SQL Task connection and schema-object edges, precedence, Data Flow containment/path topology, runtime connections, and input/output columns. Existing native probes cover scoped expression references and parameter evidence. Execute Package targets remain unmodeled; recognized Execute Package tasks now emit `dependency.execute_package_target_unresolved` rather than implying there are no dependencies.
+- Added typed `rename_task` CLI preview/apply using the existing MutationHost lifecycle. Native integration verifies name redaction, source preservation, unchanged task ID/count, save/reload, offline validation, and semantic verification.
+- The full `SSIS16-Mutation-Gate` passes after integration: 202 runtime, 13 corpus, and 23 mutation tests; seven structural corpus baselines; default native harness; 30 MutationHost lifecycle cases; designer/layout; 15 resize cases; exact path splice; and Union All offline validation. The build retains the known `CS8012` interop warning.
+- The current corpus contains structural fixtures only, not representative business packages. Add sanitized, representative packages and review their initial baselines before treating this seed corpus as broad regression authority.
+
 ## 2026-11-05 Mutation Contract Schema 2.0
 
 - Replaced the mutation-only 1.x contract versions with exact schema `2.0`; legacy 1.x mutation requests are rejected. Corpus, inspection CLI, and FlowRunner schemas remain unchanged.

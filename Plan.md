@@ -11,12 +11,40 @@ Evolve the repository into a headless AI tool backed by the native SSIS runtime.
 - The bounded `ai context` tool is metadata-only by default; sanitized SQL/expression syntax is collected and emitted only through an explicit opt-in. LLM interpretation cannot alter graph construction or upgrade evidence.
 - Variable/parameter discovery uses ANTLR lexical candidates and native-metadata scope resolution. Its edges are explicitly heuristic; native column observation remains separate and authoritative for column lineage.
 - Expression grammar and owner coverage are bounded. Arbitrary custom-component contracts and automatic project-metadata discovery remain unsupported.
-- Mutation contracts and AI CLI requests now use exact schema `2.0`: strict operation-specific typed payloads, typed task/path targets, required source-hash matching, host-selected adapter/runtime identity, and a common lifecycle result. All `1.x` mutation requests are rejected; Corpus, inspection CLI, and FlowRunner versions remain independent.
-- The November 5 native implementation is the current prototype checkpoint. Exact-path insertion, including selected Union All input insertion through a specialized metadata adapter, passes clean offline validation before mutation, after mutation, and after native save/reload. Existing inputs, mappings, outputs, identities, layout, and unrelated paths are preserved. Windows SSIS 16 CI enforcement is the next priority; package/project creation, SSISDB deployment, SQL Agent management, and SSIS 15 remain future work.
+- Mutation contracts and AI CLI requests now use exact schema `2.0`: strict operation-specific typed payloads, typed task/path/executable targets, required source-hash matching, host-selected adapter/runtime identity, and a common lifecycle result. The CLI includes typed `rename_task` preview/apply; its release status remains gated by the Near-Term Milestone. All `1.x` mutation requests are rejected; Corpus, inspection CLI, and FlowRunner versions remain independent.
+- The November 5 native implementation is the current prototype checkpoint. Exact-path insertion, including selected Union All input insertion through a specialized metadata adapter, passes clean offline validation before mutation, after mutation, and after native save/reload. Existing inputs, mappings, outputs, identities, layout, and unrelated paths are preserved. The required gate now includes a read-only corpus baseline check over seven checked-in structural fixtures; adding representative package fixtures and configuring the combined gate as a required provider check remain open. Package/project creation, SSISDB deployment, SQL Agent management, and SSIS 15 remain future work.
+
+## Near-Term Milestone
+
+Make deterministic package analysis and trustworthy dependency relationships the release authority, then promote exactly one narrowly scoped mutation. Expose `rename_task` as the sole release-grade CLI mutation with a typed schema 2.0 request and the verified MutationHost lifecycle. Existing native mutation implementations beyond RenameTask remain experimental prototypes; do not remove them, broaden their surface, or describe them as release-supported until this milestone is complete.
+
+1. **Corpus regression gate:** The starter corpus is `tests/LayoutFixtures/*.dtsx`, with reviewed snapshots in `tests/LayoutFixtures/CorpusBaselines`. The required gate repeats snapshots and verifies each against its approved baseline without writing. Add representative, sanitized package fixtures when available; review every semantic delta before explicitly approving a baseline update. Inspector, graph, identity, dependency-extraction, and serialization changes must account for each delta.
+2. **Determinism:** Repeated analysis of the same package must produce semantically identical snapshots and fingerprints. Normalize only known transient identifiers and serialization noise; retain meaningful identity, topology, metadata, evidence, coverage, and diagnostics. Verify ordering and canonicalization independently of package save/reload.
+3. **Graph correctness:** Build focused native fixtures and exact edge assertions for task-to-connection-manager, task-to-variable, expression-to-variable, Execute SQL Task-to-database-object, Data Flow source/destination, precedence constraints, package/project parameters, Execute Package relationships when the native target is resolved, and indirect expression references. Record evidence and confidence per edge. Until Execute Package target metadata is modeled, emit `dependency.execute_package_target_unresolved`; a missing or ambiguous relationship must remain unresolved/covered, not guessed into existence.
+4. **RenameTask as the only release-grade mutation:** The typed schema 2.0 CLI route now exists. Verify its complete lifecycle and explicit semantic invariants on representative packages before calling it stable. Until the corpus and graph gates also pass, it remains prototype scope; other native mutation operations stay experimental.
+5. **Required CI checks:** `Invoke-Ssis16MutationGate.ps1` includes the corpus semantic-diff and repeatability checks. Configure its stable `SSIS16-Mutation-Gate` status as required in the existing Windows x64 SSIS 16 CI provider. Branch protection remains provider-managed.
+
+```text
+Load
+-> Analyze Before
+-> Validate Request
+-> Preview Mutation
+-> Apply Native Mutation
+-> Save As New File
+-> Reload
+-> Analyze After
+-> Verify Expected Delta
+```
+
+For RenameTask, the requested task name is the intended change. Allow only documented SSIS serialization metadata changes; forbid task-count, DTSID, connection-manager, executable-hierarchy, expression, SQL-dependency, and unrelated-property changes. Preserve the source artifact and report rollback only when restoration has actually been verified.
+
+Defer generalized arbitrary-property editing, AI-driven automatic repair, package XML rewriting, broad refactoring operations, and an elaborate UI. Existing typed native mutation prototypes remain available for focused experiments but do not expand the release contract.
+
+The milestone is complete when the corpus gate and graph acceptance matrix pass, repeated analysis is stable, and RenameTask passes lifecycle/invariant checks on representative packages. The target outcome is deterministic package analysis, explainable dependency/impact relationships, and one safely previewed, applied, reloaded, and verified native mutation without unintended semantic changes.
 
 
-## Next Actions
-1. Run `powershell.exe -NoProfile -File .\eng\ci\Invoke-Ssis16MutationGate.ps1` as the required `SSIS16-Mutation-Gate` Windows x64 SSIS 16 job in the repository's existing CI provider. It runs the Release solution build, portable suites, native integration/fixture harness, MutationHost lifecycle, designer/layout, column-resize, exact path-splice, and Union All clean-validation probes. The gate must fail on build/test/native load errors, save/reload failure, unexpected validation delta, semantic/layout mismatch, path/preservation failure, or rollback/restoration verification failure. Package execution probes stay outside the required gate. Configure the provider's PR check as required; branch protection is provider-managed.
+## Follow-On Actions (After Near-Term Milestone)
+1. Run `powershell.exe -NoProfile -File .\eng\ci\Invoke-Ssis16MutationGate.ps1` as the required `SSIS16-Mutation-Gate` Windows x64 SSIS 16 job in the repository's existing CI provider. It runs the Release solution build, portable suites, structural corpus snapshot repeatability and approved-baseline verification, native integration/fixture harness, MutationHost lifecycle, designer/layout, column-resize, exact path-splice, and Union All clean-validation probes. The gate must fail on build/test/native load errors, corpus drift, save/reload failure, unexpected validation delta, semantic/layout mismatch, path/preservation failure, or rollback/restoration verification failure. Package execution probes stay outside the required gate. Configure the provider's PR check as required; branch protection is provider-managed.
 2. [Complete] Define the schema 2.0 mutation envelope and migrate the AI CLI. Requests carry `schemaVersion`, `operation`, typed `target`, typed operation request, and source hash; the host derives requirements and adapter selection. Results share runtime/adapter identity, preview, lifecycle stages, diagnostics, coverage, and redaction. Existing-artifact hashes are checked against the file; all 1.x mutation requests are rejected.
 3. Expand the existing `mutation.capabilities` surface to report installed runtime and adapter availability, target types, supported TaskHost property classes, preview/apply support, validation requirements, and limitations. It already describes the schema 2.0 envelope, target kinds, and typed request fields. Do not create a parallel capability registry.
 4. Add variable discovery and separate `set_variable_metadata`, `set_variable_expression`, and `set_variable_value` operations. Values remain sensitive and redacted; never collapse these operations into a generic setter.
@@ -67,9 +95,11 @@ AI-facing tools wrap the CLI's deterministic inspection, capability, preview, an
 
 ## Phase 7: Existing Package Changes
 
+The following items are post-milestone directions, not authorization to expand the current release-supported mutation contract. Start them only after the corpus, graph-correctness, and RenameTask gates pass.
+
 1. Keep mutation and execution contracts separate. Bind previews to exact targets and source hashes; block only on coverage gaps that prevent correct application or verification.
 2. Use the adapter boundary: mutation intent -> exact target/path -> topology splice -> component-specific adapter -> save/reload/validate and semantic/layout verification. `DataFlowPathSplicer` changes topology only; adapters own native metadata initialization, mapping preservation, `ReinitializeMetaData` when appropriate, and component verification. Report the selected adapter kind/version; discoverability never implies generic writability.
-3. Expand typed edits in order: variables (metadata, expression, value), parameters, connections (safe non-secret metadata), then component discovery/adapters. Keep values and secrets behind explicit redaction/trusted-input boundaries.
+3. Do not expand release-supported mutation scope until the Near-Term Milestone is complete. Existing variable, parameter, connection, component, and other mutation proposals remain deferred; keep secrets behind explicit redaction/trusted-input boundaries.
 4. Add simple Success, Failure, and Completion constraint edits first. Verify exact ControlFlowGraph delta and preserve unrelated nodes, constraints, task identities, containment, and layout.
 5. Add expression-bearing constraints only after simple constraints. Verify both expected ControlFlowGraph and dependency-graph deltas.
 6. Add task creation, then dependency-aware task removal. Use discovered native task types; preview removal impact and explicitly handle constraints, expressions, variables, event handlers, containment, and layout.
@@ -100,6 +130,8 @@ Native layout extraction, placement, comparison, and writing are implemented. Ke
 - `src/SsisAiRuntime.Inspectors` — immutable projections, handles, and graph/query services.
 - `src/SsisAiRuntime.Inspectors/SemanticHandleCatalogBuilder.cs` — session-scoped handles and ambiguity-aware resolution.
 - `src/SsisAiRuntime.Inspectors/ControlFlowGraphBuilder.cs` — containment and precedence graph construction.
+- `src/SsisAiRuntime.Corpus` — deterministic snapshots, fingerprints, semantic diffs, and approved-baseline storage for the corpus release gate.
+- `eng/ci/Invoke-CorpusBaselineGate.ps1` and `tests/LayoutFixtures/CorpusBaselines` — read-only seed corpus repeatability and approved-baseline gate.
 - `src/SsisAiRuntime.MutationHost` — typed mutation plans, adapters, layout, and host lifecycle.
 - `tests/SsisAiRuntime.Tests`, `tests/SsisAiRuntime.Corpus.Tests`, and `tests/SsisAiRuntime.Mutations.Tests` — portable suites.
 - `tests/SsisAiRuntime.Ssis16IntegrationTests` — native scratch-fixture and lifecycle probes.
@@ -107,10 +139,11 @@ Native layout extraction, placement, comparison, and writing are implemented. Ke
 - `SsisAiRuntime.sln`, `README.md`, and `BuildPackage.md` — solution, usage, and build/gate instructions.
 
 ## Verification
-1. Run the portable Core, inspector, AI, and CLI contract suite without SSIS, then execute the provider-neutral Windows x64 SSIS 16 gate in [BuildPackage.md](BuildPackage.md). Record the tested commit, SSIS version/architecture, and stage outcomes in [HISTORY.md](HISTORY.md). Make the CI provider's gate job a required PR status; package execution probes remain opt-in.
-2. Inspector/context tests cover completeness, unknown components, redaction, compact projections, and focused `sql`/`lineage`/`configuration` output; graph tests cover ambiguous handles and expected relationships.
-3. CLI and AI tool tests verify structured output, deterministic diagnostics, exit codes, selector ambiguity, bounded graph/impact results, and no secret leakage. The personal skill invokes CLI operations and remains read-only.
-4. Mutation/save integration checks use copies of representative packages. Source artifacts remain unchanged unless overwrite was explicitly requested. Validation or verification failure must not publish the candidate as successful; the operation report must distinguish rejection, successful restoration, unverified restoration, and restoration failure. Successful artifacts must reload and satisfy required validation and semantic/layout verification.
+1. Run portable suites and the provider-neutral Windows x64 SSIS 16 gate in [BuildPackage.md](BuildPackage.md). Record the tested commit, runtime/architecture, and stage outcomes in [HISTORY.md](HISTORY.md); keep package execution probes opt-in.
+2. Analyze each curated corpus fixture repeatedly; require semantically identical snapshots/fingerprints. Compare against approved baselines and require reviewed explanations for every semantic delta before approval.
+3. Graph tests assert exact expected relationships and preserve evidence strength, including unresolved/ambiguous negative cases, across the Near-Term Milestone matrix.
+4. CLI and AI tool tests verify structured output, deterministic diagnostics, exit codes, selector ambiguity, bounded graph/impact results, and no secret leakage. The personal skill invokes CLI operations and remains read-only.
+5. RenameTask integration checks use source copies and assert the complete lifecycle plus intended/forbidden semantic deltas. The source remains unchanged; failure results distinguish rejection, verified restoration, unverified restoration, and restore failure.
 
 ## Decisions
 

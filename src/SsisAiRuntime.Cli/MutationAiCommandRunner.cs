@@ -8,10 +8,13 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
+using SsisAiRuntime.AI;
+using SsisAiRuntime.Core;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using SsisAiRuntime.Corpus;
+using SsisAiRuntime.Inspectors;
 using SsisAiRuntime.MutationHost;
 using SsisAiRuntime.Mutations;
 using SsisAiRuntime.Ssis16;
@@ -41,6 +44,40 @@ namespace SsisAiRuntime.Cli
         {
             [JsonProperty(Required = Required.Always)] public string PropertyName { get; set; } = string.Empty;
             [JsonProperty(Required = Required.Always)] public JToken? Value { get; set; }
+        }
+
+        private sealed class RenameTaskRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string ProposedName { get; set; } = string.Empty;
+        }
+
+        private sealed class PreparedMutationPlan
+        {
+            public PreparedMutationPlan(string operation, string sourceArtifactHash,
+                MutationExecutionRequirements requirements, MutationAdapterIdentity adapter,
+                JObject preview, IEnumerable<string> coverage, IPackageMutationPlan? packagePlan,
+                MutationExecutionPlan? renameTaskPlan, bool layoutVerificationRequired)
+            {
+                Operation = operation;
+                SourceArtifactHash = sourceArtifactHash;
+                Requirements = requirements;
+                Adapter = adapter;
+                Preview = preview;
+                Coverage = coverage.Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+                PackagePlan = packagePlan;
+                RenameTaskPlan = renameTaskPlan;
+                LayoutVerificationRequired = layoutVerificationRequired;
+            }
+
+            public string Operation { get; }
+            public string SourceArtifactHash { get; }
+            public MutationExecutionRequirements Requirements { get; }
+            public MutationAdapterIdentity Adapter { get; }
+            public JObject Preview { get; }
+            public IReadOnlyList<string> Coverage { get; }
+            public IPackageMutationPlan? PackagePlan { get; }
+            public MutationExecutionPlan? RenameTaskPlan { get; }
+            public bool LayoutVerificationRequired { get; }
         }
 
         private sealed class TaskCollectionRequest
@@ -123,7 +160,7 @@ namespace SsisAiRuntime.Cli
             { return WriteError(output, tool, 2, "ai.mutation.request.schema_unsupported"); }
 
             var operation = (string?)request["operation"];
-            if (operation != "insert_derived_column" && operation != "insert_data_conversion" &&
+            if (operation != "rename_task" && operation != "insert_derived_column" && operation != "insert_data_conversion" &&
                 operation != "update_transfer_tables" && operation != "set_task_property" &&
                 operation != "update_task_collection")
             { return WriteError(output, tool, 2, "ai.mutation.operation.unsupported"); }
@@ -139,10 +176,10 @@ namespace SsisAiRuntime.Cli
                     if (!load.Succeeded || load.Session == null)
                     { return WriteError(output, tool, 3, "ssis.package.load_failed"); }
 
-                    IPackageMutationPlan plan;
+                    PreparedMutationPlan plan;
                     try
                     {
-                        plan = CreatePlan(load.Session.Package, args[2], sourceHash, request, operation!);
+                        plan = CreatePreparedPlan(load.Session, args[2], sourceHash, request, operation!);
                     }
                     finally { load.Session.Package.Dispose(); }
 
@@ -152,7 +189,10 @@ namespace SsisAiRuntime.Cli
                     }
 
                     var host = CreateHost(args[4]);
-                    var result = host.ExecuteAsync(new MutationHostRequest(args[2], args[3], plan, sourceHash),
+                    var hostRequest = plan.RenameTaskPlan != null
+                        ? new MutationHostRequest(args[2], args[3], plan.RenameTaskPlan, sourceHash)
+                        : new MutationHostRequest(args[2], args[3], plan.PackagePlan!, sourceHash);
+                    var result = host.ExecuteAsync(hostRequest,
                         CancellationToken.None).GetAwaiter().GetResult();
                     return WriteApplyResult(output, operation!, plan, request, result);
                 }
@@ -163,6 +203,47 @@ namespace SsisAiRuntime.Cli
                 return WriteError(output, tool, 4, code);
             }
         }
+
+        private static PreparedMutationPlan CreatePreparedPlan(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session,
+            string packagePath, string sourceHash, JObject envelope, string operation)
+        {
+            if (operation != "rename_task")
+            {
+                var packagePlan = CreatePlan(session.Package, packagePath, sourceHash, envelope, operation);
+                return new PreparedMutationPlan(operation, sourceHash, packagePlan.Requirements,
+                    AdapterIdentity(packagePlan), SafePreview(packagePlan), Array.Empty<string>(), packagePlan, null,
+                    packagePlan is IComponentInsertionPlan);
+            }
+
+            var target = DeserializeRequest<MutationCommandTarget>(envelope["target"]);
+            if (!string.Equals(target.Kind, "Executable", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(target.NativeId) || !string.IsNullOrWhiteSpace(target.OwnerNativeId))
+            { throw new ArgumentException("target"); }
+            var payload = DeserializeRequest<RenameTaskRequest>(envelope["request"]);
+            var analysis = new PackageAnalysisSnapshotFactory().Create(session);
+            if (analysis.Items.Count != 1) { throw new InvalidOperationException("mutation.source.analysis_failed"); }
+            var mutationRequest = new MutationRequest(MutationKind.RenameTask,
+                new MutationTarget(SemanticObjectKind.Executable, target.NativeId),
+                RequiredValue(payload.ProposedName, "proposedName"));
+            var preview = new MutationPreviewer().Preview(analysis.Items[0], mutationRequest);
+            if (!preview.IsValid || preview.ExecutionPlan == null)
+            { throw new InvalidOperationException("mutation.rename.preview.invalid"); }
+
+            return new PreparedMutationPlan(operation, sourceHash, preview.ExecutionPlan.Requirements,
+                new MutationAdapterIdentity("ssis16.task-host-rename", "1.0"), SafeRenamePreview(preview),
+                preview.CoverageGaps.Select(item => item.ReasonCode), null, preview.ExecutionPlan, false);
+        }
+
+        private static JObject SafeRenamePreview(MutationPreview preview) => new JObject
+        {
+            ["status"] = preview.Status.ToString(),
+            ["impact"] = new JObject
+            {
+                ["risk"] = preview.Impact!.Risk.ToString(),
+                ["summary"] = preview.Impact.Summary,
+                ["affectedNodeCount"] = preview.Impact.AffectedNodeKeys.Count
+            }
+        };
 
         private static IPackageMutationPlan CreatePlan(Microsoft.SqlServer.Dts.Runtime.Package package,
             string packagePath, string sourceHash, JObject envelope, string operation)
@@ -447,7 +528,12 @@ namespace SsisAiRuntime.Cli
                         OperationCapability("set_task_property", "Set a writable scalar property on a selected TaskHost.",
                             "TaskHost", new[] { "propertyName", "value" }, TaskPropertyInputProperties()),
                         OperationCapability("update_task_collection", "Replace, add, or remove values in a writable native string collection.",
-                            "TaskHost", new[] { "propertyName", "mode", "values" }, TaskCollectionInputProperties())
+                            "TaskHost", new[] { "propertyName", "mode", "values" }, TaskCollectionInputProperties()),
+                        OperationCapability("rename_task", "Rename one exact non-container executable.",
+                            "Executable", new[] { "proposedName" }, new JObject
+                            {
+                                ["proposedName"] = StringField("New task name; omitted from mutation previews and results.")
+                            })
                     },
                     ["placementRelations"] = new JArray(PlacementRelations),
                     ["packageShape"] = "Insertion operations select one task-scoped Data Flow path and splice a single-input, single-regular-output component; unrelated tasks, components, and paths are preserved. User variables and event handlers are unsupported by insertion plans. Package connection managers are retained and validated offline.",
@@ -581,7 +667,7 @@ namespace SsisAiRuntime.Cli
         };
 
         private static int WriteSuccess(TextWriter output, string tool, string operation,
-            IPackageMutationPlan plan, JObject request)
+            PreparedMutationPlan plan, JObject request)
         {
             var envelope = CreateEnvelope(tool, operation, plan, request, BuildPreviewResult(plan),
                 Array.Empty<string>(), succeeded: true, exitCode: 0, nativeValidationPerformed: false);
@@ -595,7 +681,7 @@ namespace SsisAiRuntime.Cli
                 new FileMutationCheckpointService(checkpointDirectory), new NativePackageMutationValidator(),
                 new MutationArtifactStager());
 
-        private static int WriteApplyResult(TextWriter output, string operation, IPackageMutationPlan plan,
+        private static int WriteApplyResult(TextWriter output, string operation, PreparedMutationPlan plan,
             JObject request, MutationHostResult result)
         {
             var completed = result.Completed;
@@ -609,14 +695,14 @@ namespace SsisAiRuntime.Cli
             return completed ? 0 : 4;
         }
 
-        private static JObject CreateEnvelope(string tool, string operation, IPackageMutationPlan plan,
+        private static JObject CreateEnvelope(string tool, string operation, PreparedMutationPlan plan,
             JObject request, MutationEnvelopeResult<JObject> result, IEnumerable<string> diagnostics,
             bool succeeded, int exitCode, bool nativeValidationPerformed)
         {
             var target = ToCamelCase(request["target"] as JObject ?? new JObject()) as JObject ?? new JObject();
             var contract = new MutationEnvelope<JObject, JObject, JObject, JObject>(operation, target, new JObject(),
-                plan.SourceArtifactHash, plan.Requirements, SafePreview(plan), result, diagnostics,
-                Array.Empty<string>(), new MutationRedactionStatus("mutation-preview", true, true, true, true));
+                plan.SourceArtifactHash, plan.Requirements, plan.Preview, result, diagnostics,
+                plan.Coverage, new MutationRedactionStatus("mutation-preview", true, true, true, true));
             var envelope = JObject.Parse(MutationContractSerializer.Serialize(contract));
             envelope["tool"] = tool;
             envelope["succeeded"] = succeeded;
@@ -633,17 +719,17 @@ namespace SsisAiRuntime.Cli
             return preview;
         }
 
-        private static MutationEnvelopeResult<JObject> BuildPreviewResult(IPackageMutationPlan plan)
+        private static MutationEnvelopeResult<JObject> BuildPreviewResult(PreparedMutationPlan plan)
         {
             var notApplicable = Stage(MutationStageStatus.NotApplicable);
-            return new MutationEnvelopeResult<JObject>(RuntimeIdentity(), AdapterIdentity(plan),
+            return new MutationEnvelopeResult<JObject>(RuntimeIdentity(), plan.Adapter,
                 new MutationOperationResult<JObject>(MutationOutcome.PreviewReady, "mutation.preview.ready", new JObject()),
                 Artifact(MutationStageStatus.NotApplicable, plan.SourceArtifactHash, string.Empty, string.Empty),
                 notApplicable, notApplicable, notApplicable, notApplicable,
                 new MutationRollbackResult(MutationRollbackStatus.NotRequired, null));
         }
 
-        private static MutationEnvelopeResult<JObject> BuildApplyResult(IPackageMutationPlan plan,
+        private static MutationEnvelopeResult<JObject> BuildApplyResult(PreparedMutationPlan plan,
             MutationHostResult result, string code)
         {
             var completed = result.Completed;
@@ -658,11 +744,11 @@ namespace SsisAiRuntime.Cli
                 : result.ReloadSucceeded ? MutationStageStatus.Failed : MutationStageStatus.NotApplicable;
             var semanticStatus = result.SemanticDiffMatched ? MutationStageStatus.Succeeded
                 : result.ValidationSucceeded ? MutationStageStatus.Failed : MutationStageStatus.NotApplicable;
-            var layoutStatus = plan is IComponentInsertionPlan
+            var layoutStatus = plan.LayoutVerificationRequired
                 ? completed ? MutationStageStatus.Succeeded
                     : result.ValidationSucceeded ? MutationStageStatus.Unverified : MutationStageStatus.NotApplicable
                 : MutationStageStatus.NotApplicable;
-            return new MutationEnvelopeResult<JObject>(RuntimeIdentity(), AdapterIdentity(plan),
+            return new MutationEnvelopeResult<JObject>(RuntimeIdentity(), plan.Adapter,
                 new MutationOperationResult<JObject>(mutationOutcome, code,
                     new JObject { ["operationId"] = result.OperationId }),
                 Artifact(artifactStatus, result.SourceArtifactHash, result.DestinationArtifactHash, result.CheckpointId),

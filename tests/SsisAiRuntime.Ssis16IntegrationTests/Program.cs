@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
+using SsisAiRuntime.Corpus;
 using SsisAiRuntime.Ssis16;
 using SsisAiRuntime.Inspectors;
 using Newtonsoft.Json.Linq;
@@ -328,6 +329,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             Require((string)snapshot["tool"] == "corpus.snapshot" &&
                 (string)snapshot["results"]!["snapshot"]!["schemaVersion"] == "1.0" &&
                 (int)snapshot["results"]!["snapshot"]!["nodeCount"] > 0, "corpus.snapshot.result");
+            var repeatedSnapshot = RunCli(new[] { "ai", "corpus.snapshot", packagePath }, 0, 5);
+            Require(JToken.DeepEquals(snapshot["results"]!["snapshot"], repeatedSnapshot["results"]!["snapshot"]),
+                "corpus.snapshot.deterministic");
+            Require(ComputeCorpusFingerprint(packagePath) == ComputeCorpusFingerprint(packagePath),
+                "corpus.fingerprint.deterministic");
 
             stage = "corpus.approve";
             var approved = RunCli(new[] { "ai", "corpus.approve", packagePath, "--baseline", baselinePath }, 0, 5);
@@ -364,6 +370,19 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 (string)JObject.Parse(File.ReadAllText(baselinePath))["schemaVersion"] == "1.0",
                 "corpus.approve.upgrade.result");
             Console.WriteLine("Corpus baseline lifecycle: PASS; snapshot, approve, matching diff/verify, mismatch failure, and explicit schema upgrade.");
+        }
+
+        private static string ComputeCorpusFingerprint(string packagePath)
+        {
+            var load = new PackageLoader().Load(packagePath);
+            Require(load.Succeeded && load.Session != null, "corpus.fingerprint.load");
+            try
+            {
+                var analysis = new PackageAnalysisSnapshotFactory().Create(load.Session).Items.Single();
+                var snapshot = new CorpusSnapshotBuilder().Build(analysis);
+                return new CorpusFingerprintProvider().Create(snapshot).Sha256;
+            }
+            finally { load.Session.Package.Dispose(); }
         }
 
         private static void VerifyHeuristicExpressions(string directory)

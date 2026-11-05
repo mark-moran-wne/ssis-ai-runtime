@@ -119,6 +119,11 @@ namespace SsisAiRuntime.Inspectors
                     ? packageKey
                     : Key(SemanticObjectKind.Executable, executable.ParentId), Key(SemanticObjectKind.Executable, executable.Id),
                     DependencyKind.ContainsTask), executable.Id, executable.Name);
+                if (executable.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    unsupported.Add(new UnsupportedItem(executable.Id, executable.Name, executable.CreationName,
+                        "The referenced package target is not projected.", UnsupportedItem.ExecutePackageTargetUnresolvedCode));
+                }
             }
 
             foreach (var edge in controlFlow.Edges.Where(edge => edge.Kind == ControlFlowEdgeKind.Precedence))

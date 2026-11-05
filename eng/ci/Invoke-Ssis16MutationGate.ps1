@@ -43,6 +43,10 @@ try {
         Invoke-GateCommand "Portable tests: $project" "dotnet" @("test", $project, "-c", $Configuration, "--no-build")
     }
 
+    $corpusGate = Join-Path $PSScriptRoot "Invoke-CorpusBaselineGate.ps1"
+    Invoke-GateCommand "Curated corpus snapshot and baseline gate" "powershell.exe" @(
+        "-NoProfile", "-File", $corpusGate, "-Configuration", $Configuration)
+
     if (-not (Test-Path $nativeHarness -PathType Leaf)) {
         throw "The SSIS 16 native integration harness was not produced at $nativeHarness."
     }
