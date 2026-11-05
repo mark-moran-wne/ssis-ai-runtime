@@ -1,5 +1,20 @@
 # SSIS AI Runtime History
 
+## 2026-11-05 Union All Clean Validation Fixture
+
+- Replaced the unconfigured synthetic OLE DB sources in the Union All acceptance probe with two native Flat File Sources using a temporary local ANSI ASCII file and a configured Flat File Connection Manager. The fixture establishes a clean offline validation baseline without database access or package execution.
+- The probe now requires clean pre-mutation validation, clean in-memory post-splice validation, and clean post-save/reload validation; it verifies `OfflineMode` is restored. The temporary source file and package artifact are removed on success or failure.
+- Preservation assertions cover the prior Union All output metadata and mappings, selected and nonselected inputs, unrelated paths, existing component IDs/classes, package identity, and designer layout before and after reload. Only the selected incoming path may be replaced; the adapter owns metadata refresh and `DataFlowPathSplicer` remains topology-only.
+- Microsoft Learn documentation was checked by namespace for `Package.OfflineMode`, `IDTSRuntimeConnection100.ConnectionManagerID/ConnectionManager`, `IDTSDesigntimeComponent100.ReinitializeMetaData`, Flat File Source/Connection Manager, and the Runtime HRESULT `DTS_E_NTEXTDATATYPENOTSUPPORTEDWITHANSIFILES`. The source uses ANSI data to match its default `DT_TEXT` error output, avoiding the documented `DT_NTEXT`/ANSI incompatibility.
+- The SSIS 16 integration build and full native harness pass; all 236 portable solution tests pass. The build retains the known GAC_32 `CS8012` interop warning.
+
+## 2026-11-04 Union All Selected-Input Insertion
+
+- Added `UnionAllInputAdapter`, resolving the native component CLSID through the installed SSIS catalog. It replaces only the selected Union All input, preserves its existing `OutputColumnLineageID` mappings, maps the inserted output, refreshes metadata, and verifies unaffected inputs and prior outputs. `DataFlowPathSplicer` now enforces the adapter verification result and retains splice/rollback exception details.
+- The native synthetic probe is an acceptance gate: failures propagate with full exception details; it checks prior output metadata, selected and nonselected input mappings, unrelated paths, output inventory, and save/reload. SSIS may regenerate lineage IDs on reload, so round-trip checks validate mappings against the current named outputs.
+- The initial unconfigured OLE DB probe reported four baseline validation errors; the configured, clean-validation acceptance fixture and final verification are recorded in the 2026-11-05 entry above. No package is executed and no database connection is made.
+- The SSIS 16 integration build and full native harness pass; 23 portable mutation tests pass. The build retains the known GAC_32 `CS8012` interop warning.
+
 ## 2026-11-04 Exact-Path Data Flow Splicing
 
 - Added `DataFlowPathSplicer` and task-scoped `pathId` support to Derived Column and Data Conversion plans. The plans derive endpoints from the selected path, require one inserted input and one regular output, splice only that edge, and preserve unrelated paths and component metadata.

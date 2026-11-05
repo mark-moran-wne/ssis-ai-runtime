@@ -228,6 +228,9 @@ namespace SsisAiRuntime.MutationHost
         {
             var task = FindPipelineTask(package, OwnerTaskNativeId);
             var pipeline = (IDTSPipeline130)task.InnerObject;
+            var endpointAdapter = UnionAllInputAdapter.CreateIfRequired(pipeline,
+                DataFlowPathSplicer.FindPath(pipeline, PathNativeId));
+            endpointAdapter?.Prepare();
             var creationName = new Application().PipelineComponentInfos.Cast<PipelineComponentInfo>()
                 .Single(info => info.CreationName.StartsWith("DTSTransform.DataConvert.", StringComparison.OrdinalIgnoreCase)).CreationName;
             var component = pipeline.ComponentMetaDataCollection.New();
@@ -242,7 +245,7 @@ namespace SsisAiRuntime.MutationHost
                 var converted = design.InsertOutputColumnAt(output.ID, 0, OutputName, string.Empty);
                 design.SetOutputColumnProperty(output.ID, converted.ID, "SourceInputColumnLineageID", SourceLineageId);
                 design.SetOutputColumnDataTypeProperties(output.ID, converted.ID, OutputDataType, Length, Precision, Scale, CodePage);
-            });
+            }, OutputName, endpointAdapter);
             new DesignerLayoutWriter().SetComponentPosition(package, OwnerTaskNativeId,
                 component.ID.ToString(CultureInfo.InvariantCulture), Placement);
         }

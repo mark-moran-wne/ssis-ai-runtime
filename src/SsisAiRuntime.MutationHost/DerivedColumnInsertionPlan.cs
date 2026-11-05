@@ -255,6 +255,9 @@ namespace SsisAiRuntime.MutationHost
             if (package == null) { throw new ArgumentNullException(nameof(package)); }
             var task = FindPipelineTask(package, OwnerTaskNativeId);
             var pipeline = (IDTSPipeline130)task.InnerObject;
+            var endpointAdapter = UnionAllInputAdapter.CreateIfRequired(pipeline,
+                DataFlowPathSplicer.FindPath(pipeline, PathNativeId));
+            endpointAdapter?.Prepare();
             var application = new Application();
             var creationName = application.PipelineComponentInfos.Cast<PipelineComponentInfo>()
                 .Single(info => info.CreationName.StartsWith("DTSTransform.DerivedColumn.", StringComparison.OrdinalIgnoreCase))
@@ -272,7 +275,7 @@ namespace SsisAiRuntime.MutationHost
                 design.SetOutputColumnDataTypeProperties(output.ID, outputColumn.ID,
                     RuntimeWrapper.DataType.DT_I4, 0, 0, 0, 0);
                 design.SetOutputColumnProperty(output.ID, outputColumn.ID, "Expression", Expression);
-            });
+            }, OutputName, endpointAdapter);
             new DesignerLayoutWriter().SetComponentPosition(package, OwnerTaskNativeId,
                 component.ID.ToString(CultureInfo.InvariantCulture), Placement);
         }

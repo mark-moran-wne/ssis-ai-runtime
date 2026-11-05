@@ -66,6 +66,8 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 InMemoryPipelineEditTests.Run(prefix => FindComponent(editApplication, prefix));
                 stage = "pipeline.path_splice.fixtures";
                 DataFlowPathSpliceFixtureTests.Run();
+                stage = "pipeline.union_all.input_probe";
+                UnionAllMetadataProbe.Run();
                 stage = "pipeline.in_memory.schema_edits";
                 InMemorySchemaEditTests.Run(prefix => FindComponent(editApplication, prefix));
                 stage = "flow.component.catalog";
@@ -156,9 +158,9 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     load.Session.Package.Dispose();
                 }
             }
-            catch (Exception)
+            catch (Exception exception)
             {
-                Console.Error.WriteLine("Native integration verification failed at " + stage + ". Raw exception details are withheld.");
+                Console.Error.WriteLine("Native integration verification failed at " + stage + ": " + exception);
                 return 1;
             }
             finally

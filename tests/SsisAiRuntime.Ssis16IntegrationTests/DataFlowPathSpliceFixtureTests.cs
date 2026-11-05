@@ -18,7 +18,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 VerifyFixture("Branch.dtsx", "BranchFlow");
                 currentFixture = "Merge";
                 VerifyFixture("Merge.dtsx", "MergeFlow");
-                currentFixture = "MergeInputMetadataRefusal";
+                currentFixture = "UnionAllRefreshProbe";
                 currentFixture = "CrossedPaths";
                 VerifyFixture("CrossedPaths.dtsx", "CrossedPathsFlow");
                 currentFixture = "NestedDataFlows";
