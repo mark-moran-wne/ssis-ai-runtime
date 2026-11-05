@@ -1,5 +1,13 @@
 # SSIS AI Runtime History
 
+## 2026-11-04 Exact-Path Data Flow Splicing
+
+- Added `DataFlowPathSplicer` and task-scoped `pathId` support to Derived Column and Data Conversion plans. The plans derive endpoints from the selected path, require one inserted input and one regular output, splice only that edge, and preserve unrelated paths and component metadata.
+- Removed the single-pipeline/task and two-component/one-path package gates. Existing endpoint-pair requests remain compatible; new requests use `pathId` from the selected task's `lineage.paths` list. Plan rebinding uses stable endpoint-based layout identity, and previews expose that stable identity rather than transient numeric path IDs.
+- Changed fallback layout path identity to an endpoint-port pair so duplicate or regenerated SSIS path names/refIds cannot collide when comparing crossed paths.
+- Added native fixture verification for Branch, the Merge output path, CrossedPaths, and pathless NestedDataFlows refusal. The fixtures are loaded from the repository and edited only in temporary copies; source fixtures remain unchanged. Union All input paths still require a specialized metadata-refresh adapter.
+- The integration project builds; the default SSIS 16 harness and all 30 MutationHost lifecycle cases pass on the installed host. The build retains the known GAC_32 `CS8012` interop warning.
+
 ## 2026-11-04 Native TaskHost Mutation Operations
 
 - Added `TransferTablesMutationPlan` over the native `ITransferSqlServerObjectsTask.TablesList` API. It supports explicit `Replace`, `Add`, and `Remove` modes, preserves unrelated task settings, binds to the task identity and source artifact hash, and previews before/after selection. `Replace` disables catch-all `CopyAllObjects`/`CopyAllTables`; `Add` and `Remove` refuse when those flags make selection semantics ambiguous.

@@ -22,7 +22,7 @@ namespace SsisAiRuntime.MutationHost
         private readonly IReadOnlyDictionary<string, string> existingComponentMetadata;
 
         private DataConversionInsertionPlan(string sourceArtifactHash, string ownerTaskNativeId,
-            string sourceComponentNativeId, string destinationComponentNativeId, int sourceLineageId,
+            string sourceComponentNativeId, string destinationComponentNativeId, string pathNativeId, int sourceLineageId,
             string sourceOutputName, string sourceColumnName, string componentName, string outputName,
             RuntimeWrapper.DataType outputDataType, int length, int precision, int scale, int codePage,
             ComponentPlacementIntent placementIntent, DesignerPlacement placement,
@@ -34,6 +34,7 @@ namespace SsisAiRuntime.MutationHost
             OwnerTaskNativeId = ownerTaskNativeId;
             SourceComponentNativeId = sourceComponentNativeId;
             DestinationComponentNativeId = destinationComponentNativeId;
+            PathNativeId = pathNativeId;
             SourceLineageId = sourceLineageId;
             SourceOutputName = sourceOutputName;
             SourceColumnName = sourceColumnName;
@@ -56,6 +57,7 @@ namespace SsisAiRuntime.MutationHost
             PackageName = packageName;
             this.existingComponentMetadata = new ReadOnlyDictionary<string, string>(
                 new Dictionary<string, string>(existingComponentMetadata, StringComparer.Ordinal));
+            PathLayoutId = beforeLayout.Connections.Single(connection => connection.Key == replacedConnectionKey).LayoutId;
             Requirements = MutationExecutionPolicies.ComponentInsertion();
         }
 
@@ -64,6 +66,8 @@ namespace SsisAiRuntime.MutationHost
         public string OwnerTaskNativeId { get; }
         public string SourceComponentNativeId { get; }
         public string DestinationComponentNativeId { get; }
+        public string PathNativeId { get; }
+        public string PathLayoutId { get; }
         public int SourceLineageId { get; }
         public string SourceOutputName { get; }
         public string SourceColumnName { get; }
@@ -88,7 +92,7 @@ namespace SsisAiRuntime.MutationHost
             string ownerTaskNativeId, string sourceComponentNativeId, string destinationComponentNativeId,
             int sourceLineageId, string componentName, string outputName, RuntimeWrapper.DataType outputDataType,
             int length, int precision, int scale, int codePage, ComponentPlacementIntent placementIntent,
-            string packagePath = null)
+            string packagePath = null, string selectedPathNativeId = null)
         {
             if (package == null) { throw new ArgumentNullException(nameof(package)); }
             if (!MutationHash.IsSha256(sourceArtifactHash)) { throw new ArgumentException("A SHA-256 source hash is required.", nameof(sourceArtifactHash)); }
@@ -105,8 +109,6 @@ namespace SsisAiRuntime.MutationHost
             if (placementIntent.OwnerNativeId != ownerTaskNativeId) { throw new InvalidOperationException("mutation.insertion.placement_owner_mismatch"); }
 
             var task = FindPipelineTask(package, ownerTaskNativeId);
-            if (package.Executables.Count != 1 || FindTaskHosts(package).Count() != 1)
-            { throw new InvalidOperationException("mutation.insertion.package_shape_unsupported"); }
             if (package.Variables.Cast<Variable>().Any(variable => !variable.SystemVariable) ||
                 task.Variables.Cast<Variable>().Any(variable => !variable.SystemVariable))
             { throw new InvalidOperationException("mutation.insertion.user_variables_unsupported"); }
@@ -114,8 +116,6 @@ namespace SsisAiRuntime.MutationHost
             { throw new InvalidOperationException("mutation.insertion.event_handlers_unsupported"); }
 
             var pipeline = (IDTSPipeline130)task.InnerObject;
-            if (pipeline.ComponentMetaDataCollection.Count != 2 || pipeline.PathCollection.Count != 1)
-            { throw new InvalidOperationException("mutation.insertion.pipeline_shape_unsupported"); }
             var source = FindComponent(pipeline, sourceComponentNativeId);
             var destination = FindComponent(pipeline, destinationComponentNativeId);
             var sourceColumns = source.OutputCollection.Cast<IDTSOutput100>().Where(output => !output.IsErrorOut)
@@ -128,7 +128,12 @@ namespace SsisAiRuntime.MutationHost
             var paths = pipeline.PathCollection.Cast<IDTSPath100>().Where(path =>
                 sourceOutputs.Any(output => output.ID == path.StartPoint.ID) &&
                 destinationInputs.Any(input => input.ID == path.EndPoint.ID)).ToArray();
-            if (paths.Length != 1) { throw new InvalidOperationException("mutation.insertion.path_ambiguous"); }
+            var selectedPath = string.IsNullOrWhiteSpace(selectedPathNativeId)
+                ? paths.Length == 1 ? paths[0] : null
+                : paths.SingleOrDefault(path => path.ID.ToString(CultureInfo.InvariantCulture) == selectedPathNativeId);
+            if (selectedPath == null)
+            { throw new InvalidOperationException(string.IsNullOrWhiteSpace(selectedPathNativeId)
+                ? "mutation.insertion.path_ambiguous" : "mutation.insertion.path_selection_mismatch"); }
 
             var layout = new DesignerLayoutExtractor().Extract(package, packagePath);
             var placementPreview = new DesignerPlacementPreviewer().Preview(package, placementIntent, packagePath);
@@ -146,16 +151,31 @@ namespace SsisAiRuntime.MutationHost
             var metadata = ComponentMetadata(package, taskLayout.LayoutId);
 
             return new DataConversionInsertionPlan(sourceArtifactHash, ownerTaskNativeId, sourceComponentNativeId,
-                destinationComponentNativeId, sourceLineageId, sourceColumns[0].Output.Name, sourceColumns[0].Column.Name,
-                componentName, outputName, outputDataType, length, precision, scale, codePage, placementIntent,
+                destinationComponentNativeId, selectedPath.ID.ToString(CultureInfo.InvariantCulture), sourceLineageId,
+                sourceColumns[0].Output.Name, sourceColumns[0].Column.Name, componentName, outputName,
+                outputDataType, length, precision, scale, codePage, placementIntent,
                 placementPreview.Placement, layout, connection.Key, taskLayout.LayoutId, sourceNode.LayoutId,
                 destinationNode.LayoutId, anchorNode?.LayoutId ?? string.Empty, package.ID, package.Name, metadata);
+        }
+
+        public static DataConversionInsertionPlan CreateForPath(Package package, string sourceArtifactHash,
+            string ownerTaskNativeId, string pathNativeId, int sourceLineageId, string componentName,
+            string outputName, RuntimeWrapper.DataType outputDataType, int length, int precision, int scale,
+            int codePage, ComponentPlacementIntent placementIntent, string packagePath = null)
+        {
+            var task = FindPipelineTask(package, ownerTaskNativeId);
+            var path = DataFlowPathSplicer.FindPath((IDTSPipeline130)task.InnerObject, pathNativeId);
+            return Create(package, sourceArtifactHash, ownerTaskNativeId,
+                path.StartPoint.Component.ID.ToString(CultureInfo.InvariantCulture),
+                path.EndPoint.Component.ID.ToString(CultureInfo.InvariantCulture), sourceLineageId,
+                componentName, outputName, outputDataType, length, precision, scale, codePage,
+                placementIntent, packagePath, pathNativeId);
         }
 
         public string SerializePreviewContract()
         {
             var contract = new DataConversionInsertionPreviewContract(SourceArtifactHash, OwnerTaskLayoutId,
-                SourceComponentLayoutId, DestinationComponentLayoutId, SourceColumnName, ComponentName, OutputName,
+                PathLayoutId, SourceComponentLayoutId, DestinationComponentLayoutId, SourceColumnName, ComponentName, OutputName,
                 OutputDataType.ToString(), Length, Precision, Scale, CodePage, PlacementIntent.Relation.ToString(),
                 AnchorLayoutId, Placement.Position.Left, Placement.Position.Top, Placement.Position.Width,
                 Placement.Position.Height, Requirements.Requirements);
@@ -180,6 +200,9 @@ namespace SsisAiRuntime.MutationHost
             var anchorNode = string.IsNullOrEmpty(AnchorLayoutId) ? null : layout.Nodes.SingleOrDefault(node =>
                 node.OwnerNativeId == taskNode.NativeId && node.LayoutId == AnchorLayoutId);
             if (!string.IsNullOrEmpty(AnchorLayoutId) && anchorNode == null) { throw new InvalidOperationException("mutation.insertion.anchor_identity_changed"); }
+            var selectedConnection = layout.Connections.SingleOrDefault(connection =>
+                connection.OwnerNativeId == taskNode.NativeId && connection.Key == replacedConnectionKey);
+            if (selectedConnection == null) { throw new InvalidOperationException("mutation.insertion.path_identity_changed"); }
             var task = FindPipelineTask(package, taskNode.NativeId);
             var source = FindComponent((IDTSPipeline130)task.InnerObject, sourceNode.NativeId);
             var lineage = source.OutputCollection.Cast<IDTSOutput100>().Where(output => output.Name == SourceOutputName)
@@ -189,7 +212,8 @@ namespace SsisAiRuntime.MutationHost
             var intent = new ComponentPlacementIntent(taskNode.NativeId, PlacementIntent.Relation,
                 anchorNode?.NativeId ?? string.Empty, PlacementIntent.Width, PlacementIntent.Height);
             var current = Create(package, sourceArtifactHash, taskNode.NativeId, sourceNode.NativeId, destinationNode.NativeId,
-                lineage.LineageID, ComponentName, OutputName, OutputDataType, Length, Precision, Scale, CodePage, intent, packagePath);
+                lineage.LineageID, ComponentName, OutputName, OutputDataType, Length, Precision, Scale, CodePage,
+                intent, packagePath, selectedConnection.NativeId);
             if (!Placement.Position.Equals(current.Placement.Position) ||
                 !new DesignerLayoutComparer().Compare(beforeLayout, current.beforeLayout).Matches ||
                 !string.Equals(replacedConnectionKey, current.replacedConnectionKey, StringComparison.Ordinal))
@@ -204,14 +228,6 @@ namespace SsisAiRuntime.MutationHost
         {
             var task = FindPipelineTask(package, OwnerTaskNativeId);
             var pipeline = (IDTSPipeline130)task.InnerObject;
-            var source = FindComponent(pipeline, SourceComponentNativeId);
-            var destination = FindComponent(pipeline, DestinationComponentNativeId);
-            var sourceOutput = source.OutputCollection.Cast<IDTSOutput100>().Where(output => !output.IsErrorOut)
-                .Single(output => output.OutputColumnCollection.Cast<IDTSOutputColumn100>().Any(column => column.LineageID == SourceLineageId));
-            var destinationInput = destination.InputCollection.Cast<IDTSInput100>().Single(input =>
-                pipeline.PathCollection.Cast<IDTSPath100>().Any(path => path.StartPoint.ID == sourceOutput.ID && path.EndPoint.ID == input.ID));
-            var oldPath = pipeline.PathCollection.Cast<IDTSPath100>().Single(path =>
-                path.StartPoint.ID == sourceOutput.ID && path.EndPoint.ID == destinationInput.ID);
             var creationName = new Application().PipelineComponentInfos.Cast<PipelineComponentInfo>()
                 .Single(info => info.CreationName.StartsWith("DTSTransform.DataConvert.", StringComparison.OrdinalIgnoreCase)).CreationName;
             var component = pipeline.ComponentMetaDataCollection.New();
@@ -219,15 +235,14 @@ namespace SsisAiRuntime.MutationHost
             var design = component.Instantiate();
             design.ProvideComponentProperties();
             component.Name = ComponentName;
-            var input = component.InputCollection[0];
-            pipeline.PathCollection.RemoveObjectByID(oldPath.ID);
-            pipeline.PathCollection.New().AttachPathAndPropagateNotifications(sourceOutput, input);
-            design.SetUsageType(input.ID, input.GetVirtualInput(), SourceLineageId, DTSUsageType.UT_READONLY);
             var output = component.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut);
-            var converted = design.InsertOutputColumnAt(output.ID, 0, OutputName, string.Empty);
-            design.SetOutputColumnProperty(output.ID, converted.ID, "SourceInputColumnLineageID", SourceLineageId);
-            design.SetOutputColumnDataTypeProperties(output.ID, converted.ID, OutputDataType, Length, Precision, Scale, CodePage);
-            pipeline.PathCollection.New().AttachPathAndPropagateNotifications(output, destinationInput);
+            DataFlowPathSplicer.Splice(pipeline, PathNativeId, component, input =>
+            {
+                design.SetUsageType(input.ID, input.GetVirtualInput(), SourceLineageId, DTSUsageType.UT_READONLY);
+                var converted = design.InsertOutputColumnAt(output.ID, 0, OutputName, string.Empty);
+                design.SetOutputColumnProperty(output.ID, converted.ID, "SourceInputColumnLineageID", SourceLineageId);
+                design.SetOutputColumnDataTypeProperties(output.ID, converted.ID, OutputDataType, Length, Precision, Scale, CodePage);
+            });
             new DesignerLayoutWriter().SetComponentPosition(package, OwnerTaskNativeId,
                 component.ID.ToString(CultureInfo.InvariantCulture), Placement);
         }
@@ -261,7 +276,7 @@ namespace SsisAiRuntime.MutationHost
                 var inserted = components.Where(component => component.Name == ComponentName).ToArray();
                 if (components.Length != beforeLayout.Nodes.Count(node => node.OwnerNativeId == OwnerTaskNativeId) + 1 || inserted.Length != 1)
                 { return "mutation.insertion.component_inventory_changed"; }
-                if (pipeline.PathCollection.Count != beforeLayout.Connections.Count + 1)
+                if (pipeline.PathCollection.Count != beforeLayout.Connections.Count(connection => connection.OwnerNativeId == OwnerTaskNativeId) + 1)
                 { return "mutation.insertion.path_inventory_changed"; }
                 var output = inserted[0].OutputCollection.Cast<IDTSOutput100>().Single(port => !port.IsErrorOut);
                 var column = output.OutputColumnCollection.Cast<IDTSOutputColumn100>().Single(item => item.Name == OutputName);
@@ -338,13 +353,18 @@ namespace SsisAiRuntime.MutationHost
         {
             foreach (Executable executable in package.Executables)
             {
-                if (executable is TaskHost task) { yield return task; }
-                if (executable is IDTSSequence sequence)
+                foreach (var task in FindTaskHosts((DtsContainer)executable)) { yield return task; }
+            }
+        }
+
+        private static IEnumerable<TaskHost> FindTaskHosts(DtsContainer container)
+        {
+            if (container is TaskHost task) { yield return task; }
+            if (container is IDTSSequence sequence)
+            {
+                foreach (Executable executable in sequence.Executables)
                 {
-                    foreach (Executable nested in sequence.Executables)
-                    {
-                        if (nested is TaskHost nestedTask) { yield return nestedTask; }
-                    }
+                    foreach (var nestedTask in FindTaskHosts((DtsContainer)executable)) { yield return nestedTask; }
                 }
             }
         }
@@ -353,13 +373,13 @@ namespace SsisAiRuntime.MutationHost
     [DataContract]
     public sealed class DataConversionInsertionPreviewContract
     {
-        internal DataConversionInsertionPreviewContract(string sourceHash, string owner, string source, string destination,
+        internal DataConversionInsertionPreviewContract(string sourceHash, string owner, string pathLayoutId, string source, string destination,
             string sourceColumn, string component, string output, string dataType, int length, int precision, int scale,
             int codePage, string relation, string anchor, decimal left, decimal top, decimal width, decimal height,
             IEnumerable<string> requirements)
         {
             SchemaVersion = "1.0"; Operation = "InsertDataConversion"; SourceArtifactHash = sourceHash;
-            OwnerLayoutId = owner; SourceComponentLayoutId = source; DestinationComponentLayoutId = destination;
+            OwnerLayoutId = owner; PathLayoutId = pathLayoutId; SourceComponentLayoutId = source; DestinationComponentLayoutId = destination;
             SourceColumnName = sourceColumn; ComponentName = component; OutputName = output; OutputDataType = dataType;
             Length = length; Precision = precision; Scale = scale; CodePage = codePage; PlacementRelation = relation;
             AnchorLayoutId = anchor; Placement = new DerivedColumnPlacementContract(left, top, width, height);
@@ -369,19 +389,20 @@ namespace SsisAiRuntime.MutationHost
         [DataMember(Order = 1)] public string Operation { get; private set; }
         [DataMember(Order = 2)] public string SourceArtifactHash { get; private set; }
         [DataMember(Order = 3)] public string OwnerLayoutId { get; private set; }
-        [DataMember(Order = 4)] public string SourceComponentLayoutId { get; private set; }
-        [DataMember(Order = 5)] public string DestinationComponentLayoutId { get; private set; }
-        [DataMember(Order = 6)] public string SourceColumnName { get; private set; }
-        [DataMember(Order = 7)] public string ComponentName { get; private set; }
-        [DataMember(Order = 8)] public string OutputName { get; private set; }
-        [DataMember(Order = 9)] public string OutputDataType { get; private set; }
-        [DataMember(Order = 10)] public int Length { get; private set; }
-        [DataMember(Order = 11)] public int Precision { get; private set; }
-        [DataMember(Order = 12)] public int Scale { get; private set; }
-        [DataMember(Order = 13)] public int CodePage { get; private set; }
-        [DataMember(Order = 14)] public string PlacementRelation { get; private set; }
-        [DataMember(Order = 15)] public string AnchorLayoutId { get; private set; }
-        [DataMember(Order = 16)] public DerivedColumnPlacementContract Placement { get; private set; }
-        [DataMember(Order = 17)] public string[] Requirements { get; private set; }
+        [DataMember(Order = 4)] public string PathLayoutId { get; private set; }
+        [DataMember(Order = 5)] public string SourceComponentLayoutId { get; private set; }
+        [DataMember(Order = 6)] public string DestinationComponentLayoutId { get; private set; }
+        [DataMember(Order = 7)] public string SourceColumnName { get; private set; }
+        [DataMember(Order = 8)] public string ComponentName { get; private set; }
+        [DataMember(Order = 9)] public string OutputName { get; private set; }
+        [DataMember(Order = 10)] public string OutputDataType { get; private set; }
+        [DataMember(Order = 11)] public int Length { get; private set; }
+        [DataMember(Order = 12)] public int Precision { get; private set; }
+        [DataMember(Order = 13)] public int Scale { get; private set; }
+        [DataMember(Order = 14)] public int CodePage { get; private set; }
+        [DataMember(Order = 15)] public string PlacementRelation { get; private set; }
+        [DataMember(Order = 16)] public string AnchorLayoutId { get; private set; }
+        [DataMember(Order = 17)] public DerivedColumnPlacementContract Placement { get; private set; }
+        [DataMember(Order = 18)] public string[] Requirements { get; private set; }
     }
 }

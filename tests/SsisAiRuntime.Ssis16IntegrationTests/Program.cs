@@ -64,6 +64,8 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 stage = "pipeline.in_memory.edits";
                 var editApplication = new Application();
                 InMemoryPipelineEditTests.Run(prefix => FindComponent(editApplication, prefix));
+                stage = "pipeline.path_splice.fixtures";
+                DataFlowPathSpliceFixtureTests.Run();
                 stage = "pipeline.in_memory.schema_edits";
                 InMemorySchemaEditTests.Run(prefix => FindComponent(editApplication, prefix));
                 stage = "flow.component.catalog";

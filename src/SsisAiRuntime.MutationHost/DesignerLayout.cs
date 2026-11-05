@@ -271,14 +271,15 @@ namespace SsisAiRuntime.MutationHost
                     var destinationPortLayoutId = destinationLayoutId + ".Inputs[" + path.EndPoint.Name + "]";
                     var endpointKey = PathEndpointKey(sourcePortLayoutId, destinationPortLayoutId);
                     var routeLayoutId = pathLayoutIds.TryGetValue(endpointKey, out var savedPathId)
-                        ? savedPathId : taskLayoutId + ".Paths[" + path.Name + "]";
+                        ? savedPathId : nativeRouteId;
+                    var connectionLayoutId = taskLayoutId + ".Paths[" + sourcePortLayoutId + "->" + destinationPortLayoutId + "]";
                     var route = routePoints.TryGetValue(routeLayoutId, out var referenceRoute)
                         ? referenceRoute
                         : routePoints.TryGetValue(nativeRouteId, out var nativeRoute) ? nativeRoute : null;
                     connections.Add(new DesignerConnection(task.ID, path.ID.ToString(CultureInfo.InvariantCulture),
                         source.ID.ToString(CultureInfo.InvariantCulture), path.StartPoint.ID.ToString(CultureInfo.InvariantCulture),
                         destination.ID.ToString(CultureInfo.InvariantCulture), path.EndPoint.ID.ToString(CultureInfo.InvariantCulture),
-                        route, routeLayoutId, sourceLayoutId, sourcePortLayoutId, destinationLayoutId, destinationPortLayoutId));
+                        route, connectionLayoutId, sourceLayoutId, sourcePortLayoutId, destinationLayoutId, destinationPortLayoutId));
                 }
             }
 

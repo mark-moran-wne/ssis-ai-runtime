@@ -610,6 +610,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             string taskId;
             string sourceId;
             string destinationId;
+            string pathId;
             int lineageId;
             try
             {
@@ -693,6 +694,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                         .Single(component => component.Name == "Destination");
                     sourceId = sourceComponent.ID.ToString();
                     destinationId = destinationComponent.ID.ToString();
+                    pathId = sourcePipeline.PathCollection.Cast<IDTSPath100>().Single().ID.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     lineageId = sourceComponent.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut)
                         .OutputColumnCollection.Cast<IDTSOutputColumn100>().Single(column => column.Name == "InputValue").LineageID;
                 }
@@ -703,6 +705,8 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var capabilities = Program.RunExecutable(cli, new[] { "ai", "mutation.capabilities" }, 0);
                 Require((bool)capabilities["succeeded"] &&
                     ((JArray)capabilities["results"]["operations"]).Count == 5 &&
+                    ((JArray)capabilities["results"]["operations"][0]["requiredInputs"]).Any(value => (string)value == "pathId") &&
+                    ((JArray)capabilities["results"]["operations"][1]["requiredInputs"]).Any(value => (string)value == "pathId") &&
                     ((JArray)capabilities["results"]["operations"][1]["inputSchema"]["properties"]["outputDataType"]["enum"])
                         .Any(value => (string)value == "DT_WSTR") &&
                     (string)capabilities["results"]["operations"][2]["name"] == "update_transfer_tables" &&
@@ -720,6 +724,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     ["schemaVersion"] = "1.0",
                     ["operation"] = "insert_derived_column",
                     ["taskId"] = taskId,
+                    ["pathId"] = pathId,
                     ["sourceComponentId"] = sourceId,
                     ["destinationComponentId"] = destinationId,
                     ["sourceLineageId"] = lineageId,
@@ -766,6 +771,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var previewJson = plan.SerializePreviewContract();
                 Require(previewJson == plan.SerializePreviewContract() &&
                     previewJson.Contains("InsertDerivedColumn") && previewJson.Contains("RightOf") &&
+                    previewJson.Contains("PathLayoutId") && !previewJson.Contains("PathNativeId") &&
                     previewJson.Contains("Package\\\\InsertFlow\\\\Destination") &&
                     !previewJson.Contains("#" + lineageId + " + 1") &&
                     !previewJson.Contains("sourceNativeId") && !previewJson.Contains("destinationNativeId"),
@@ -806,6 +812,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             string taskId;
             string sourceId;
             string destinationId;
+            string pathId;
             int lineageId;
             try
             {
@@ -853,6 +860,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     var destination = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>().Single(component => component.Name == "Destination");
                     sourceId = source.ID.ToString();
                     destinationId = destination.ID.ToString();
+                    pathId = pipeline.PathCollection.Cast<IDTSPath100>().Single().ID.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     lineageId = source.OutputCollection.Cast<IDTSOutput100>().First(port => !port.IsErrorOut)
                         .OutputColumnCollection.Cast<IDTSOutputColumn100>().Single(column => column.Name == "IntegerValue").LineageID;
                 }
@@ -865,6 +873,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     ["schemaVersion"] = "1.0",
                     ["operation"] = "insert_data_conversion",
                     ["taskId"] = taskId,
+                    ["pathId"] = pathId,
                     ["sourceComponentId"] = sourceId,
                     ["destinationComponentId"] = destinationId,
                     ["sourceLineageId"] = lineageId,
@@ -895,7 +904,8 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     new ComponentPlacementIntent(taskId, ComponentPlacementRelation.RightOf, destinationId, 140, 42));
                 var preview = plan.SerializePreviewContract();
                 Require(preview.Contains("InsertDataConversion") && preview.Contains("DT_WSTR") &&
-                    preview.Contains("RightOf") && !preview.Contains("sourceNativeId") &&
+                    preview.Contains("RightOf") && preview.Contains("PathLayoutId") &&
+                    !preview.Contains("PathNativeId") && !preview.Contains("sourceNativeId") &&
                     !preview.Contains("destinationNativeId"), "dataconvert.preview_contract");
                 var result = host.ExecuteAsync(new MutationHostRequest(sourcePath, destinationPath, plan, hash),
                     CancellationToken.None).GetAwaiter().GetResult();

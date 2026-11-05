@@ -148,26 +148,55 @@ namespace SsisAiRuntime.Cli
             var placementIntent = new ComponentPlacementIntent(taskId, relation, anchorId,
                 RequiredInt(placement, "width"), RequiredInt(placement, "height"));
 
-            var sourceComponentId = RequiredString(request, "sourceComponentId");
-            var destinationComponentId = RequiredString(request, "destinationComponentId");
+            var pathNativeId = OptionalString(request, "pathId");
+            var sourceComponentId = OptionalString(request, "sourceComponentId");
+            var destinationComponentId = OptionalString(request, "destinationComponentId");
             var sourceLineageId = RequiredInt(request, "sourceLineageId");
             var componentName = RequiredString(request, "componentName");
             var outputName = RequiredString(request, "outputName");
 
             if (operation == "insert_derived_column")
             {
-                return DerivedColumnInsertionPlan.Create(package, sourceHash, taskId, sourceComponentId,
-                    destinationComponentId, sourceLineageId, componentName, outputName,
+                if (!string.IsNullOrWhiteSpace(pathNativeId))
+                {
+                    var plan = DerivedColumnInsertionPlan.CreateForPath(package, sourceHash, taskId, pathNativeId,
+                        sourceLineageId, componentName, outputName, RequiredString(request, "expression"),
+                        placementIntent, packagePath);
+                    ValidateOptionalInsertionEndpoints(sourceComponentId, destinationComponentId,
+                        plan.SourceComponentNativeId, plan.DestinationComponentNativeId);
+                    return plan;
+                }
+                return DerivedColumnInsertionPlan.Create(package, sourceHash, taskId, RequiredString(request, "sourceComponentId"),
+                    RequiredString(request, "destinationComponentId"), sourceLineageId, componentName, outputName,
                     RequiredString(request, "expression"), placementIntent, packagePath);
             }
 
             if (!Enum.TryParse(RequiredString(request, "outputDataType"), true,
                 out RuntimeWrapper.DataType outputDataType))
             { throw new ArgumentException("outputDataType"); }
-            return DataConversionInsertionPlan.Create(package, sourceHash, taskId, sourceComponentId,
-                destinationComponentId, sourceLineageId, componentName, outputName, outputDataType,
-                OptionalInt(request, "length"), OptionalInt(request, "precision"), OptionalInt(request, "scale"),
-                OptionalInt(request, "codePage"), placementIntent, packagePath);
+            if (!string.IsNullOrWhiteSpace(pathNativeId))
+            {
+                var plan = DataConversionInsertionPlan.CreateForPath(package, sourceHash, taskId, pathNativeId,
+                    sourceLineageId, componentName, outputName, outputDataType, OptionalInt(request, "length"),
+                    OptionalInt(request, "precision"), OptionalInt(request, "scale"), OptionalInt(request, "codePage"),
+                    placementIntent, packagePath);
+                ValidateOptionalInsertionEndpoints(sourceComponentId, destinationComponentId,
+                    plan.SourceComponentNativeId, plan.DestinationComponentNativeId);
+                return plan;
+            }
+            return DataConversionInsertionPlan.Create(package, sourceHash, taskId,
+                RequiredString(request, "sourceComponentId"), RequiredString(request, "destinationComponentId"),
+                sourceLineageId, componentName, outputName, outputDataType, OptionalInt(request, "length"),
+                OptionalInt(request, "precision"), OptionalInt(request, "scale"), OptionalInt(request, "codePage"),
+                placementIntent, packagePath);
+        }
+
+        private static void ValidateOptionalInsertionEndpoints(string sourceComponentId, string destinationComponentId,
+            string expectedSourceComponentId, string expectedDestinationComponentId)
+        {
+            if ((!string.IsNullOrWhiteSpace(sourceComponentId) && sourceComponentId != expectedSourceComponentId) ||
+                (!string.IsNullOrWhiteSpace(destinationComponentId) && destinationComponentId != expectedDestinationComponentId))
+            { throw new ArgumentException("path.endpoint_mismatch"); }
         }
 
         private static int RunTaskPropertyInspection(string packagePath, string taskId, TextWriter output)
@@ -343,11 +372,11 @@ namespace SsisAiRuntime.Cli
                     ["schemaVersion"] = "1.0",
                     ["operations"] = new JArray
                     {
-                        OperationCapability("insert_derived_column", "Preview a positioned Derived Column insertion.",
-                            new[] { "taskId", "sourceComponentId", "destinationComponentId", "sourceLineageId", "componentName", "outputName", "expression", "placement" },
+                        OperationCapability("insert_derived_column", "Insert a Derived Column on one selected Data Flow path.",
+                            new[] { "taskId", "pathId", "sourceLineageId", "componentName", "outputName", "expression", "placement" },
                             DerivedColumnInputProperties()),
-                        OperationCapability("insert_data_conversion", "Preview a positioned Data Conversion insertion.",
-                            new[] { "taskId", "sourceComponentId", "destinationComponentId", "sourceLineageId", "componentName", "outputName", "outputDataType", "placement" },
+                        OperationCapability("insert_data_conversion", "Insert a Data Conversion on one selected Data Flow path.",
+                            new[] { "taskId", "pathId", "sourceLineageId", "componentName", "outputName", "outputDataType", "placement" },
                             DataConversionInputProperties()),
                         OperationCapability("update_transfer_tables", "Replace, add, or remove tables in one Transfer SQL Server Objects Task.",
                             new[] { "taskId", "mode", "tableNames" }, TransferTablesInputProperties()),
@@ -357,7 +386,7 @@ namespace SsisAiRuntime.Cli
                             new[] { "taskId", "propertyName", "mode", "values" }, TaskCollectionInputProperties())
                     },
                     ["placementRelations"] = new JArray(PlacementRelations),
-                    ["packageShape"] = "Insertion operations currently support one pipeline task with two components and one path. Transfer table updates target the selected Transfer SQL Server Objects Task. User variables and event handlers are unsupported by insertion plans. Package connection managers are retained and validated offline.",
+                    ["packageShape"] = "Insertion operations select one task-scoped Data Flow path and splice a single-input, single-regular-output component; unrelated tasks, components, and paths are preserved. User variables and event handlers are unsupported by insertion plans. Package connection managers are retained and validated offline.",
                     ["applyAvailable"] = true,
                     ["applyCommand"] = "ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory>",
                     ["applyValidation"] = "Native Package.Validate runs offline and does not execute the package or connect to data sources."
@@ -458,8 +487,9 @@ namespace SsisAiRuntime.Cli
         private static JObject CommonInsertionInputProperties() => new JObject
         {
             ["taskId"] = StringField("Native ID of the data-flow task."),
-            ["sourceComponentId"] = StringField("Native ID of the component producing the selected lineage."),
-            ["destinationComponentId"] = StringField("Native ID of the component consuming the current path."),
+            ["pathId"] = StringField("Native path ID from the selected task's lineage.paths list."),
+            ["sourceComponentId"] = StringField("Optional legacy endpoint assertion; the selected path provides this identity."),
+            ["destinationComponentId"] = StringField("Optional legacy endpoint assertion; the selected path provides this identity."),
             ["sourceLineageId"] = IntegerField("Positive native lineage ID for the source column.", 1),
             ["componentName"] = StringField("Name for the new component."),
             ["outputName"] = StringField("Name for the new output column."),
