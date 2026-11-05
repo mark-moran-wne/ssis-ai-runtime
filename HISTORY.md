@@ -6,6 +6,7 @@
 - Generalized the MutationHost package-plan contract and exposed `update_transfer_tables` through `ai mutation.capabilities`, stdin-based `ai mutation.preview`, and `ai mutation.apply`.
 - Added native scratch tests for Transfer task TablesList save/reload, each edit mode, capability/schema discovery, preview, and host checkpoint/save/reload/verify lifecycle. No package Execute or database connection is used; the user-provided EAB package is not modified.
 - Added generic `ai task.properties` discovery plus typed `set_task_property` and `update_task_collection` preview/apply plans for writable TaskHost scalars and StringCollections. Enum-valued properties expose names and accept enum names instead of guessed numeric codes. Transfer collection modes update/refuse on their corresponding CopyAll flags; `TablesList` remains routed through its specialized plan. Native tests cover scalar apply and enum/property discovery without database connections.
+- Fixed a duplicated StringCollection mode-schema description that prevented the CLI from compiling. The Release solution build and documented gates pass: 200 runtime tests, 13 corpus tests, 23 mutation-contract tests, the default SSIS 16 harness, and all 30 MutationHost lifecycle cases. The build retains the known `CS8012` warning for the installed SSIS `DTSRuntimeWrap` interop reference.
 
 ## 2026-11-03 Designer Layout Round-Trip
 

@@ -450,8 +450,7 @@ namespace SsisAiRuntime.Cli
             {
                 ["type"] = "string",
                 ["enum"] = new JArray("Replace", "Add", "Remove"),
-                ["description"] = "Replace sets the exact collection; Add preserves existing items; Remove preserves unlisted items. Transfer task collections also check/update matching CopyAll flags."
-                ["description"] = "Replace sets the exact list; Add preserves existing items; Remove preserves unlisted items. Transfer task collections also update or check their matching CopyAll flags."
+                ["description"] = "Replace sets the exact list; Add preserves existing items; Remove preserves unlisted items. Transfer task collections check or update their matching CopyAll flags."
             },
             ["values"] = new JObject { ["type"] = "array", ["items"] = new JObject { ["type"] = "string" } }
         };
