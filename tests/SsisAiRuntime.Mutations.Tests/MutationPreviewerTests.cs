@@ -137,42 +137,45 @@ public sealed class MutationPreviewerTests
     {
         var preview = new MutationPreviewer().Preview(Snapshot(),
             Rename(SemanticObjectKind.Executable, "task-1", "Renamed"));
-        var request = preview.Request;
-        var plan = preview.ExecutionPlan;
-        var result = new MutationResult(MutationExecutionStatus.PreviewOnly, "mutation.preview_only");
-        var contracts = new (Type Type, string Json, string Name)[]
-        {
-            (typeof(MutationRequest), MutationContractSerializer.Serialize(request), "MutationRequest"),
-            (typeof(MutationPreview), MutationContractSerializer.Serialize(preview), "MutationPreview"),
-            (typeof(MutationExecutionPlan), MutationContractSerializer.Serialize(plan), "MutationExecutionPlan"),
-            (typeof(MutationResult), MutationContractSerializer.Serialize(result), "MutationResult")
-        };
+        var envelope = CreateEnvelope(preview, new string('a', 64));
+        var json = MutationContractSerializer.Serialize(envelope);
+        var document = JObject.Parse(json);
 
-        foreach (var contract in contracts)
-        {
-            var serializedAgain = contract.Type == typeof(MutationRequest)
-                ? MutationContractSerializer.Serialize(request)
-                : contract.Type == typeof(MutationPreview)
-                    ? MutationContractSerializer.Serialize(preview)
-                    : contract.Type == typeof(MutationExecutionPlan)
-                        ? MutationContractSerializer.Serialize(plan)
-                        : MutationContractSerializer.Serialize(result);
-            var document = JObject.Parse(contract.Json);
-            Assert.Equal(contract.Json, serializedAgain);
-            Assert.Equal(MutationContractSchema.CurrentVersion, (string)document["schemaVersion"]!);
-            Assert.Equal(contract.Name, (string)document["contractType"]!);
-            Assert.All(contract.Type.GetProperties(BindingFlags.Instance | BindingFlags.Public), property =>
+        Assert.Equal(json, MutationContractSerializer.Serialize(envelope));
+        Assert.Equal("2.0", (string)document["schemaVersion"]!);
+        Assert.Equal("rename_task", (string)document["operation"]!);
+        Assert.Equal("Executable", (string)document["target"]!["kind"]!);
+        Assert.Equal("task-1", (string)document["target"]!["nativeId"]!);
+        Assert.Equal(new string('a', 64), (string)document["sourceArtifactHash"]!);
+        Assert.Equal(16, (int)document["result"]!["runtime"]!["ssisMajorVersion"]!);
+        Assert.Equal("TaskHostRename", (string)document["result"]!["adapter"]!["kind"]!);
+        Assert.Equal("AppliedAndVerified", (string)document["result"]!["mutation"]!["outcome"]!);
+        Assert.Equal("Succeeded", (string)document["result"]!["validation"]!["status"]!);
+        Assert.True(MutationContractSchema.IsCompatible("2.0"));
+        Assert.False(MutationContractSchema.IsCompatible("1.0"));
+        Assert.False(MutationContractSchema.IsCompatible("1.1"));
+        Assert.All(typeof(MutationEnvelope<MutationTarget, MutationRequest, MutationPreview, string>)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public), property =>
                 Assert.Null(property.SetMethod?.IsPublic == true ? property.SetMethod : null));
-        }
-
-        Assert.True(MutationContractSchema.IsCompatible("1.4"));
-        Assert.False(MutationContractSchema.IsCompatible("2.0"));
-        Assert.Equal("PreviewOnly", (string)JObject.Parse(contracts[3].Json)["payload"]!["status"]!);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<string>)envelope.Diagnostics).Add("mutation.extra"));
         Assert.Throws<NotSupportedException>(() =>
             ((IList<string>)preview.Impact.AffectedNodeKeys).Add("Executable:mutated"));
         Assert.Throws<NotSupportedException>(() =>
             ((IList<UnsupportedItem>)preview.CoverageGaps).Add(
                 new UnsupportedItem("id", "name", "task", "coverage")));
+
+        var creationRequirements = new MutationExecutionRequirements(false, false, false, false, false,
+            Array.Empty<string>(), requiresExistingSource: false);
+        var creation = new MutationEnvelope<string, string, string, string>(
+            "create_package", null!, "bootstrap", null!, creationRequirements, null!, null!,
+            Array.Empty<string>(), Array.Empty<string>(),
+            new MutationRedactionStatus("mutation", true, true, true));
+        Assert.Equal(string.Empty, (string)JObject.Parse(MutationContractSerializer.Serialize(creation))["sourceArtifactHash"]!);
+        Assert.Throws<ArgumentException>(() => new MutationEnvelope<MutationTarget, string, string, string>(
+            "rename_task", preview.Request.Target, "Renamed", null!,
+            preview.ExecutionPlan.Requirements, null!, null!, Array.Empty<string>(), Array.Empty<string>(),
+            new MutationRedactionStatus("mutation", true, true, true)));
     }
 
     [Fact]
@@ -212,10 +215,11 @@ public sealed class MutationPreviewerTests
             "semanticdiff.required", "validation.required"
         }, requirements.Requirements);
 
-        var document = JObject.Parse(MutationContractSerializer.Serialize(plan));
-        Assert.Equal("1.1", (string)document["schemaVersion"]!);
-        var serialized = (JObject)document["payload"]!["requirements"]!;
-        Assert.Equal(6, serialized.Count);
+        var document = JObject.Parse(MutationContractSerializer.Serialize(
+            CreateEnvelope(preview, new string('b', 64))));
+        Assert.Equal("2.0", (string)document["schemaVersion"]!);
+        var serialized = (JObject)document["requirements"]!;
+        Assert.Equal(7, serialized.Count);
         foreach (var flag in new[]
         {
             "checkpointRequired", "saveAsRequired", "reloadRequired",
@@ -224,10 +228,8 @@ public sealed class MutationPreviewerTests
         {
             Assert.True((bool)serialized[flag]!);
         }
+            Assert.True((bool)serialized["requiresExistingSource"]!);
         Assert.Equal(requirements.Requirements, serialized["requirements"]!.Values<string>());
-        var previewDocument = JObject.Parse(MutationContractSerializer.Serialize(preview));
-        Assert.True(JToken.DeepEquals(serialized,
-            previewDocument["payload"]!["executionPlan"]!["requirements"]));
         Assert.Throws<ArgumentNullException>(() => new MutationExecutionPlan(
             plan.Request, plan.ExpectedCurrentName, plan.ProposedName, plan.Impact, null!));
     }
@@ -235,6 +237,8 @@ public sealed class MutationPreviewerTests
     [Fact]
     public void RequirementsAreCopiedDeduplicatedSortedAndImmutable()
     {
+        var preview = new MutationPreviewer().Preview(Snapshot(),
+            Rename(SemanticObjectKind.Executable, "task-1", "Renamed"));
         var source = new List<string> { "validation.required", "checkpoint.required", "validation.required" };
         var requirements = new MutationExecutionRequirements(false, false, false, false, false, source);
         source.Clear();
@@ -246,13 +250,27 @@ public sealed class MutationPreviewerTests
         Assert.Throws<ArgumentNullException>(() =>
             new MutationExecutionRequirements(false, false, false, false, false, null!));
 
-        var request = Rename(SemanticObjectKind.Executable, "task-1", "Renamed");
-        var impact = new MutationImpact(MutationRisk.Low, "Rename", Array.Empty<string>());
         var reordered = new MutationExecutionRequirements(false, false, false, false, false,
             new[] { "checkpoint.required", "validation.required" });
         Assert.Equal(
-            MutationContractSerializer.Serialize(new MutationExecutionPlan(request, "Load", "Renamed", impact, requirements)),
-            MutationContractSerializer.Serialize(new MutationExecutionPlan(request, "Load", "Renamed", impact, reordered)));
+            MutationContractSerializer.Serialize(CreateEnvelope(preview, new string('d', 64), requirements)),
+            MutationContractSerializer.Serialize(CreateEnvelope(preview, new string('d', 64), reordered)));
+    }
+
+    private static MutationEnvelope<MutationTarget, MutationRequest, MutationPreview, string> CreateEnvelope(
+        MutationPreview preview, string sourceArtifactHash, MutationExecutionRequirements? requirements = null)
+    {
+        var success = new MutationStageResult(MutationStageStatus.Succeeded, Array.Empty<string>());
+        var result = new MutationEnvelopeResult<string>(
+            new MutationRuntimeIdentity(16, "x64"), new MutationAdapterIdentity("TaskHostRename", "1"),
+            new MutationOperationResult<string>(MutationOutcome.AppliedAndVerified, "mutation.completed", "Renamed"),
+            new MutationArtifactResult(MutationStageStatus.Succeeded, sourceArtifactHash, new string('c', 64), "checkpoint-1"),
+            success, success, success, new MutationStageResult(MutationStageStatus.NotApplicable, Array.Empty<string>()),
+            new MutationRollbackResult(MutationRollbackStatus.NotRequired, null));
+        return new MutationEnvelope<MutationTarget, MutationRequest, MutationPreview, string>(
+            "rename_task", preview.Request.Target, preview.Request, sourceArtifactHash,
+            requirements ?? preview.ExecutionPlan.Requirements, preview, result, Array.Empty<string>(), Array.Empty<string>(),
+            new MutationRedactionStatus("mutation", true, true, true));
     }
 
     private static MutationRequest Rename(SemanticObjectKind kind, string nativeId, string proposedName) =>

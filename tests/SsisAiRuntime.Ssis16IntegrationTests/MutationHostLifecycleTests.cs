@@ -319,41 +319,52 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                         "transfer-task.enum-discovery");
                     var enumRequest = new JObject
                     {
-                        ["schemaVersion"] = "1.0", ["operation"] = "set_task_property",
-                        ["taskId"] = host.ID, ["propertyName"] = "ExistingData", ["value"] = "Append"
+                        ["schemaVersion"] = "2.0", ["operation"] = "set_task_property",
+                        ["target"] = new JObject { ["kind"] = "TaskHost", ["nativeId"] = host.ID },
+                        ["request"] = new JObject { ["propertyName"] = "ExistingData", ["value"] = "Append" },
+                        ["sourceArtifactHash"] = Hash(path)
                     };
                     var enumPreview = Program.RunExecutableWithInput(cli,
                         new[] { "ai", "mutation.preview", path }, enumRequest.ToString(), 0);
                     Require((bool)enumPreview["succeeded"] &&
-                        (string)enumPreview["results"]["preview"]["resultingValue"] == "Append",
+                        (string)enumPreview["preview"]["resultingValue"] == "Append",
                         "transfer-task.enum-name-preview");
                     var request = new JObject
                     {
-                        ["schemaVersion"] = "1.0",
+                        ["schemaVersion"] = "2.0",
                         ["operation"] = "update_transfer_tables",
-                        ["taskId"] = host.ID,
-                        ["mode"] = "Add",
-                        ["tableNames"] = new JArray("ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards")
+                        ["target"] = new JObject { ["kind"] = "TaskHost", ["nativeId"] = host.ID },
+                        ["request"] = new JObject
+                        {
+                            ["mode"] = "Add",
+                            ["tableNames"] = new JArray("ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards")
+                        },
+                        ["sourceArtifactHash"] = Hash(path)
                     };
                     var preview = Program.RunExecutableWithInput(cli,
                         new[] { "ai", "mutation.preview", path }, request.ToString(), 0);
                     Require((bool)preview["succeeded"] &&
-                        (string)preview["results"]["preview"]["operation"] == "UpdateTransferTables" &&
-                        ((JArray)preview["results"]["preview"]["resultingTables"]).Select(item => (string)item)
+                        (string)preview["preview"]["operation"] == "UpdateTransferTables" &&
+                        ((JArray)preview["preview"]["resultingTables"]).Select(item => (string)item)
                             .SequenceEqual(new[] { "PersonCards", "ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS" }) &&
                         !(bool)preview["packageExecuted"] && !(bool)preview["nativeValidationPerformed"],
                         "transfer-task.cli.preview");
                     var collectionRequest = new JObject
                     {
-                        ["schemaVersion"] = "1.0", ["operation"] = "update_task_collection",
-                        ["taskId"] = host.ID, ["propertyName"] = "ViewsList", ["mode"] = "Replace",
-                        ["values"] = new JArray("PersonCardsView")
+                        ["schemaVersion"] = "2.0", ["operation"] = "update_task_collection",
+                        ["target"] = new JObject { ["kind"] = "TaskHost", ["nativeId"] = host.ID },
+                        ["request"] = new JObject
+                        {
+                            ["propertyName"] = "ViewsList", ["mode"] = "Replace",
+                            ["values"] = new JArray("PersonCardsView")
+                        },
+                        ["sourceArtifactHash"] = Hash(path)
                     };
                     var collectionPreview = Program.RunExecutableWithInput(cli,
                         new[] { "ai", "mutation.preview", path }, collectionRequest.ToString(), 0);
                     Require((bool)collectionPreview["succeeded"] &&
-                        (string)collectionPreview["results"]["preview"]["operation"] == "TaskPropertyMutation" &&
-                        ((JArray)collectionPreview["results"]["preview"]["resultingCollection"])
+                        (string)collectionPreview["preview"]["operation"] == "TaskPropertyMutation" &&
+                        ((JArray)collectionPreview["preview"]["resultingCollection"])
                             .Any(value => (string)value == "PersonCardsView"),
                         "transfer-task.generic-collection-preview");
                 }
@@ -497,26 +508,44 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     "task-property.cli.describe");
                 var request = new JObject
                 {
-                    ["schemaVersion"] = "1.0", ["operation"] = "set_task_property",
-                    ["taskId"] = taskId, ["propertyName"] = "DefaultBufferMaxRows", ["value"] = original + 1
+                    ["schemaVersion"] = "2.0", ["operation"] = "set_task_property",
+                    ["target"] = new JObject { ["kind"] = "TaskHost", ["nativeId"] = taskId },
+                    ["request"] = new JObject { ["propertyName"] = "DefaultBufferMaxRows", ["value"] = original + 1 },
+                    ["sourceArtifactHash"] = Hash(path)
                 };
                 var preview = Program.RunExecutableWithInput(cli,
                     new[] { "ai", "mutation.preview", path }, request.ToString(), 0, 4);
                 Require((bool)preview["succeeded"], "task-property.cli.preview.failed:" +
                     string.Join(",", ((JArray)preview["diagnostics"]).Select(item => (string)item["code"])));
                 Require((bool)preview["succeeded"] &&
-                    (string)preview["results"]["preview"]["operation"] == "TaskPropertyMutation" &&
-                    (string)preview["results"]["preview"]["propertyName"] == "DefaultBufferMaxRows",
+                    (string)preview["preview"]["operation"] == "TaskPropertyMutation" &&
+                    (string)preview["preview"]["propertyName"] == "DefaultBufferMaxRows",
                     "task-property.cli.preview");
+                var legacyRequest = (JObject)request.DeepClone();
+                legacyRequest["schemaVersion"] = "1.0";
+                var legacyResponse = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", path }, legacyRequest.ToString(), 2);
+                Require(!(bool)legacyResponse["succeeded"] &&
+                    (string)legacyResponse["schemaVersion"] == "2.0" &&
+                    (string)legacyResponse["diagnostics"][0]["code"] == "ai.mutation.request.schema_unsupported",
+                    "task-property.legacy-schema-rejected");
                 var sourceHash = Hash(path);
                 var apply = Program.RunExecutableWithInput(cli,
                     new[] { "ai", "mutation.apply", path, destinationPath, checkpointDirectory }, request.ToString(), 0, 4);
                 Require((bool)apply["succeeded"], "task-property.cli.apply.failed:" +
                     string.Join(",", ((JArray)apply["diagnostics"]).Select(item => (string)item["code"])));
-                Require((bool)apply["succeeded"] && (bool)apply["results"]["validationSucceeded"] &&
-                    (bool)apply["results"]["semanticDiffMatched"] && Hash(path) == sourceHash &&
+                Require((bool)apply["succeeded"] && (string)apply["result"]["validation"]["status"] == "Succeeded" &&
+                    (string)apply["result"]["semanticVerification"]["status"] == "Succeeded" && Hash(path) == sourceHash &&
                     Directory.GetFiles(checkpointDirectory, "*.dtsx").Length == 1,
                     "task-property.cli.apply");
+                var refusedApply = Program.RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.apply", path, destinationPath, checkpointDirectory }, request.ToString(), 4);
+                Require(!(bool)refusedApply["succeeded"] &&
+                    (string)refusedApply["result"]["mutation"]["outcome"] == "RejectedBeforeMutation" &&
+                    (string)refusedApply["result"]["rollback"]["status"] == "NotRequired" &&
+                    refusedApply["result"]["rollback"]["sourceRestored"].Type == JTokenType.Null &&
+                    Hash(path) == sourceHash,
+                    "task-property.cli.refusal-does-not-claim-restoration");
                 var output = new PackageLoader().Load(destinationPath);
                 Require(output.Succeeded, "task-property.output-load");
                 try
@@ -705,8 +734,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var capabilities = Program.RunExecutable(cli, new[] { "ai", "mutation.capabilities" }, 0);
                 Require((bool)capabilities["succeeded"] &&
                     ((JArray)capabilities["results"]["operations"]).Count == 5 &&
-                    ((JArray)capabilities["results"]["operations"][0]["requiredInputs"]).Any(value => (string)value == "pathId") &&
-                    ((JArray)capabilities["results"]["operations"][1]["requiredInputs"]).Any(value => (string)value == "pathId") &&
+                    (string)capabilities["results"]["requestEnvelopeSchema"]["properties"]["schemaVersion"]["const"] == "2.0" &&
+                    (string)capabilities["results"]["operations"][0]["targetKind"] == "DataFlowPath" &&
+                    (string)capabilities["results"]["operations"][1]["targetKind"] == "DataFlowPath" &&
+                    ((JArray)capabilities["results"]["operations"][0]["requiredInputs"]).Any(value => (string)value == "sourceLineageId") &&
+                    ((JArray)capabilities["results"]["operations"][1]["requiredInputs"]).Any(value => (string)value == "sourceLineageId") &&
                     ((JArray)capabilities["results"]["operations"][1]["inputSchema"]["properties"]["outputDataType"]["enum"])
                         .Any(value => (string)value == "DT_WSTR") &&
                     (string)capabilities["results"]["operations"][2]["name"] == "update_transfer_tables" &&
@@ -721,26 +753,29 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     "insert.ai.capabilities");
                 var previewRequest = new JObject
                 {
-                    ["schemaVersion"] = "1.0",
+                    ["schemaVersion"] = "2.0",
                     ["operation"] = "insert_derived_column",
-                    ["taskId"] = taskId,
-                    ["pathId"] = pathId,
-                    ["sourceComponentId"] = sourceId,
-                    ["destinationComponentId"] = destinationId,
-                    ["sourceLineageId"] = lineageId,
-                    ["componentName"] = "AddCalculated",
-                    ["outputName"] = "CalculatedValue",
-                    ["expression"] = "#" + lineageId + " + 1",
-                    ["placement"] = new JObject
+                    ["target"] = new JObject { ["kind"] = "DataFlowPath", ["nativeId"] = pathId, ["ownerNativeId"] = taskId },
+                    ["request"] = new JObject
                     {
-                        ["relation"] = "RightOf", ["anchorComponentId"] = destinationId,
-                        ["width"] = 140, ["height"] = 42
-                    }
+                        ["sourceComponentId"] = sourceId,
+                        ["destinationComponentId"] = destinationId,
+                        ["sourceLineageId"] = lineageId,
+                        ["componentName"] = "AddCalculated",
+                        ["outputName"] = "CalculatedValue",
+                        ["expression"] = "#" + lineageId + " + 1",
+                        ["placement"] = new JObject
+                        {
+                            ["relation"] = "RightOf", ["anchorComponentId"] = destinationId,
+                            ["width"] = 140, ["height"] = 42
+                        }
+                    },
+                    ["sourceArtifactHash"] = Hash(sourcePath)
                 };
                 var cliPreview = Program.RunExecutableWithInput(cli,
                     new[] { "ai", "mutation.preview", sourcePath }, previewRequest.ToString(), 0);
                 Require((bool)cliPreview["succeeded"], "insert.ai.preview.success");
-                Require((string)cliPreview["results"]["preview"]["operation"] == "InsertDerivedColumn",
+                Require((string)cliPreview["preview"]["operation"] == "InsertDerivedColumn",
                     "insert.ai.preview.operation");
                 Require(!cliPreview.ToString().Contains("#" + lineageId + " + 1"), "insert.ai.preview.expression_redacted");
                 Require(!(bool)cliPreview["packageExecuted"] && !(bool)cliPreview["nativeValidationPerformed"],
@@ -752,14 +787,17 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     new[] { "ai", "mutation.apply", sourcePath, cliDestination, cliCheckpointDirectory },
                     previewRequest.ToString(), 0);
                 Require((bool)cliApply["succeeded"] && (int)cliApply["exitCode"] == 0 &&
-                    (string)cliApply["results"]["code"] == "mutation.completed" &&
-                    (bool)cliApply["nativeValidationPerformed"] && (bool)cliApply["results"]["validationSucceeded"] &&
-                    (bool)cliApply["results"]["semanticDiffMatched"] && (bool)cliApply["results"]["saveAsCompleted"] &&
-                    (bool)cliApply["results"]["reloadSucceeded"] && File.Exists(cliDestination),
+                    (string)cliApply["result"]["mutation"]["diagnosticCode"] == "mutation.completed" &&
+                    (bool)cliApply["nativeValidationPerformed"] &&
+                    (string)cliApply["result"]["validation"]["status"] == "Succeeded" &&
+                    (string)cliApply["result"]["semanticVerification"]["status"] == "Succeeded" &&
+                    (string)cliApply["result"]["layoutVerification"]["status"] == "Succeeded" &&
+                    (string)cliApply["result"]["artifact"]["status"] == "Succeeded" &&
+                    (string)cliApply["result"]["reload"]["status"] == "Succeeded" && File.Exists(cliDestination),
                     "insert.ai.apply.completed");
                 Require(((JArray)cliApply["diagnostics"]).Count == 0 &&
                     Directory.GetFiles(cliCheckpointDirectory, "*.dtsx").Length == 1 && Hash(sourcePath) == sourceHash &&
-                    (string)cliApply["results"]["destinationArtifactHash"] == Hash(cliDestination),
+                    (string)cliApply["result"]["artifact"]["destinationArtifactHash"] == Hash(cliDestination),
                     "insert.ai.apply.checkpoint_and_source_preserved");
                 var checkpoint = new TestCheckpoint(checkpointPath);
                 var validator = new TestValidator();
@@ -870,28 +908,31 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
                 var previewRequest = new JObject
                 {
-                    ["schemaVersion"] = "1.0",
+                    ["schemaVersion"] = "2.0",
                     ["operation"] = "insert_data_conversion",
-                    ["taskId"] = taskId,
-                    ["pathId"] = pathId,
-                    ["sourceComponentId"] = sourceId,
-                    ["destinationComponentId"] = destinationId,
-                    ["sourceLineageId"] = lineageId,
-                    ["componentName"] = "ConvertInteger",
-                    ["outputName"] = "IntegerText",
-                    ["outputDataType"] = "DT_WSTR",
-                    ["length"] = 32,
-                    ["placement"] = new JObject
+                    ["target"] = new JObject { ["kind"] = "DataFlowPath", ["nativeId"] = pathId, ["ownerNativeId"] = taskId },
+                    ["request"] = new JObject
                     {
-                        ["relation"] = "RightOf", ["anchorComponentId"] = destinationId,
-                        ["width"] = 140, ["height"] = 42
-                    }
+                        ["sourceComponentId"] = sourceId,
+                        ["destinationComponentId"] = destinationId,
+                        ["sourceLineageId"] = lineageId,
+                        ["componentName"] = "ConvertInteger",
+                        ["outputName"] = "IntegerText",
+                        ["outputDataType"] = "DT_WSTR",
+                        ["length"] = 32,
+                        ["placement"] = new JObject
+                        {
+                            ["relation"] = "RightOf", ["anchorComponentId"] = destinationId,
+                            ["width"] = 140, ["height"] = 42
+                        }
+                    },
+                    ["sourceArtifactHash"] = Hash(sourcePath)
                 };
                 var cliPreview = Program.RunExecutableWithInput(cli,
                     new[] { "ai", "mutation.preview", sourcePath }, previewRequest.ToString(), 0);
                 Require((bool)cliPreview["succeeded"] &&
-                    (string)cliPreview["results"]["preview"]["operation"] == "InsertDataConversion" &&
-                    (string)cliPreview["results"]["preview"]["outputDataType"] == "DT_WSTR" &&
+                    (string)cliPreview["preview"]["operation"] == "InsertDataConversion" &&
+                    (string)cliPreview["preview"]["outputDataType"] == "DT_WSTR" &&
                     !(bool)cliPreview["packageExecuted"] && !(bool)cliPreview["nativeValidationPerformed"],
                     "dataconvert.ai.preview");
                 Require(Hash(sourcePath) == hash, "dataconvert.ai.preview.source_preserved");

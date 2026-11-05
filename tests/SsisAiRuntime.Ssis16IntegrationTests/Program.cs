@@ -1169,7 +1169,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 System.Threading.Tasks.Task.WaitAll(stdin, stdout, stderr);
                 Require(allowedExitCodes.Contains(process.ExitCode), "fixture.cli.exit");
                 var report = JObject.Parse(stdout.Result);
-                Require((string)report["schemaVersion"] == "1.0" && (int)report["exitCode"] == process.ExitCode, "fixture.cli.envelope");
+                var mutationRoute = arguments.Length > 1 && arguments[0] == "ai" &&
+                    arguments[1].StartsWith("mutation.", StringComparison.Ordinal);
+                var expectedSchema = mutationRoute ? "2.0" : "1.0";
+                Require((string)report["schemaVersion"] == expectedSchema &&
+                    (int)report["exitCode"] == process.ExitCode, "fixture.cli.envelope");
                 return report;
             }
         }

@@ -598,7 +598,7 @@ namespace SsisAiRuntime.MutationHost
             IEnumerable<string> resultingCollection, IEnumerable<string> changedFlagNames,
             IEnumerable<bool> originalFlagValues, IEnumerable<bool> resultingFlagValues, IEnumerable<string> requirements)
         {
-            SchemaVersion = "1.0";
+            SchemaVersion = "2.0";
             SourceArtifactHash = sourceArtifactHash;
             TaskName = taskName;
             PropertyName = propertyName;

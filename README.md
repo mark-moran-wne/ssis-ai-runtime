@@ -12,7 +12,7 @@ Current local implementation as of 2026-11-04. Implemented does not imply genera
 | Dependency and control-flow graphs | Implemented | Native identity, selectors, impact queries, and projected precedence relationships |
 | Expression and SQL dependencies | Implemented | Native column observations, heuristic lexical/scope bindings, and parsed T-SQL evidence |
 | Corpus baselines and fingerprints | Implemented | Versioned snapshots, diff/verify/approve, canonical SHA-256 fingerprints, and transient-ID normalization |
-| Mutation contracts and requirements | Implemented, limited | Generic schema 1.1 `MutationContracts` remain RenameTask-focused; MutationHost has typed plans for scalar/collection TaskHost edits, component insertion, and Transfer task table selection |
+| Mutation contracts and requirements | Implemented, limited | Common schema 2.0 envelope with strict typed CLI requests and lifecycle result categories; portable RenameTask preview remains limited, with native plans for TaskHost edits, component insertion, and Transfer table selection |
 | Artifact staging and checkpoints | Implemented, bounded | Separate destination, verification-gated publication, overwrite refusal, hash-verified `FileMutationCheckpointService`, and offline native validation |
 | Synthetic flow execution | Implemented | Native Derived Column, Int32-to-Int16/Int64 Data Conversion, and Unicode Flat File text probes with output assertions |
 | Coordinated column resizing | Bounded lifecycle verified | Exact-ID resize analysis and copy-edit plan supports grow/shrink; add/remove remain in-memory schema edits |
@@ -124,20 +124,24 @@ Usage:
 Output defaults to a bounded summary. Use --details for the full redacted projection.
 ```
 
-`ai task.properties <package.dtsx> --task <native-id>` lists native TaskHost property names, types, read/write availability, enum choices, and safe scalar or string-collection metadata. String setting values are omitted. `ai mutation.capabilities` reports available operations and their input schemas; it describes implemented tooling, not a restriction on user intent. Unsupported requests are surfaced as missing native capability, not rewritten as additive-only edits or manual XML changes. `ai mutation.preview` accepts schema `1.0` JSON on standard input for positioned insertions, `set_task_property`, `update_task_collection`, or `update_transfer_tables`. Scalar edits are type-checked against the native DtsProperty; enum-valued properties use the discovered names, not guessed integers. StringCollection edits support Replace/Add/Remove. For Transfer task collections, matching CopyAll flags are checked and updated as needed. The `update_transfer_tables` operation requires `taskId`, `mode` (`Replace`, `Add`, or `Remove`), and `tableNames`: Replace sets the exact selection, Add preserves existing names and appends missing ones, and Remove preserves unlisted names. Add/Remove refuse when catch-all flags are active; Replace explicitly disables the relevant flags. `ai mutation.apply` accepts the same request plus a separate destination and checkpoint directory, then runs the MutationHost checkpoint/save/reload/validate/verify lifecycle. Native `Package.Validate` runs offline; no package execution or data-source connection occurs. Failure prevents publication, and results contain safe diagnostic codes rather than expressions or package paths.
+`ai task.properties <package.dtsx> --task <native-id>` lists native TaskHost property names, types, read/write availability, enum choices, and safe scalar or string-collection metadata. String setting values are omitted. `ai mutation.capabilities` reports the schema 2.0 request envelope and operation-specific input schemas; it describes implemented tooling, not a restriction on user intent. Mutation requests must use schema `2.0`; all `1.x` mutation requests are rejected. Each request carries a typed `target`, typed operation-specific `request`, and SHA-256 `sourceArtifactHash` matching the package. Existing-artifact hashes are checked before planning; requirements and adapter identity are selected by the host. Corpus, inspection CLI, and FlowRunner schemas remain independently versioned.
 
-Transfer table-selection request example:
-For `insert_derived_column` and `insert_data_conversion`, use `taskId` plus `pathId` from that task's detailed `lineage.paths` inventory, `sourceLineageId`, component/output names, and placement. The selected path supplies both endpoint component IDs; optional `sourceComponentId` and `destinationComponentId` fields are accepted as assertions for compatibility. The adapter splices only that path and currently requires one input and one regular output on the inserted component. Branch, Merge output, and CrossedPaths are covered; component-specific metadata-refresh adapters such as Union All input handling remain follow-up work.
+Scalar edits are type-checked against the native DtsProperty; enum-valued properties use the discovered names, not guessed integers. StringCollection edits support Replace/Add/Remove. For Transfer task collections, matching CopyAll flags are checked and updated as needed. `update_transfer_tables` takes `target.kind = "TaskHost"` and a request containing `mode` (`Replace`, `Add`, or `Remove`) and `tableNames`: Replace sets the exact selection, Add preserves existing names and appends missing ones, and Remove preserves unlisted names. Add/Remove refuse when catch-all flags are active; Replace explicitly disables the relevant flags. `ai mutation.apply` accepts the same request plus a separate destination and checkpoint directory, then runs the MutationHost checkpoint/save/reload/validate/verify lifecycle. Native `Package.Validate` runs offline; no package execution or data-source connection occurs. Failure prevents publication, and result categories report artifact, reload, validation, semantic/layout verification, rollback, diagnostics, coverage, and redaction.
+
+For `insert_derived_column` and `insert_data_conversion`, set `target.kind` to `DataFlowPath`, `target.nativeId` to the selected `pathId`, and `target.ownerNativeId` to the owning task ID. Put the source lineage, component/output names, operation settings, and placement in `request`. The selected path supplies both endpoint component IDs; optional endpoint IDs are accepted only as assertions. The adapter splices only that path and currently requires one input and one regular output on the inserted component. Branch, Merge output, CrossedPaths, and Union All input insertion are covered by native probes.
 
 Transfer table-selection request example:
 
 ```json
 {
-  "schemaVersion": "1.0",
+	"schemaVersion": "2.0",
   "operation": "update_transfer_tables",
-  "taskId": "<transfer-task-native-id>",
-  "mode": "Replace",
-  "tableNames": ["ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards"]
+	"target": { "kind": "TaskHost", "nativeId": "<transfer-task-native-id>" },
+	"request": {
+		"mode": "Replace",
+		"tableNames": ["ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards"]
+	},
+	"sourceArtifactHash": "<source-package-sha256>"
 }
 ```
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using Newtonsoft.Json;
 
 namespace SsisAiRuntime.Mutations
 {
@@ -9,13 +10,14 @@ namespace SsisAiRuntime.Mutations
     {
         public MutationExecutionRequirements(bool checkpointRequired, bool saveAsRequired,
             bool reloadRequired, bool validationRequired, bool semanticDiffRequired,
-            IEnumerable<string> requirements)
+            IEnumerable<string> requirements, bool requiresExistingSource = true)
         {
             CheckpointRequired = checkpointRequired;
             SaveAsRequired = saveAsRequired;
             ReloadRequired = reloadRequired;
             ValidationRequired = validationRequired;
             SemanticDiffRequired = semanticDiffRequired;
+            RequiresExistingSource = requiresExistingSource;
             Requirements = new ReadOnlyCollection<string>(
                 (requirements ?? throw new ArgumentNullException(nameof(requirements)))
                     .Distinct(StringComparer.Ordinal)
@@ -28,7 +30,9 @@ namespace SsisAiRuntime.Mutations
         public bool ReloadRequired { get; }
         public bool ValidationRequired { get; }
         public bool SemanticDiffRequired { get; }
+        public bool RequiresExistingSource { get; }
         public IReadOnlyList<string> Requirements { get; }
+        [JsonIgnore]
         public bool RequiresLifecycle => CheckpointRequired || SaveAsRequired || ReloadRequired ||
             ValidationRequired || SemanticDiffRequired;
     }

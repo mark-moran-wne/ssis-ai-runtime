@@ -436,7 +436,7 @@ namespace SsisAiRuntime.MutationHost
             string componentName, string outputName, string placementRelation, string anchorLayoutId,
             decimal left, decimal top, decimal width, decimal height, System.Collections.Generic.IEnumerable<string> requirements)
         {
-            SchemaVersion = "1.0";
+            SchemaVersion = "2.0";
             SourceArtifactHash = sourceArtifactHash;
             OwnerLayoutId = ownerLayoutId;
             PathLayoutId = pathLayoutId;

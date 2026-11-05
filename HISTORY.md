@@ -1,5 +1,12 @@
 # SSIS AI Runtime History
 
+## 2026-11-05 Mutation Contract Schema 2.0
+
+- Replaced the mutation-only 1.x contract versions with exact schema `2.0`; legacy 1.x mutation requests are rejected. Corpus, inspection CLI, and FlowRunner schemas remain unchanged.
+- Migrated AI mutation requests to strict operation-specific payload DTOs and typed `TaskHost`/`DataFlowPath` targets. The caller must provide a SHA-256 source hash matching the package before preview or apply; lifecycle requirements and adapter selection remain host-owned.
+- Mutation preview/apply now serialize through the common immutable `MutationEnvelope`, reporting host runtime and selected adapter, artifact/reload/validation/semantic/layout stages, rollback, diagnostics, coverage, and redaction. Source artifacts remain separate from published destinations; layout-specific failure details are reported as unverified when MutationHost cannot distinguish them.
+- The complete `SSIS16-Mutation-Gate` passes on Windows x64 SSIS 16: Release solution build, 236 portable tests, default native harness, all 30 MutationHost lifecycle cases, designer/layout, 15 resize cases, exact path-splice fixtures, and clean Union All validation. The build retains the known `CS8012` interop warning. No package is executed or data source connected.
+
 ## 2026-11-05 Provider-Neutral SSIS 16 CI Gate
 
 - Added `eng/ci/Invoke-Ssis16MutationGate.ps1` as a provider-neutral Windows x64 gate runner. It executes the Release solution build, all portable suites, default native integration/fixture harness, MutationHost lifecycle, designer/layout, column-resize, exact path-splice, and Union All probes; any nonzero stage stops the gate. Package execution probes remain excluded.

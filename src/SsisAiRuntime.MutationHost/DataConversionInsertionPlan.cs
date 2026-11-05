@@ -381,7 +381,7 @@ namespace SsisAiRuntime.MutationHost
             int codePage, string relation, string anchor, decimal left, decimal top, decimal width, decimal height,
             IEnumerable<string> requirements)
         {
-            SchemaVersion = "1.0"; Operation = "InsertDataConversion"; SourceArtifactHash = sourceHash;
+            SchemaVersion = "2.0"; Operation = "InsertDataConversion"; SourceArtifactHash = sourceHash;
             OwnerLayoutId = owner; PathLayoutId = pathLayoutId; SourceComponentLayoutId = source; DestinationComponentLayoutId = destination;
             SourceColumnName = sourceColumn; ComponentName = component; OutputName = output; OutputDataType = dataType;
             Length = length; Precision = precision; Scale = scale; CodePage = codePage; PlacementRelation = relation;

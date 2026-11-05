@@ -276,7 +276,7 @@ namespace SsisAiRuntime.MutationHost
             bool originalCopyAllObjects, bool originalCopyAllTables, bool resultingCopyAllObjects,
             bool resultingCopyAllTables, IEnumerable<string> requirements)
         {
-            SchemaVersion = "1.0";
+            SchemaVersion = "2.0";
             SourceArtifactHash = sourceArtifactHash;
             TaskName = taskName;
             Mode = mode;

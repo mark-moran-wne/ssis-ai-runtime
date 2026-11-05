@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -9,6 +10,7 @@ using System.Threading;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Serialization;
 using SsisAiRuntime.Corpus;
 using SsisAiRuntime.MutationHost;
 using SsisAiRuntime.Mutations;
@@ -21,6 +23,72 @@ namespace SsisAiRuntime.Cli
     internal sealed class MutationAiCommandRunner
     {
         private static readonly string[] PlacementRelations = { "Below", "OpenSpace", "RightOf" };
+        private static readonly JsonSerializerSettings RequestSerializerSettings = new JsonSerializerSettings
+        {
+            ContractResolver = new CamelCasePropertyNamesContractResolver(),
+            MissingMemberHandling = MissingMemberHandling.Error,
+            NullValueHandling = NullValueHandling.Include
+        };
+
+        private sealed class MutationCommandTarget
+        {
+            [JsonProperty(Required = Required.Always)] public string Kind { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string NativeId { get; set; } = string.Empty;
+            [JsonProperty] public string? OwnerNativeId { get; set; }
+        }
+
+        private sealed class TaskPropertyRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string PropertyName { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public JToken? Value { get; set; }
+        }
+
+        private sealed class TaskCollectionRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string PropertyName { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string Mode { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string[]? Values { get; set; }
+        }
+
+        private sealed class TransferTablesRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string Mode { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string[]? TableNames { get; set; }
+        }
+
+        private sealed class DerivedColumnRequest
+        {
+            [JsonProperty(Required = Required.Always)] public int SourceLineageId { get; set; }
+            [JsonProperty(Required = Required.Always)] public string ComponentName { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string OutputName { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string Expression { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public MutationPlacementRequest? Placement { get; set; }
+            [JsonProperty] public string? SourceComponentId { get; set; }
+            [JsonProperty] public string? DestinationComponentId { get; set; }
+        }
+
+        private sealed class DataConversionRequest
+        {
+            [JsonProperty(Required = Required.Always)] public int SourceLineageId { get; set; }
+            [JsonProperty(Required = Required.Always)] public string ComponentName { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string OutputName { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public string OutputDataType { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public MutationPlacementRequest? Placement { get; set; }
+            [JsonProperty] public int? Length { get; set; }
+            [JsonProperty] public int? Precision { get; set; }
+            [JsonProperty] public int? Scale { get; set; }
+            [JsonProperty] public int? CodePage { get; set; }
+            [JsonProperty] public string? SourceComponentId { get; set; }
+            [JsonProperty] public string? DestinationComponentId { get; set; }
+        }
+
+        private sealed class MutationPlacementRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string Relation { get; set; } = string.Empty;
+            [JsonProperty(Required = Required.Always)] public int Width { get; set; }
+            [JsonProperty(Required = Required.Always)] public int Height { get; set; }
+            [JsonProperty] public string? AnchorComponentId { get; set; }
+        }
 
         public int Run(string[] args, TextReader input, TextWriter output)
         {
@@ -49,7 +117,9 @@ namespace SsisAiRuntime.Cli
             JObject request;
             try { request = JObject.Parse(input.ReadToEnd()); }
             catch { return WriteError(output, tool, 2, "ai.mutation.request.invalid"); }
-            if ((string?)request["schemaVersion"] != "1.0")
+            if ((string?)request["schemaVersion"] != MutationContractSchema.CurrentVersion ||
+                request.Properties().Any(property => property.Name != "schemaVersion" && property.Name != "operation" &&
+                    property.Name != "target" && property.Name != "request" && property.Name != "sourceArtifactHash"))
             { return WriteError(output, tool, 2, "ai.mutation.request.schema_unsupported"); }
 
             var operation = (string?)request["operation"];
@@ -63,6 +133,8 @@ namespace SsisAiRuntime.Cli
                 using (var sourceGuard = new FileStream(args[2], FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     var sourceHash = Hash(sourceGuard);
+                    if (!string.Equals(sourceHash, RequiredString(request, "sourceArtifactHash"), StringComparison.OrdinalIgnoreCase))
+                    { return WriteError(output, tool, 3, "mutation.source_hash_mismatch"); }
                     var load = new PackageLoader().Load(args[2]);
                     if (!load.Succeeded || load.Session == null)
                     { return WriteError(output, tool, 3, "ssis.package.load_failed"); }
@@ -76,13 +148,13 @@ namespace SsisAiRuntime.Cli
 
                     if (!isApply)
                     {
-                        return WriteSuccess(output, tool!, operation!, JObject.Parse(plan.SerializePreviewContract()));
+                        return WriteSuccess(output, tool!, operation!, plan, request);
                     }
 
                     var host = CreateHost(args[4]);
                     var result = host.ExecuteAsync(new MutationHostRequest(args[2], args[3], plan, sourceHash),
                         CancellationToken.None).GetAwaiter().GetResult();
-                    return WriteApplyResult(output, operation!, result);
+                    return WriteApplyResult(output, operation!, plan, request, result);
                 }
             }
             catch (Exception exception)
@@ -93,105 +165,84 @@ namespace SsisAiRuntime.Cli
         }
 
         private static IPackageMutationPlan CreatePlan(Microsoft.SqlServer.Dts.Runtime.Package package,
-            string packagePath, string sourceHash, JObject request, string operation)
+            string packagePath, string sourceHash, JObject envelope, string operation)
         {
+            var target = DeserializeRequest<MutationCommandTarget>(envelope["target"]);
             if (operation == "set_task_property")
             {
-                var propertyTaskId = RequiredString(request, "taskId");
-                var propertyName = RequiredString(request, "propertyName");
-                var type = TaskHostPropertyMutationPlan.GetPropertyTypeCode(package, propertyTaskId, propertyName);
-                var valueToken = request["value"] ?? throw new ArgumentException("value");
-                var enumValues = TaskHostPropertyMutationPlan.GetPropertyEnumValues(package, propertyTaskId, propertyName);
+                var taskId = RequireTaskTarget(target);
+                var payload = DeserializeRequest<TaskPropertyRequest>(envelope["request"]);
+                var propertyName = RequiredValue(payload.PropertyName, "propertyName");
+                var type = TaskHostPropertyMutationPlan.GetPropertyTypeCode(package, taskId, propertyName);
+                var valueToken = payload.Value ?? throw new ArgumentException("value");
+                var enumValues = TaskHostPropertyMutationPlan.GetPropertyEnumValues(package, taskId, propertyName);
                 var propertyValue = enumValues.Length > 0
                     ? valueToken.Type == JTokenType.String
-                        ? TaskHostPropertyMutationPlan.ParsePropertyEnumValue(package, propertyTaskId, propertyName, valueToken.ToString())
+                        ? TaskHostPropertyMutationPlan.ParsePropertyEnumValue(package, taskId, propertyName, valueToken.ToString())
                         : throw new ArgumentException("value.enum_name_required")
                     : ParsePropertyValue(valueToken, type);
-                return TaskHostPropertyMutationPlan.CreateScalar(package, sourceHash, propertyTaskId, propertyName,
-                    propertyValue);
+                return TaskHostPropertyMutationPlan.CreateScalar(package, sourceHash, taskId, propertyName, propertyValue);
             }
             if (operation == "update_task_collection")
             {
-                var collectionTaskId = RequiredString(request, "taskId");
-                var propertyName = RequiredString(request, "propertyName");
-                var modeName = RequiredString(request, "mode");
-                if (!Enum.TryParse(modeName, true, out TaskStringCollectionEditMode mode) ||
+                var taskId = RequireTaskTarget(target);
+                var payload = DeserializeRequest<TaskCollectionRequest>(envelope["request"]);
+                var propertyName = RequiredValue(payload.PropertyName, "propertyName");
+                if (!Enum.TryParse(RequiredValue(payload.Mode, "mode"), true, out TaskStringCollectionEditMode mode) ||
                     !Enum.IsDefined(typeof(TaskStringCollectionEditMode), mode))
                 { throw new ArgumentException("mode"); }
-                var values = RequiredStringArray(request, "values");
+                var values = RequiredValues(payload.Values, "values");
                 if (string.Equals(propertyName, "TablesList", StringComparison.OrdinalIgnoreCase) &&
-                    TaskHostPropertyMutationPlan.IsTransferTask(package, collectionTaskId))
+                    TaskHostPropertyMutationPlan.IsTransferTask(package, taskId))
                 {
                     var transferMode = (TransferTableUpdateMode)Enum.Parse(typeof(TransferTableUpdateMode), mode.ToString(), true);
-                    return TransferTablesMutationPlan.Create(package, sourceHash, collectionTaskId, transferMode, values);
+                    return TransferTablesMutationPlan.Create(package, sourceHash, taskId, transferMode, values);
                 }
-                return TaskHostPropertyMutationPlan.CreateStringCollection(package, sourceHash, collectionTaskId,
+                return TaskHostPropertyMutationPlan.CreateStringCollection(package, sourceHash, taskId,
                     propertyName, mode, values);
             }
             if (operation == "update_transfer_tables")
             {
-                if (!Enum.TryParse(RequiredString(request, "mode"), true, out TransferTableUpdateMode mode) ||
+                var taskId = RequireTaskTarget(target);
+                var payload = DeserializeRequest<TransferTablesRequest>(envelope["request"]);
+                if (!Enum.TryParse(RequiredValue(payload.Mode, "mode"), true, out TransferTableUpdateMode mode) ||
                     !Enum.IsDefined(typeof(TransferTableUpdateMode), mode))
                 { throw new ArgumentException("mode"); }
-                return TransferTablesMutationPlan.Create(package, sourceHash, RequiredString(request, "taskId"),
-                    mode, RequiredStringArray(request, "tableNames"));
+                return TransferTablesMutationPlan.Create(package, sourceHash, taskId, mode,
+                    RequiredValues(payload.TableNames, "tableNames"));
             }
 
-            var placement = request["placement"] as JObject ?? throw new ArgumentException("placement");
-            var relationName = RequiredString(placement, "relation");
-            if (!Enum.TryParse(relationName, true, out ComponentPlacementRelation relation) ||
-                !Enum.IsDefined(typeof(ComponentPlacementRelation), relation))
-            { throw new ArgumentException("placement.relation"); }
-
-            var taskId = RequiredString(request, "taskId");
-            var anchorId = OptionalString(placement, "anchorComponentId");
-            var placementIntent = new ComponentPlacementIntent(taskId, relation, anchorId,
-                RequiredInt(placement, "width"), RequiredInt(placement, "height"));
-
-            var pathNativeId = OptionalString(request, "pathId");
-            var sourceComponentId = OptionalString(request, "sourceComponentId");
-            var destinationComponentId = OptionalString(request, "destinationComponentId");
-            var sourceLineageId = RequiredInt(request, "sourceLineageId");
-            var componentName = RequiredString(request, "componentName");
-            var outputName = RequiredString(request, "outputName");
-
+            var pathTarget = RequirePathTarget(target);
             if (operation == "insert_derived_column")
             {
-                if (!string.IsNullOrWhiteSpace(pathNativeId))
-                {
-                    var plan = DerivedColumnInsertionPlan.CreateForPath(package, sourceHash, taskId, pathNativeId,
-                        sourceLineageId, componentName, outputName, RequiredString(request, "expression"),
-                        placementIntent, packagePath);
-                    ValidateOptionalInsertionEndpoints(sourceComponentId, destinationComponentId,
-                        plan.SourceComponentNativeId, plan.DestinationComponentNativeId);
-                    return plan;
-                }
-                return DerivedColumnInsertionPlan.Create(package, sourceHash, taskId, RequiredString(request, "sourceComponentId"),
-                    RequiredString(request, "destinationComponentId"), sourceLineageId, componentName, outputName,
-                    RequiredString(request, "expression"), placementIntent, packagePath);
-            }
-
-            if (!Enum.TryParse(RequiredString(request, "outputDataType"), true,
-                out RuntimeWrapper.DataType outputDataType))
-            { throw new ArgumentException("outputDataType"); }
-            if (!string.IsNullOrWhiteSpace(pathNativeId))
-            {
-                var plan = DataConversionInsertionPlan.CreateForPath(package, sourceHash, taskId, pathNativeId,
-                    sourceLineageId, componentName, outputName, outputDataType, OptionalInt(request, "length"),
-                    OptionalInt(request, "precision"), OptionalInt(request, "scale"), OptionalInt(request, "codePage"),
-                    placementIntent, packagePath);
-                ValidateOptionalInsertionEndpoints(sourceComponentId, destinationComponentId,
+                var payload = DeserializeRequest<DerivedColumnRequest>(envelope["request"]);
+                var placementIntent = CreatePlacement(pathTarget.OwnerNativeId, payload.Placement);
+                var plan = DerivedColumnInsertionPlan.CreateForPath(package, sourceHash,
+                    pathTarget.OwnerNativeId!, pathTarget.NativeId!, RequiredPositive(payload.SourceLineageId, "sourceLineageId"),
+                    RequiredValue(payload.ComponentName, "componentName"), RequiredValue(payload.OutputName, "outputName"),
+                    RequiredValue(payload.Expression, "expression"), placementIntent, packagePath);
+                ValidateOptionalInsertionEndpoints(payload.SourceComponentId, payload.DestinationComponentId,
                     plan.SourceComponentNativeId, plan.DestinationComponentNativeId);
                 return plan;
             }
-            return DataConversionInsertionPlan.Create(package, sourceHash, taskId,
-                RequiredString(request, "sourceComponentId"), RequiredString(request, "destinationComponentId"),
-                sourceLineageId, componentName, outputName, outputDataType, OptionalInt(request, "length"),
-                OptionalInt(request, "precision"), OptionalInt(request, "scale"), OptionalInt(request, "codePage"),
-                placementIntent, packagePath);
+
+            var conversion = DeserializeRequest<DataConversionRequest>(envelope["request"]);
+            if (!Enum.TryParse(RequiredValue(conversion.OutputDataType, "outputDataType"), true,
+                out RuntimeWrapper.DataType outputDataType))
+            { throw new ArgumentException("outputDataType"); }
+            var conversionPlacement = CreatePlacement(pathTarget.OwnerNativeId, conversion.Placement);
+            var conversionPlan = DataConversionInsertionPlan.CreateForPath(package, sourceHash,
+                pathTarget.OwnerNativeId!, pathTarget.NativeId!, RequiredPositive(conversion.SourceLineageId, "sourceLineageId"),
+                RequiredValue(conversion.ComponentName, "componentName"), RequiredValue(conversion.OutputName, "outputName"),
+                outputDataType, conversion.Length ?? 0, conversion.Precision ?? 0, conversion.Scale ?? 0,
+                conversion.CodePage ?? 0,
+                conversionPlacement, packagePath);
+            ValidateOptionalInsertionEndpoints(conversion.SourceComponentId, conversion.DestinationComponentId,
+                conversionPlan.SourceComponentNativeId, conversionPlan.DestinationComponentNativeId);
+            return conversionPlan;
         }
 
-        private static void ValidateOptionalInsertionEndpoints(string sourceComponentId, string destinationComponentId,
+        private static void ValidateOptionalInsertionEndpoints(string? sourceComponentId, string? destinationComponentId,
             string expectedSourceComponentId, string expectedDestinationComponentId)
         {
             if ((!string.IsNullOrWhiteSpace(sourceComponentId) && sourceComponentId != expectedSourceComponentId) ||
@@ -363,27 +414,40 @@ namespace SsisAiRuntime.Cli
         {
             var envelope = new JObject
             {
-                ["schemaVersion"] = "1.0",
+                ["schemaVersion"] = MutationContractSchema.CurrentVersion,
                 ["tool"] = "mutation.capabilities",
                 ["succeeded"] = true,
                 ["exitCode"] = 0,
                 ["results"] = new JObject
                 {
-                    ["schemaVersion"] = "1.0",
+                    ["schemaVersion"] = MutationContractSchema.CurrentVersion,
+                    ["requestEnvelopeSchema"] = new JObject
+                    {
+                        ["type"] = "object",
+                        ["required"] = new JArray("schemaVersion", "operation", "target", "request", "sourceArtifactHash"),
+                        ["properties"] = new JObject
+                        {
+                            ["schemaVersion"] = new JObject { ["const"] = MutationContractSchema.CurrentVersion },
+                            ["operation"] = new JObject { ["type"] = "string" },
+                            ["target"] = new JObject { ["type"] = "object" },
+                            ["request"] = new JObject { ["type"] = "object" },
+                            ["sourceArtifactHash"] = new JObject { ["type"] = "string", ["pattern"] = "^[A-Fa-f0-9]{64}$" }
+                        }
+                    },
                     ["operations"] = new JArray
                     {
                         OperationCapability("insert_derived_column", "Insert a Derived Column on one selected Data Flow path.",
-                            new[] { "taskId", "pathId", "sourceLineageId", "componentName", "outputName", "expression", "placement" },
+                            "DataFlowPath", new[] { "sourceLineageId", "componentName", "outputName", "expression", "placement" },
                             DerivedColumnInputProperties()),
                         OperationCapability("insert_data_conversion", "Insert a Data Conversion on one selected Data Flow path.",
-                            new[] { "taskId", "pathId", "sourceLineageId", "componentName", "outputName", "outputDataType", "placement" },
+                            "DataFlowPath", new[] { "sourceLineageId", "componentName", "outputName", "outputDataType", "placement" },
                             DataConversionInputProperties()),
                         OperationCapability("update_transfer_tables", "Replace, add, or remove tables in one Transfer SQL Server Objects Task.",
-                            new[] { "taskId", "mode", "tableNames" }, TransferTablesInputProperties()),
+                            "TaskHost", new[] { "mode", "tableNames" }, TransferTablesInputProperties()),
                         OperationCapability("set_task_property", "Set a writable scalar property on a selected TaskHost.",
-                            new[] { "taskId", "propertyName", "value" }, TaskPropertyInputProperties()),
+                            "TaskHost", new[] { "propertyName", "value" }, TaskPropertyInputProperties()),
                         OperationCapability("update_task_collection", "Replace, add, or remove values in a writable native string collection.",
-                            new[] { "taskId", "propertyName", "mode", "values" }, TaskCollectionInputProperties())
+                            "TaskHost", new[] { "propertyName", "mode", "values" }, TaskCollectionInputProperties())
                     },
                     ["placementRelations"] = new JArray(PlacementRelations),
                     ["packageShape"] = "Insertion operations select one task-scoped Data Flow path and splice a single-input, single-regular-output component; unrelated tasks, components, and paths are preserved. User variables and event handlers are unsupported by insertion plans. Package connection managers are retained and validated offline.",
@@ -400,11 +464,12 @@ namespace SsisAiRuntime.Cli
             return 0;
         }
 
-        private static JObject OperationCapability(string name, string description, string[] requiredInputs,
-            JObject inputProperties) => new JObject
+        private static JObject OperationCapability(string name, string description, string targetKind,
+            string[] requiredInputs, JObject inputProperties) => new JObject
         {
             ["name"] = name,
             ["description"] = description,
+            ["targetKind"] = targetKind,
             ["actions"] = new JArray("preview", "apply"),
             ["requiredInputs"] = new JArray(requiredInputs),
             ["inputSchema"] = new JObject
@@ -439,7 +504,6 @@ namespace SsisAiRuntime.Cli
 
         private static JObject TransferTablesInputProperties() => new JObject
         {
-            ["taskId"] = StringField("Native ID of the Transfer SQL Server Objects Task."),
             ["mode"] = new JObject
             {
                 ["type"] = "string",
@@ -456,7 +520,6 @@ namespace SsisAiRuntime.Cli
 
         private static JObject TaskPropertyInputProperties() => new JObject
         {
-            ["taskId"] = StringField("Native ID of the TaskHost."),
             ["propertyName"] = StringField("Writable scalar property name returned by ai task.properties."),
             ["value"] = new JObject
             {
@@ -473,7 +536,6 @@ namespace SsisAiRuntime.Cli
 
         private static JObject TaskCollectionInputProperties() => new JObject
         {
-            ["taskId"] = StringField("Native ID of the TaskHost."),
             ["propertyName"] = StringField("Writable StringCollection property name returned by ai task.properties."),
             ["mode"] = new JObject
             {
@@ -486,8 +548,6 @@ namespace SsisAiRuntime.Cli
 
         private static JObject CommonInsertionInputProperties() => new JObject
         {
-            ["taskId"] = StringField("Native ID of the data-flow task."),
-            ["pathId"] = StringField("Native path ID from the selected task's lineage.paths list."),
             ["sourceComponentId"] = StringField("Optional legacy endpoint assertion; the selected path provides this identity."),
             ["destinationComponentId"] = StringField("Optional legacy endpoint assertion; the selected path provides this identity."),
             ["sourceLineageId"] = IntegerField("Positive native lineage ID for the source column.", 1),
@@ -520,20 +580,11 @@ namespace SsisAiRuntime.Cli
             ["description"] = description
         };
 
-        private static int WriteSuccess(TextWriter output, string tool, string operation, JObject preview)
+        private static int WriteSuccess(TextWriter output, string tool, string operation,
+            IPackageMutationPlan plan, JObject request)
         {
-            var envelope = new JObject
-            {
-                ["schemaVersion"] = "1.0",
-                ["tool"] = tool,
-                ["succeeded"] = true,
-                ["exitCode"] = 0,
-                ["results"] = new JObject { ["operation"] = operation, ["preview"] = ToCamelCase(preview) },
-                ["diagnostics"] = new JArray(),
-                ["packageExecuted"] = false,
-                ["nativeValidationPerformed"] = false,
-                ["redaction"] = RedactionStatus()
-            };
+            var envelope = CreateEnvelope(tool, operation, plan, request, BuildPreviewResult(plan),
+                Array.Empty<string>(), succeeded: true, exitCode: 0, nativeValidationPerformed: false);
             output.WriteLine(envelope.ToString(Formatting.None));
             return 0;
         }
@@ -544,47 +595,112 @@ namespace SsisAiRuntime.Cli
                 new FileMutationCheckpointService(checkpointDirectory), new NativePackageMutationValidator(),
                 new MutationArtifactStager());
 
-        private static int WriteApplyResult(TextWriter output, string operation, MutationHostResult result)
+        private static int WriteApplyResult(TextWriter output, string operation, IPackageMutationPlan plan,
+            JObject request, MutationHostResult result)
         {
             var completed = result.Completed;
             var code = completed ? "mutation.completed" : SafeCode(result.Code) ?? "mutation.apply.failed";
-            var diagnostics = new JArray(result.DiagnosticCodes
-                .Select(SafeCode).Where(value => value != null).Distinct(StringComparer.Ordinal)
-                .Select(value => new JObject { ["code"] = value }));
-            var envelope = new JObject
-            {
-                ["schemaVersion"] = "1.0",
-                ["tool"] = "mutation.apply",
-                ["succeeded"] = completed,
-                ["exitCode"] = completed ? 0 : 4,
-                ["results"] = new JObject
-                {
-                    ["operation"] = operation,
-                    ["status"] = result.Status.ToString(),
-                    ["code"] = code,
-                    ["operationId"] = result.OperationId,
-                    ["checkpointId"] = result.CheckpointId,
-                    ["checkpointCreated"] = result.CheckpointCreated,
-                    ["saveAsCompleted"] = result.SaveAsCompleted,
-                    ["reloadSucceeded"] = result.ReloadSucceeded,
-                    ["validationSucceeded"] = result.ValidationSucceeded,
-                    ["semanticDiffMatched"] = result.SemanticDiffMatched,
-                    ["destinationArtifactHash"] = result.DestinationArtifactHash
-                },
-                ["diagnostics"] = diagnostics,
-                ["packageExecuted"] = false,
-                ["nativeValidationPerformed"] = result.ReloadSucceeded,
-                ["redaction"] = RedactionStatus()
-            };
+            var diagnostics = result.DiagnosticCodes.Select(SafeCode).Where(value => value != null)
+                .Distinct(StringComparer.Ordinal).Select(value => value!).ToArray();
+            var envelope = CreateEnvelope("mutation.apply", operation, plan, request,
+                BuildApplyResult(plan, result, code), diagnostics, completed, completed ? 0 : 4,
+                result.ReloadSucceeded);
             output.WriteLine(envelope.ToString(Formatting.None));
             return completed ? 0 : 4;
         }
+
+        private static JObject CreateEnvelope(string tool, string operation, IPackageMutationPlan plan,
+            JObject request, MutationEnvelopeResult<JObject> result, IEnumerable<string> diagnostics,
+            bool succeeded, int exitCode, bool nativeValidationPerformed)
+        {
+            var target = ToCamelCase(request["target"] as JObject ?? new JObject()) as JObject ?? new JObject();
+            var contract = new MutationEnvelope<JObject, JObject, JObject, JObject>(operation, target, new JObject(),
+                plan.SourceArtifactHash, plan.Requirements, SafePreview(plan), result, diagnostics,
+                Array.Empty<string>(), new MutationRedactionStatus("mutation-preview", true, true, true, true));
+            var envelope = JObject.Parse(MutationContractSerializer.Serialize(contract));
+            envelope["tool"] = tool;
+            envelope["succeeded"] = succeeded;
+            envelope["exitCode"] = exitCode;
+            envelope["packageExecuted"] = false;
+            envelope["nativeValidationPerformed"] = nativeValidationPerformed;
+            return envelope;
+        }
+
+        private static JObject SafePreview(IPackageMutationPlan plan)
+        {
+            var preview = ToCamelCase(JObject.Parse(plan.SerializePreviewContract())) as JObject ?? new JObject();
+            preview.Remove("schemaVersion");
+            return preview;
+        }
+
+        private static MutationEnvelopeResult<JObject> BuildPreviewResult(IPackageMutationPlan plan)
+        {
+            var notApplicable = Stage(MutationStageStatus.NotApplicable);
+            return new MutationEnvelopeResult<JObject>(RuntimeIdentity(), AdapterIdentity(plan),
+                new MutationOperationResult<JObject>(MutationOutcome.PreviewReady, "mutation.preview.ready", new JObject()),
+                Artifact(MutationStageStatus.NotApplicable, plan.SourceArtifactHash, string.Empty, string.Empty),
+                notApplicable, notApplicable, notApplicable, notApplicable,
+                new MutationRollbackResult(MutationRollbackStatus.NotRequired, null));
+        }
+
+        private static MutationEnvelopeResult<JObject> BuildApplyResult(IPackageMutationPlan plan,
+            MutationHostResult result, string code)
+        {
+            var completed = result.Completed;
+            var mutationOutcome = completed ? MutationOutcome.AppliedAndVerified
+                : result.CheckpointCreated ? MutationOutcome.FailedAndRestorationUnverified
+                : MutationOutcome.RejectedBeforeMutation;
+            var artifactStatus = result.SaveAsCompleted ? MutationStageStatus.Succeeded
+                : result.CheckpointCreated ? MutationStageStatus.Failed : MutationStageStatus.NotApplicable;
+            var reloadStatus = result.ReloadSucceeded ? MutationStageStatus.Succeeded
+                : result.SaveAsCompleted ? MutationStageStatus.Failed : MutationStageStatus.NotApplicable;
+            var validationStatus = result.ValidationSucceeded ? MutationStageStatus.Succeeded
+                : result.ReloadSucceeded ? MutationStageStatus.Failed : MutationStageStatus.NotApplicable;
+            var semanticStatus = result.SemanticDiffMatched ? MutationStageStatus.Succeeded
+                : result.ValidationSucceeded ? MutationStageStatus.Failed : MutationStageStatus.NotApplicable;
+            var layoutStatus = plan is IComponentInsertionPlan
+                ? completed ? MutationStageStatus.Succeeded
+                    : result.ValidationSucceeded ? MutationStageStatus.Unverified : MutationStageStatus.NotApplicable
+                : MutationStageStatus.NotApplicable;
+            return new MutationEnvelopeResult<JObject>(RuntimeIdentity(), AdapterIdentity(plan),
+                new MutationOperationResult<JObject>(mutationOutcome, code,
+                    new JObject { ["operationId"] = result.OperationId }),
+                Artifact(artifactStatus, result.SourceArtifactHash, result.DestinationArtifactHash, result.CheckpointId),
+                Stage(reloadStatus), Stage(validationStatus), Stage(semanticStatus),
+                Stage(layoutStatus, layoutStatus == MutationStageStatus.Unverified
+                    ? new[] { "mutation.layout.result_unavailable" } : Array.Empty<string>()),
+                new MutationRollbackResult(completed || !result.CheckpointCreated
+                    ? MutationRollbackStatus.NotRequired : MutationRollbackStatus.RestorationUnverified, null));
+        }
+
+        private static MutationRuntimeIdentity RuntimeIdentity() =>
+            new MutationRuntimeIdentity(16, Environment.Is64BitProcess ? "x64" : "x86");
+
+        private static MutationAdapterIdentity AdapterIdentity(IPackageMutationPlan plan)
+        {
+            var kind = plan switch
+            {
+                DerivedColumnInsertionPlan => "ssis16.dataflow.derived-column",
+                DataConversionInsertionPlan => "ssis16.dataflow.data-conversion",
+                TransferTablesMutationPlan => "ssis16.transfer-tables",
+                TaskHostPropertyMutationPlan => "ssis16.task-host-property",
+                _ => "ssis16." + plan.GetType().Name
+            };
+            return new MutationAdapterIdentity(kind, "1.0");
+        }
+
+        private static MutationArtifactResult Artifact(MutationStageStatus status, string sourceHash,
+            string destinationHash, string checkpointId) =>
+            new MutationArtifactResult(status, sourceHash, destinationHash, checkpointId);
+
+        private static MutationStageResult Stage(MutationStageStatus status, IEnumerable<string>? diagnosticCodes = null) =>
+            new MutationStageResult(status, diagnosticCodes ?? Array.Empty<string>());
 
         private static int WriteError(TextWriter output, string? tool, int exitCode, string code)
         {
             var envelope = new JObject
             {
-                ["schemaVersion"] = "1.0",
+                ["schemaVersion"] = tool == "task.properties" ? "1.0" : MutationContractSchema.CurrentVersion,
                 ["tool"] = tool,
                 ["succeeded"] = false,
                 ["exitCode"] = exitCode,
@@ -603,8 +719,61 @@ namespace SsisAiRuntime.Cli
             ["policy"] = "mutation-preview",
             ["requestValuesOmitted"] = true,
             ["expressionTextOmitted"] = true,
+            ["secretInputsOmitted"] = true,
             ["packagePathOmitted"] = true
         };
+
+        private static T DeserializeRequest<T>(JToken? token) where T : class
+        {
+            if (token?.Type != JTokenType.Object) { throw new ArgumentException("request"); }
+            return token.ToObject<T>(JsonSerializer.Create(RequestSerializerSettings)) ??
+                throw new ArgumentException("request");
+        }
+
+        private static string RequireTaskTarget(MutationCommandTarget target)
+        {
+            if (!string.Equals(target.Kind, "TaskHost", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(target.NativeId) || !string.IsNullOrWhiteSpace(target.OwnerNativeId))
+            { throw new ArgumentException("target"); }
+            return target.NativeId;
+        }
+
+        private static MutationCommandTarget RequirePathTarget(MutationCommandTarget target)
+        {
+            if (!string.Equals(target.Kind, "DataFlowPath", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(target.NativeId) || string.IsNullOrWhiteSpace(target.OwnerNativeId))
+            { throw new ArgumentException("target"); }
+            return target;
+        }
+
+        private static ComponentPlacementIntent CreatePlacement(string? ownerNativeId,
+            MutationPlacementRequest? placement)
+        {
+            if (placement == null) { throw new ArgumentException("placement"); }
+            if (!Enum.TryParse(RequiredValue(placement.Relation, "placement.relation"), true,
+                out ComponentPlacementRelation relation) || !Enum.IsDefined(typeof(ComponentPlacementRelation), relation))
+            { throw new ArgumentException("placement.relation"); }
+            return new ComponentPlacementIntent(RequiredValue(ownerNativeId, "target.ownerNativeId"), relation,
+                placement.AnchorComponentId ?? string.Empty, placement.Width, placement.Height);
+        }
+
+        private static int RequiredPositive(int value, string name)
+        {
+            if (value <= 0) { throw new ArgumentException(name); }
+            return value;
+        }
+
+        private static string RequiredValue(string? value, string name)
+        {
+            if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException(name); }
+            return value!;
+        }
+
+        private static string[] RequiredValues(string[]? values, string name)
+        {
+            if (values == null || values.Any(value => value == null)) { throw new ArgumentException(name); }
+            return values;
+        }
 
         private static JToken ToCamelCase(JToken token)
         {
