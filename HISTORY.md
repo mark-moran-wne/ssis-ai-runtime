@@ -1,5 +1,12 @@
 # SSIS AI Runtime History
 
+## 2026-11-05 Provider-Neutral SSIS 16 CI Gate
+
+- Added `eng/ci/Invoke-Ssis16MutationGate.ps1` as a provider-neutral Windows x64 gate runner. It executes the Release solution build, all portable suites, default native integration/fixture harness, MutationHost lifecycle, designer/layout, column-resize, exact path-splice, and Union All probes; any nonzero stage stops the gate. Package execution probes remain excluded.
+- Added standalone `--path-splice-probe` and `--union-all-probe` entry points so the two path mutation checks report independently. The runner emits `SSIS16-Mutation-Gate: PASS` only after all stages succeed.
+- The complete gate passed on this Windows x64 SSIS 16 host: 236 portable tests, 30 MutationHost lifecycle cases, 15 resize cases, default native harness, designer/layout, path splice, and clean Union All validation. The Release build has the known `CS8012` interop warning.
+- No CI provider workflow or branch-protection settings are committed. Configure the existing provider to run this script as the required `SSIS16-Mutation-Gate` PR job; GitHub Actions is not assumed.
+
 ## 2026-11-05 Union All Clean Validation Fixture
 
 - Replaced the unconfigured synthetic OLE DB sources in the Union All acceptance probe with two native Flat File Sources using a temporary local ANSI ASCII file and a configured Flat File Connection Manager. The fixture establishes a clean offline validation baseline without database access or package execution.

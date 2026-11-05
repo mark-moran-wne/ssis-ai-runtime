@@ -44,13 +44,21 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             {
                 return MutationHostLifecycleTests.Run();
             }
+            if (args.Length == 1 && args[0] == "--path-splice-probe")
+            {
+                return RunNativeProbe("path-splice", DataFlowPathSpliceFixtureTests.Run);
+            }
+            if (args.Length == 1 && args[0] == "--union-all-probe")
+            {
+                return RunNativeProbe("union-all", UnionAllMetadataProbe.Run);
+            }
             if (args.Length == 1 && args[0] == "--execute-flow-probe")
             {
                 return VerifyFlowExecution();
             }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory> | --verify-designer-fixtures <directory>]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --path-splice-probe | --union-all-probe | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory> | --verify-designer-fixtures <directory>]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
@@ -166,6 +174,20 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             finally
             {
                 Directory.Delete(directory, true);
+            }
+        }
+
+        private static int RunNativeProbe(string name, Action probe)
+        {
+            try
+            {
+                probe();
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(name + " probe failed: " + exception);
+                return 1;
             }
         }
 
