@@ -41,6 +41,12 @@ namespace SsisAiRuntime.Cli
                     return Emit(output, new PackageAnalysisEngine().Plan(
                         new AiToolRequest(AiToolNames.QuestionPlan, question: args[2])));
                 }
+                if (tool == "variable.properties")
+                {
+                    if (args.Length != 3 || string.IsNullOrWhiteSpace(args[2]))
+                    { return WriteError(output, tool, 2, "ai.usage", UsageMessage); }
+                    return RunVariableProperties(output, args[2]);
+                }
 
                 if (IsCorpusTool(tool))
                 {
@@ -243,9 +249,62 @@ namespace SsisAiRuntime.Cli
             }
         }
 
+        private static int RunVariableProperties(TextWriter output, string packagePath)
+        {
+            if (!File.Exists(packagePath))
+            {
+                return WriteError(output, "variable.properties", 3, "package.path.not_found",
+                    "The package file is missing or inaccessible. The path is omitted.");
+            }
+
+            var load = new PackageLoader().Load(packagePath);
+            if (!load.Succeeded || load.Session == null)
+            {
+                return WriteError(output, "variable.properties", 3, "ssis.package.load_failed",
+                    "The SSIS runtime failed to load the package. Details are omitted.");
+            }
+
+            try
+            {
+                var inspected = new PackageVariableInspector().InspectDetailed(load.Session);
+                var variables = inspected.Items.OrderBy(item => item.Scope, StringComparer.Ordinal)
+                    .ThenBy(item => item.Namespace, StringComparer.Ordinal)
+                    .ThenBy(item => item.Name, StringComparer.Ordinal)
+                    .ThenBy(item => item.NativeId, StringComparer.Ordinal)
+                    .ToArray();
+                var results = new JObject
+                {
+                    ["scopeCoverage"] = inspected.UnsupportedItems.Count == 0
+                        ? "AllInspectablePackageScopes" : "PartialPackageScopes",
+                    ["nestedExecutableScopesIncluded"] = true,
+                    ["variableCount"] = variables.Length,
+                    ["variables"] = new JArray(variables.Select(variable => new JObject
+                    {
+                        ["nativeId"] = variable.NativeId,
+                        ["name"] = variable.Name,
+                        ["namespace"] = variable.Namespace,
+                        ["scope"] = variable.Scope,
+                        ["scopeNativeId"] = variable.ScopeNativeId,
+                        ["dataType"] = variable.DataType,
+                        ["isReadOnly"] = variable.IsReadOnly,
+                        ["isSystemVariable"] = variable.IsSystemVariable,
+                        ["evaluatesAsExpression"] = variable.EvaluatesAsExpression,
+                        ["hasExpression"] = variable.HasExpression,
+                        ["sensitivityClassification"] = variable.SensitivityClassification,
+                        ["valueOmitted"] = true,
+                        ["expressionTextOmitted"] = variable.ExpressionOmitted
+                    }))
+                };
+                return Write(output, "variable.properties", inspected.UnsupportedItems.Count == 0 ? 0 : 5,
+                    results, inspected.UnsupportedItems);
+            }
+            finally { load.Session.Package.Dispose(); }
+        }
+
         private static bool IsKnownTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
             tool == "dependency.query" || tool == "impact.analysis" || tool == "selector.resolve" ||
             tool == "impact.classified" || tool == "question.plan" || tool == "context" ||
+            tool == "variable.properties" ||
             tool == "corpus.snapshot" || tool == "corpus.diff" || tool == "corpus.verify" || tool == "corpus.approve";
 
         private static bool IsPackageTool(string tool) => tool == "package.summary" || tool == "dependency.graph" ||
@@ -636,7 +695,7 @@ namespace SsisAiRuntime.Cli
             return exitCode;
         }
 
-        private const string UsageMessage = "Usage: SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>; " +
+        private const string UsageMessage = "Usage: SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph|variable.properties> <package.dtsx>; " +
             "ai dependency.query <package.dtsx> --node <node-key> [--recursive]; " +
             "ai impact.analysis <package.dtsx> --node <node-key>; " +
             "ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]; " +

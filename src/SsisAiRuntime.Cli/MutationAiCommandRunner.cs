@@ -51,6 +51,21 @@ namespace SsisAiRuntime.Cli
             [JsonProperty(Required = Required.Always)] public string ProposedName { get; set; } = string.Empty;
         }
 
+        private sealed class VariableMetadataRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string Description { get; set; } = string.Empty;
+        }
+
+        private sealed class VariableExpressionRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string Expression { get; set; } = string.Empty;
+        }
+
+        private sealed class VariableValueRequest
+        {
+            [JsonProperty(Required = Required.Always)] public string EnvironmentVariableName { get; set; } = string.Empty;
+        }
+
         private sealed class PreparedMutationPlan
         {
             public PreparedMutationPlan(string operation, string sourceArtifactHash,
@@ -160,7 +175,9 @@ namespace SsisAiRuntime.Cli
             { return WriteError(output, tool, 2, "ai.mutation.request.schema_unsupported"); }
 
             var operation = (string?)request["operation"];
-            if (operation != "rename_task" && operation != "insert_derived_column" && operation != "insert_data_conversion" &&
+            if (operation != "rename_task" && operation != "set_variable_metadata" && operation != "set_variable_expression" &&
+                operation != "set_variable_value" &&
+                operation != "insert_derived_column" && operation != "insert_data_conversion" &&
                 operation != "update_transfer_tables" && operation != "set_task_property" &&
                 operation != "update_task_collection")
             { return WriteError(output, tool, 2, "ai.mutation.operation.unsupported"); }
@@ -207,6 +224,51 @@ namespace SsisAiRuntime.Cli
         private static PreparedMutationPlan CreatePreparedPlan(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session,
             string packagePath, string sourceHash, JObject envelope, string operation)
         {
+            if (operation == "set_variable_metadata")
+            {
+                var variableTarget = DeserializeRequest<MutationCommandTarget>(envelope["target"]);
+                if (!string.Equals(variableTarget.Kind, "Variable", StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(variableTarget.NativeId) || !string.IsNullOrWhiteSpace(variableTarget.OwnerNativeId))
+                { throw new ArgumentException("target"); }
+                var metadataRequest = DeserializeRequest<VariableMetadataRequest>(envelope["request"]);
+                var variablePlan = VariableMetadataMutationPlan.Create(session.Package, sourceHash,
+                    variableTarget.NativeId, metadataRequest.Description);
+                return new PreparedMutationPlan(operation, sourceHash, variablePlan.Requirements,
+                    new MutationAdapterIdentity("ssis16.variable-metadata", "1.0"),
+                    SafePreview(variablePlan), Array.Empty<string>(), variablePlan, null, false);
+            }
+
+            if (operation == "set_variable_expression")
+            {
+                var variableTarget = DeserializeRequest<MutationCommandTarget>(envelope["target"]);
+                if (!string.Equals(variableTarget.Kind, "Variable", StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(variableTarget.NativeId) || !string.IsNullOrWhiteSpace(variableTarget.OwnerNativeId))
+                { throw new ArgumentException("target"); }
+                var expressionRequest = DeserializeRequest<VariableExpressionRequest>(envelope["request"]);
+                var expressionPlan = VariableExpressionMutationPlan.Create(session.Package, sourceHash,
+                    variableTarget.NativeId, expressionRequest.Expression);
+                return new PreparedMutationPlan(operation, sourceHash, expressionPlan.Requirements,
+                    new MutationAdapterIdentity("ssis16.variable-expression", "1.0"),
+                    SafePreview(expressionPlan), Array.Empty<string>(), expressionPlan, null, false);
+            }
+
+            if (operation == "set_variable_value")
+            {
+                var variableTarget = DeserializeRequest<MutationCommandTarget>(envelope["target"]);
+                if (!string.Equals(variableTarget.Kind, "Variable", StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(variableTarget.NativeId) || !string.IsNullOrWhiteSpace(variableTarget.OwnerNativeId))
+                { throw new ArgumentException("target"); }
+                var valueRequest = DeserializeRequest<VariableValueRequest>(envelope["request"]);
+                var environmentName = VariableValueMutationPlan.ValidateEnvironmentVariableName(valueRequest.EnvironmentVariableName);
+                var trustedValue = Environment.GetEnvironmentVariable(environmentName);
+                if (trustedValue == null) { throw new InvalidOperationException("mutation.variable.value.trusted_input_missing"); }
+                var valuePlan = VariableValueMutationPlan.Create(session.Package, sourceHash,
+                    variableTarget.NativeId, trustedValue);
+                return new PreparedMutationPlan(operation, sourceHash, valuePlan.Requirements,
+                    new MutationAdapterIdentity("ssis16.variable-value", "1.0"),
+                    SafePreview(valuePlan), Array.Empty<string>(), valuePlan, null, false);
+            }
+
             if (operation != "rename_task")
             {
                 var packagePlan = CreatePlan(session.Package, packagePath, sourceHash, envelope, operation);
@@ -533,6 +595,21 @@ namespace SsisAiRuntime.Cli
                             "Executable", new[] { "proposedName" }, new JObject
                             {
                                 ["proposedName"] = StringField("New task name; omitted from mutation previews and results.")
+                            }),
+                        OperationCapability("set_variable_metadata", "Update safe metadata for one package-scope variable.",
+                            "Variable", new[] { "description" }, new JObject
+                            {
+                                ["description"] = StringField("New single-line description; omitted from mutation previews and results.")
+                            }),
+                        OperationCapability("set_variable_expression", "Set the expression on one package-scope variable.",
+                            "Variable", new[] { "expression" }, new JObject
+                            {
+                                ["expression"] = StringField("SSIS expression; omitted from mutation previews and results.")
+                            }),
+                        OperationCapability("set_variable_value", "Set one package-scope variable from a trusted process environment input.",
+                            "Variable", new[] { "environmentVariableName" }, new JObject
+                            {
+                                ["environmentVariableName"] = StringField("Name of a process environment variable containing the trusted typed value; the name and value are omitted from mutation previews and results.")
                             })
                     },
                     ["placementRelations"] = new JArray(PlacementRelations),

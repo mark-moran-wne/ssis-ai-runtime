@@ -26,10 +26,16 @@ public class ConnectionAndVariableOverviewTests
             true,
             false,
             true,
-            true);
+            true,
+            "native-variable-id",
+            "Package",
+            "Unclassified");
 
+        Assert.Equal("native-variable-id", overview.NativeId);
         Assert.Equal("ApiToken", overview.Name);
         Assert.Equal("User", overview.Namespace);
+        Assert.Equal("Package", overview.Scope);
+        Assert.Equal("Unclassified", overview.SensitivityClassification);
         Assert.Equal("String", overview.DataType);
         Assert.True(overview.IsReadOnly);
         Assert.False(overview.IsSystemVariable);

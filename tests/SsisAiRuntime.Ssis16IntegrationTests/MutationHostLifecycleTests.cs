@@ -771,7 +771,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
                 var capabilities = Program.RunExecutable(cli, new[] { "ai", "mutation.capabilities" }, 0);
                 Require((bool)capabilities["succeeded"] &&
-                    ((JArray)capabilities["results"]["operations"]).Count == 6 &&
+                    ((JArray)capabilities["results"]["operations"]).Count == 9 &&
                     (string)capabilities["results"]["requestEnvelopeSchema"]["properties"]["schemaVersion"]["const"] == "2.0" &&
                     (string)capabilities["results"]["operations"][0]["targetKind"] == "DataFlowPath" &&
                     (string)capabilities["results"]["operations"][1]["targetKind"] == "DataFlowPath" &&
@@ -787,6 +787,18 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     (string)capabilities["results"]["operations"][5]["name"] == "rename_task" &&
                     (string)capabilities["results"]["operations"][5]["targetKind"] == "Executable" &&
                     ((JArray)capabilities["results"]["operations"][5]["actions"]).Any(value => (string)value == "apply") &&
+                    (string)capabilities["results"]["operations"][6]["name"] == "set_variable_metadata" &&
+                    (string)capabilities["results"]["operations"][6]["targetKind"] == "Variable" &&
+                    ((JArray)capabilities["results"]["operations"][6]["requiredInputs"]).Values<string>()
+                        .SequenceEqual(new[] { "description" }) &&
+                    (string)capabilities["results"]["operations"][7]["name"] == "set_variable_expression" &&
+                    (string)capabilities["results"]["operations"][7]["targetKind"] == "Variable" &&
+                    ((JArray)capabilities["results"]["operations"][7]["requiredInputs"]).Values<string>()
+                        .SequenceEqual(new[] { "expression" }) &&
+                    (string)capabilities["results"]["operations"][8]["name"] == "set_variable_value" &&
+                    (string)capabilities["results"]["operations"][8]["targetKind"] == "Variable" &&
+                    ((JArray)capabilities["results"]["operations"][8]["requiredInputs"]).Values<string>()
+                        .SequenceEqual(new[] { "environmentVariableName" }) &&
                     ((JArray)capabilities["results"]["operations"][0]["inputSchema"]["properties"]["placement"]["properties"]["relation"]["enum"])
                         .Any(value => (string)value == "RightOf") &&
                     (bool)capabilities["results"]["applyAvailable"] &&

@@ -97,6 +97,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(graphNodes.Count > 0 && (int)dependencyGraph["results"]!["nodeCount"]! >= graphNodes.Count,
                     "fixture.ai.graph");
                 VerifyCorpusCli(path, directory);
+                VerifyVariableProperties(directory);
                 var nodeKey = (string)graphNodes[0]! ["key"]!;
                 stage = "ai.selector.resolve";
                 var selector = RunCli(new[] { "ai", "selector.resolve", path, "--selector", nodeKey }, 0, 5);
@@ -370,6 +371,228 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 (string)JObject.Parse(File.ReadAllText(baselinePath))["schemaVersion"] == "1.0",
                 "corpus.approve.upgrade.result");
             Console.WriteLine("Corpus baseline lifecycle: PASS; snapshot, approve, matching diff/verify, mismatch failure, and explicit schema upgrade.");
+        }
+
+        private static void VerifyVariableProperties(string directory)
+        {
+            stage = "variable.properties.fixture";
+            var path = Path.Combine(directory, "VariableProperties.dtsx");
+            const string valueSecret = "variable-properties-value-secret";
+            const string expressionSecret = "variable-properties-expression-secret";
+            const string originalDescription = "original variable description";
+            const string proposedDescription = "updated variable description";
+            const string proposedExpression = "@[User::BaseCount] + 1";
+            string valueVariableId;
+            string expressionVariableId;
+            string baseCountVariableId;
+            string taskVariableId;
+            string taskId;
+            using (var package = new Package { Name = "VariableProperties", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+            {
+                var valueVariable = package.Variables.Add("ApiToken", false, "User", valueSecret);
+                valueVariable.Description = originalDescription;
+                valueVariableId = valueVariable.ID;
+                baseCountVariableId = package.Variables.Add("BaseCount", false, "User", 40).ID;
+                var expressionVariable = package.Variables.Add("Calculated", false, "User", 0);
+                expressionVariable.Expression = "\"" + expressionSecret + "\"";
+                expressionVariable.EvaluateAsExpression = true;
+                expressionVariableId = expressionVariable.ID;
+                var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                task.Name = "NestedScope";
+                taskId = task.ID;
+                taskVariableId = task.Variables.Add("TaskOnly", false, "User", true).ID;
+                new Application().SaveToXml(path, package, null);
+            }
+
+            var before = Hash(path);
+            var sourceArtifactHash = HashHex(path);
+            var report = RunCli(new[] { "ai", "variable.properties", path }, 0, 5);
+            var results = (JObject)report["results"]!;
+            var variables = (JArray)results["variables"]!;
+            var valueVariableResult = variables.Single(item => (string)item["name"]! == "ApiToken");
+            var expressionVariableResult = variables.Single(item => (string)item["name"]! == "Calculated");
+            var taskVariableResult = variables.Single(item => (string)item["name"]! == "TaskOnly");
+            Require((bool)report["succeeded"]! &&
+                (string)results["scopeCoverage"]! == "AllInspectablePackageScopes" &&
+                (bool)results["nestedExecutableScopesIncluded"]! &&
+                (string)valueVariableResult["nativeId"]! == valueVariableId &&
+                (string)valueVariableResult["scope"]! == "Package" &&
+                (string)valueVariableResult["sensitivityClassification"]! == "Unclassified" &&
+                (bool)valueVariableResult["valueOmitted"]! &&
+                (string)expressionVariableResult["nativeId"]! == expressionVariableId &&
+                (bool)expressionVariableResult["hasExpression"]! &&
+                (bool)expressionVariableResult["expressionTextOmitted"]! &&
+                (string)taskVariableResult["nativeId"]! == taskVariableId &&
+                (string)taskVariableResult["scope"]! == "NestedScope" &&
+                (string)taskVariableResult["scopeNativeId"]! == taskId,
+                "variable.properties.metadata");
+            Require(!report.ToString().Contains(valueSecret) && !report.ToString().Contains(expressionSecret) &&
+                Hash(path) == before,
+                "variable.properties.redaction_and_source_preservation");
+
+            stage = "variable.metadata.preview";
+            var metadataRequest = new JObject
+            {
+                ["schemaVersion"] = "2.0",
+                ["operation"] = "set_variable_metadata",
+                ["target"] = new JObject { ["kind"] = "Variable", ["nativeId"] = valueVariableId },
+                ["request"] = new JObject { ["description"] = proposedDescription },
+                ["sourceArtifactHash"] = sourceArtifactHash
+            };
+            var cli = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SsisAiRuntime.Cli.exe");
+            var preview = RunExecutableWithInput(cli,
+                new[] { "ai", "mutation.preview", path }, metadataRequest.ToString(), 0, 2, 3, 4);
+            Require((bool)preview["succeeded"]! && (string)preview["operation"]! == "set_variable_metadata" &&
+                (string)preview["result"]!["adapter"]!["kind"]! == "ssis16.variable-metadata" &&
+                !preview.ToString().Contains(originalDescription) && !preview.ToString().Contains(proposedDescription),
+                "variable.metadata.preview.redacted:" + string.Join(",", ((JArray)preview["diagnostics"]!)
+                    .Select(item => (string)item["code"]!)));
+
+            stage = "variable.metadata.apply";
+            var destinationPath = Path.Combine(directory, "VariableProperties.edited.dtsx");
+            var checkpointPath = Path.Combine(directory, "variable-metadata-checkpoints");
+            var applied = RunExecutableWithInput(cli,
+                new[] { "ai", "mutation.apply", path, destinationPath, checkpointPath }, metadataRequest.ToString(), 0, 4);
+            Require((bool)applied["succeeded"]! &&
+                (string)applied["result"]!["validation"]!["status"]! == "Succeeded" &&
+                (string)applied["result"]!["semanticVerification"]!["status"]! == "Succeeded" &&
+                Hash(path) == before,
+                "variable.metadata.apply.lifecycle:" +
+                (string)applied["result"]?["mutation"]?["diagnosticCode"] + ":" +
+                (string)applied["result"]?["reload"]?["status"] + ":" +
+                (string)applied["result"]?["validation"]?["status"] + ":" +
+                (string)applied["result"]?["semanticVerification"]?["status"]);
+            var edited = new PackageLoader().Load(destinationPath);
+            Require(edited.Succeeded, "variable.metadata.output.load");
+            try
+            {
+                var savedValue = edited.Session.Package.Variables.Cast<Variable>()
+                    .Single(variable => variable.ID == valueVariableId);
+                var savedExpression = edited.Session.Package.Variables.Cast<Variable>()
+                    .Single(variable => variable.ID == expressionVariableId);
+                Require(savedValue.Description == proposedDescription && (string)savedValue.Value == valueSecret &&
+                    savedExpression.Expression == "\"" + expressionSecret + "\"" &&
+                    savedExpression.EvaluateAsExpression,
+                    "variable.metadata.only_description_changed");
+            }
+            finally { edited.Session.Package.Dispose(); }
+            Require(!applied.ToString().Contains(originalDescription) && !applied.ToString().Contains(proposedDescription) &&
+                !applied.ToString().Contains(valueSecret) && !applied.ToString().Contains(expressionSecret),
+                "variable.metadata.result.redacted");
+
+            stage = "variable.expression.preview";
+            var expressionRequest = new JObject
+            {
+                ["schemaVersion"] = "2.0",
+                ["operation"] = "set_variable_expression",
+                ["target"] = new JObject { ["kind"] = "Variable", ["nativeId"] = expressionVariableId },
+                ["request"] = new JObject { ["expression"] = proposedExpression },
+                ["sourceArtifactHash"] = sourceArtifactHash
+            };
+            var expressionPreview = RunExecutableWithInput(cli,
+                new[] { "ai", "mutation.preview", path }, expressionRequest.ToString(), 0, 4);
+            Require((bool)expressionPreview["succeeded"]! &&
+                (string)expressionPreview["operation"]! == "set_variable_expression" &&
+                (string)expressionPreview["preview"]!["expectedDependencyCount"]! == "1" &&
+                !expressionPreview.ToString().Contains(expressionSecret) &&
+                !expressionPreview.ToString().Contains(proposedExpression),
+                "variable.expression.preview.redacted");
+            var malformedExpressionRequest = (JObject)expressionRequest.DeepClone();
+            malformedExpressionRequest["request"]!["expression"] = "@[User::BaseCount] +";
+            var malformedExpression = RunExecutableWithInput(cli,
+                new[] { "ai", "mutation.preview", path }, malformedExpressionRequest.ToString(), 4);
+            Require((string)malformedExpression["diagnostics"]![0]!["code"]! ==
+                "mutation.variable.expression.parse_failed", "variable.expression.invalid_syntax_rejected");
+            var unresolvedExpressionRequest = (JObject)expressionRequest.DeepClone();
+            unresolvedExpressionRequest["request"]!["expression"] = "@[User::MissingCount] + 1";
+            var unresolvedExpression = RunExecutableWithInput(cli,
+                new[] { "ai", "mutation.preview", path }, unresolvedExpressionRequest.ToString(), 4);
+            Require((string)unresolvedExpression["diagnostics"]![0]!["code"]! ==
+                "mutation.variable.expression.references_unresolved", "variable.expression.unresolved_reference_rejected");
+
+            stage = "variable.expression.apply";
+            var expressionDestination = Path.Combine(directory, "VariableProperties.expression.dtsx");
+            var expressionCheckpoints = Path.Combine(directory, "variable-expression-checkpoints");
+            var expressionApply = RunExecutableWithInput(cli,
+                new[] { "ai", "mutation.apply", path, expressionDestination, expressionCheckpoints },
+                expressionRequest.ToString(), 0, 4);
+            Require((bool)expressionApply["succeeded"]! &&
+                (string)expressionApply["result"]!["validation"]!["status"]! == "Succeeded" &&
+                (string)expressionApply["result"]!["semanticVerification"]!["status"]! == "Succeeded" &&
+                Hash(path) == before,
+                "variable.expression.apply.lifecycle:" + (string)expressionApply["result"]!["mutation"]!["diagnosticCode"]!);
+            var expressionOutput = new PackageLoader().Load(expressionDestination);
+            Require(expressionOutput.Succeeded, "variable.expression.output.load");
+            try
+            {
+                var savedCalculated = expressionOutput.Session.Package.Variables.Cast<Variable>()
+                    .Single(variable => variable.ID == expressionVariableId);
+                var savedBaseCount = expressionOutput.Session.Package.Variables.Cast<Variable>()
+                    .Single(variable => variable.ID == baseCountVariableId);
+                Require(savedCalculated.EvaluateAsExpression && savedCalculated.Expression == proposedExpression &&
+                    (int)savedBaseCount.Value == 40,
+                    "variable.expression.persisted_and_dependencies_preserved");
+            }
+            finally { expressionOutput.Session.Package.Dispose(); }
+            Require(!expressionApply.ToString().Contains(expressionSecret) &&
+                !expressionApply.ToString().Contains(proposedExpression), "variable.expression.result.redacted");
+
+            const string environmentVariableName = "SSIS_AI_RUNTIME_TEST_VARIABLE_VALUE";
+            const string trustedValue = "trusted-value-secret";
+            var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+            Environment.SetEnvironmentVariable(environmentVariableName, trustedValue);
+            try
+            {
+                var valueRequest = new JObject
+                {
+                    ["schemaVersion"] = "2.0",
+                    ["operation"] = "set_variable_value",
+                    ["target"] = new JObject { ["kind"] = "Variable", ["nativeId"] = valueVariableId },
+                    ["request"] = new JObject { ["environmentVariableName"] = environmentVariableName },
+                    ["sourceArtifactHash"] = sourceArtifactHash
+                };
+                var directValueRequest = (JObject)valueRequest.DeepClone();
+                directValueRequest["request"] = new JObject { ["value"] = trustedValue };
+                var directValueRejected = RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", path }, directValueRequest.ToString(), 4);
+                Require(!(bool)directValueRejected["succeeded"]! &&
+                    !directValueRejected.ToString().Contains(trustedValue),
+                    "variable.value.direct_json_rejected_and_redacted");
+                var valuePreview = RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.preview", path }, valueRequest.ToString(), 0, 4);
+                Require((bool)valuePreview["succeeded"]! &&
+                    (string)valuePreview["result"]!["adapter"]!["kind"]! == "ssis16.variable-value" &&
+                    !valuePreview.ToString().Contains(trustedValue),
+                    "variable.value.preview.redacted");
+                var valueDestination = Path.Combine(directory, "VariableProperties.value.dtsx");
+                var valueCheckpoints = Path.Combine(directory, "variable-value-checkpoints");
+                var valueApply = RunExecutableWithInput(cli,
+                    new[] { "ai", "mutation.apply", path, valueDestination, valueCheckpoints }, valueRequest.ToString(), 0, 4);
+                Require((bool)valueApply["succeeded"]! &&
+                    (string)valueApply["result"]!["validation"]!["status"]! == "Succeeded" &&
+                    (string)valueApply["result"]!["semanticVerification"]!["status"]! == "Succeeded" &&
+                    !valueApply.ToString().Contains(trustedValue) && Hash(path) == before,
+                    "variable.value.apply.redacted_and_source_preserved:" +
+                    (string)valueApply["result"]!["mutation"]!["diagnosticCode"]!);
+                var valueOutput = new PackageLoader().Load(valueDestination);
+                Require(valueOutput.Succeeded, "variable.value.output.load");
+                try
+                {
+                    var savedValue = valueOutput.Session.Package.Variables.Cast<Variable>()
+                        .Single(variable => variable.ID == valueVariableId);
+                    var untouchedExpression = valueOutput.Session.Package.Variables.Cast<Variable>()
+                        .Single(variable => variable.ID == expressionVariableId);
+                    Require((string)savedValue.Value == trustedValue && savedValue.Description == originalDescription &&
+                        untouchedExpression.Expression == "\"" + expressionSecret + "\"",
+                        "variable.value.only_target_changed:" +
+                        ((string)savedValue.Value == trustedValue) + ":" +
+                        (savedValue.Description == originalDescription) + ":" +
+                        (untouchedExpression.Expression == "\"" + expressionSecret + "\""));
+                }
+                finally { valueOutput.Session.Package.Dispose(); }
+            }
+            finally { Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue); }
+            Console.WriteLine("Variable properties/edits: PASS; package-scope description/expression edits and environment-backed value edit save/reload; values/text redacted; nested scopes explicit; source unchanged.");
         }
 
         private static string ComputeCorpusFingerprint(string packagePath)
@@ -1209,6 +1432,15 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             using (var stream = File.OpenRead(path))
             {
                 return Convert.ToBase64String(algorithm.ComputeHash(stream));
+            }
+        }
+
+        private static string HashHex(string path)
+        {
+            using (var algorithm = SHA256.Create())
+            using (var stream = File.OpenRead(path))
+            {
+                return BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", string.Empty).ToLowerInvariant();
             }
         }
     }

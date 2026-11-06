@@ -123,5 +123,57 @@ namespace SsisAiRuntime.Mutations
                 collectionUpdate ? "taskproperty.collection.update" : "taskproperty.scalar.update",
                 "taskproperty.other_settings.preserved"
             });
+
+        public static MutationExecutionRequirements VariableMetadataUpdate() => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                "variable.metadata.description.only",
+                "variable.metadata.other_variables_preserved"
+            });
+
+        public static MutationExecutionRequirements VariableExpressionUpdate() => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                "variable.expression.package_scope_only",
+                "variable.expression.references_resolved",
+                "variable.expression.other_variables_preserved"
+            });
+
+        public static MutationExecutionRequirements VariableValueUpdate() => new MutationExecutionRequirements(
+            checkpointRequired: true,
+            saveAsRequired: true,
+            reloadRequired: true,
+            validationRequired: true,
+            semanticDiffRequired: true,
+            requirements: new[]
+            {
+                "checkpoint.required",
+                "saveas.required",
+                "reload.required",
+                "validation.required",
+                "semanticdiff.required",
+                "variable.value.trusted_environment_input",
+                "variable.value.other_metadata_preserved"
+            });
     }
 }

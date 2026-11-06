@@ -116,6 +116,7 @@ Usage:
 	  SsisAiRuntime.Cli.exe ai corpus.diff <package.dtsx> --baseline <file>
 	  SsisAiRuntime.Cli.exe ai corpus.verify <package.dtsx> --baseline <file>
 	  SsisAiRuntime.Cli.exe ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]
+	SsisAiRuntime.Cli.exe ai variable.properties <package.dtsx>
   SsisAiRuntime.Cli.exe ai mutation.capabilities
   SsisAiRuntime.Cli.exe ai mutation.preview <package.dtsx> (versioned request JSON on stdin)
   SsisAiRuntime.Cli.exe ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin)
@@ -173,7 +174,16 @@ SsisAiRuntime.Cli.exe ai impact.analysis "C:\path\to\Package.dtsx" --node "Conne
 SsisAiRuntime.Cli.exe ai selector.resolve "C:\path\to\Package.dtsx" --selector "Warehouse" --kind Connection
 SsisAiRuntime.Cli.exe ai impact.classified "C:\path\to\Package.dtsx" --node "Connection:connection-id"
 SsisAiRuntime.Cli.exe ai question.plan "What uses this connection?"
+SsisAiRuntime.Cli.exe ai variable.properties "C:\path\to\Package.dtsx"
 ```
+
+`variable.properties` is currently package-scope-only. It reports native IDs, namespace/scope, data type, read-only/system/expression flags, and `sensitivityClassification: "Unclassified"`; values are always omitted. Nested executable scopes are excluded and returned as explicit coverage, not treated as an empty inventory.
+
+`set_variable_metadata` currently supports only the package-scope variable `Description` field and binds the request to its native variable ID and source SHA-256. Preview and result omit both the old and new description. It remains a prototype operation.
+
+`set_variable_expression` currently supports replacing the expression on one package-scope variable and enables `EvaluateAsExpression`. Preflight uses the bounded expression parser and scope resolver; apply goes through offline native `Package.Validate` and verifies the resolved variable dependency after reload. The expression is omitted from preview and results. Nested-scope targets, project parameters, unresolved/ambiguous references, and empty expressions are not accepted by this slice.
+
+`set_variable_value` currently accepts only the name of a process environment variable containing the trusted typed value; direct JSON values are rejected. The environment name and value are omitted from preview/results, and the value is applied only to an exact package-scope, non-system, writable, non-expression variable of a supported scalar type. Sensitivity remains `Unclassified`, so this is a prototype input channel, not a supported secret-writing path.
 
 ### Corpus Baselines
 

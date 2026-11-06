@@ -1,5 +1,13 @@
 # SSIS AI Runtime History
 
+## 2026-11-05 Variable Properties and Description Update
+
+- Added read-only `ai variable.properties` for package-scope variables, including native IDs, scope, type, read-only/system/expression flags, and explicit `Unclassified` sensitivity. Values and expression text are omitted; nested executable scopes return `coverage.variable_scopes_not_inspected`.
+- Added prototype `set_variable_metadata` for the package variable Description field only. It binds to a native ID and source SHA-256, previews field names without old/new text, and uses the existing checkpoint/save-as/reload/offline-validation/semantic-verification lifecycle. The plan preserves other user-variable metadata and excludes transient SSIS system variables from its rebind signature.
+- Added prototype `set_variable_expression` for one package-scope variable. It preflights bounded expression syntax and uniquely resolved references, enables `EvaluateAsExpression`, then verifies the exact resolved dependency after save/reload and offline validation. Malformed or unresolved references are refused; expression text is omitted from preview/results.
+- Added prototype `set_variable_value` using a process environment variable name as the trusted input reference; direct JSON values are rejected. The operation refuses system, read-only, expression-owned, nested-scope, and unsupported-type targets and never serializes the environment name or value. Sensitivity remains unclassified, so this is not a supported secret-writing path.
+- The native harness verifies description, expression, and environment-backed value persistence; unchanged source hash; stable IDs; unchanged sibling values/expressions; direct JSON value rejection; and redacted output. Negative expression cases cover malformed syntax and missing references. The full SSIS gate passes with 202 runtime, 13 corpus, and 23 mutation tests; 30 lifecycle cases and all native stages pass. The known `CS8012` warning remains. Nested-scope discovery and sensitivity classification remain future slices.
+
 ## 2026-11-05 Structural Corpus and Graph Regression Gate
 
 - Added seven checked-in layout packages as a starter structural corpus with approved snapshots under `tests/LayoutFixtures/CorpusBaselines`. `Invoke-CorpusBaselineGate.ps1` repeats each CLI snapshot, verifies semantic equality and approved-baseline match, and never writes or approves baselines. Known coverage gaps remain part of the snapshots; matching incomplete snapshots are accepted with their gaps visible.

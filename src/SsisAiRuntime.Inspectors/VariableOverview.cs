@@ -9,8 +9,17 @@ namespace SsisAiRuntime.Inspectors
             bool isReadOnly,
             bool isSystemVariable,
             bool evaluatesAsExpression,
-            bool hasExpression)
+            bool hasExpression,
+            string nativeId = "",
+            string scope = "Unknown",
+            string sensitivityClassification = "Unclassified",
+            string scopeNativeId = "")
         {
+            NativeId = nativeId ?? string.Empty;
+            Scope = string.IsNullOrWhiteSpace(scope) ? "Unknown" : scope;
+            SensitivityClassification = string.IsNullOrWhiteSpace(sensitivityClassification)
+                ? "Unclassified" : sensitivityClassification;
+            ScopeNativeId = scopeNativeId ?? string.Empty;
             Name = name ?? string.Empty;
             Namespace = @namespace ?? string.Empty;
             DataType = dataType ?? string.Empty;
@@ -19,6 +28,14 @@ namespace SsisAiRuntime.Inspectors
             EvaluatesAsExpression = evaluatesAsExpression;
             HasExpression = hasExpression;
         }
+
+        public string NativeId { get; }
+
+        public string Scope { get; }
+
+        public string SensitivityClassification { get; }
+
+        public string ScopeNativeId { get; }
 
         public string Name { get; }
 
