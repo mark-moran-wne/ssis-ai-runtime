@@ -799,6 +799,19 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     (string)capabilities["results"]["operations"][8]["targetKind"] == "Variable" &&
                     ((JArray)capabilities["results"]["operations"][8]["requiredInputs"]).Values<string>()
                         .SequenceEqual(new[] { "environmentVariableName" }) &&
+                    ((JArray)capabilities["results"]["operations"]).All(operation =>
+                        operation["lifecycleRequirements"] != null &&
+                        (bool)operation["lifecycleRequirements"]["checkpointRequired"] &&
+                        (bool)operation["lifecycleRequirements"]["saveAsRequired"] &&
+                        (bool)operation["lifecycleRequirements"]["reloadRequired"] &&
+                        (bool)operation["lifecycleRequirements"]["validationRequired"] &&
+                        (bool)operation["lifecycleRequirements"]["semanticDiffRequired"]) &&
+                    (bool)capabilities["results"]["operations"][6]["lifecycleRequirements"]["checkpointRequired"] &&
+                    (bool)capabilities["results"]["operations"][6]["lifecycleRequirements"]["semanticDiffRequired"] &&
+                    ((JArray)capabilities["results"]["operations"][7]["lifecycleRequirements"]["requirements"])
+                        .Values<string>().Contains("variable.expression.references_resolved") &&
+                    ((JArray)capabilities["results"]["operations"][8]["limitations"]).Values<string>()
+                        .Any(value => value.Contains("sensitivity is unclassified")) &&
                     ((JArray)capabilities["results"]["operations"][0]["inputSchema"]["properties"]["placement"]["properties"]["relation"]["enum"])
                         .Any(value => (string)value == "RightOf") &&
                     (bool)capabilities["results"]["applyAvailable"] &&

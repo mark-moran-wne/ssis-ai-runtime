@@ -581,36 +581,43 @@ namespace SsisAiRuntime.Cli
                     {
                         OperationCapability("insert_derived_column", "Insert a Derived Column on one selected Data Flow path.",
                             "DataFlowPath", new[] { "sourceLineageId", "componentName", "outputName", "expression", "placement" },
-                            DerivedColumnInputProperties()),
+                            DerivedColumnInputProperties(), MutationExecutionPolicies.ComponentInsertion()),
                         OperationCapability("insert_data_conversion", "Insert a Data Conversion on one selected Data Flow path.",
                             "DataFlowPath", new[] { "sourceLineageId", "componentName", "outputName", "outputDataType", "placement" },
-                            DataConversionInputProperties()),
+                            DataConversionInputProperties(), MutationExecutionPolicies.ComponentInsertion()),
                         OperationCapability("update_transfer_tables", "Replace, add, or remove tables in one Transfer SQL Server Objects Task.",
-                            "TaskHost", new[] { "mode", "tableNames" }, TransferTablesInputProperties()),
+                            "TaskHost", new[] { "mode", "tableNames" }, TransferTablesInputProperties(),
+                            MutationExecutionPolicies.TransferTablesUpdate()),
                         OperationCapability("set_task_property", "Set a writable scalar property on a selected TaskHost.",
-                            "TaskHost", new[] { "propertyName", "value" }, TaskPropertyInputProperties()),
+                            "TaskHost", new[] { "propertyName", "value" }, TaskPropertyInputProperties(),
+                            MutationExecutionPolicies.TaskPropertyUpdate(collectionUpdate: false)),
                         OperationCapability("update_task_collection", "Replace, add, or remove values in a writable native string collection.",
-                            "TaskHost", new[] { "propertyName", "mode", "values" }, TaskCollectionInputProperties()),
+                            "TaskHost", new[] { "propertyName", "mode", "values" }, TaskCollectionInputProperties(),
+                            MutationExecutionPolicies.TaskPropertyUpdate(collectionUpdate: true)),
                         OperationCapability("rename_task", "Rename one exact non-container executable.",
                             "Executable", new[] { "proposedName" }, new JObject
                             {
                                 ["proposedName"] = StringField("New task name; omitted from mutation previews and results.")
-                            }),
+                            }, MutationExecutionPolicies.RenameTask()),
                         OperationCapability("set_variable_metadata", "Update safe metadata for one package-scope variable.",
                             "Variable", new[] { "description" }, new JObject
                             {
                                 ["description"] = StringField("New single-line description; omitted from mutation previews and results.")
-                            }),
+                            }, MutationExecutionPolicies.VariableMetadataUpdate(),
+                            "Package-scope variables only."),
                         OperationCapability("set_variable_expression", "Set the expression on one package-scope variable.",
                             "Variable", new[] { "expression" }, new JObject
                             {
                                 ["expression"] = StringField("SSIS expression; omitted from mutation previews and results.")
-                            }),
+                            }, MutationExecutionPolicies.VariableExpressionUpdate(),
+                            "Package-scope variables only.", "Expression references must resolve unambiguously."),
                         OperationCapability("set_variable_value", "Set one package-scope variable from a trusted process environment input.",
                             "Variable", new[] { "environmentVariableName" }, new JObject
                             {
                                 ["environmentVariableName"] = StringField("Name of a process environment variable containing the trusted typed value; the name and value are omitted from mutation previews and results.")
-                            })
+                            }, MutationExecutionPolicies.VariableValueUpdate(),
+                            "Package-scope variables only.",
+                            "Variable sensitivity is unclassified; do not use this operation to write secrets.")
                     },
                     ["placementRelations"] = new JArray(PlacementRelations),
                     ["packageShape"] = "Insertion operations select one task-scoped Data Flow path and splice a single-input, single-regular-output component; unrelated tasks, components, and paths are preserved. User variables and event handlers are unsupported by insertion plans. Package connection managers are retained and validated offline.",
@@ -628,20 +635,36 @@ namespace SsisAiRuntime.Cli
         }
 
         private static JObject OperationCapability(string name, string description, string targetKind,
-            string[] requiredInputs, JObject inputProperties) => new JObject
+            string[] requiredInputs, JObject inputProperties,
+            MutationExecutionRequirements lifecycleRequirements, params string[] limitations)
         {
-            ["name"] = name,
-            ["description"] = description,
-            ["targetKind"] = targetKind,
-            ["actions"] = new JArray("preview", "apply"),
-            ["requiredInputs"] = new JArray(requiredInputs),
-            ["inputSchema"] = new JObject
+            var capability = new JObject
             {
-                ["type"] = "object",
-                ["required"] = new JArray(requiredInputs),
-                ["properties"] = inputProperties
-            }
-        };
+                ["name"] = name,
+                ["description"] = description,
+                ["targetKind"] = targetKind,
+                ["actions"] = new JArray("preview", "apply"),
+                ["requiredInputs"] = new JArray(requiredInputs),
+                ["inputSchema"] = new JObject
+                {
+                    ["type"] = "object",
+                    ["required"] = new JArray(requiredInputs),
+                    ["properties"] = inputProperties
+                },
+                ["lifecycleRequirements"] = new JObject
+                {
+                    ["checkpointRequired"] = lifecycleRequirements.CheckpointRequired,
+                    ["saveAsRequired"] = lifecycleRequirements.SaveAsRequired,
+                    ["reloadRequired"] = lifecycleRequirements.ReloadRequired,
+                    ["validationRequired"] = lifecycleRequirements.ValidationRequired,
+                    ["semanticDiffRequired"] = lifecycleRequirements.SemanticDiffRequired,
+                    ["requiresExistingSource"] = lifecycleRequirements.RequiresExistingSource,
+                    ["requirements"] = new JArray(lifecycleRequirements.Requirements)
+                }
+            };
+            if (limitations.Length > 0) { capability["limitations"] = new JArray(limitations); }
+            return capability;
+        }
 
         private static JObject DerivedColumnInputProperties()
         {
