@@ -8,9 +8,9 @@ The built CLI runs on Windows with .NET Framework 4.8 and SSIS 16; running it do
 
 - .NET 10 SDK for the complete solution and the portable `net10.0` test project.
 - Windows with SSIS 16 installed to build and exercise the native adapter, CLI, and integration-test executable.
-- The adapter resolves `Microsoft.SQLServer.ManagedDTS.dll` and `Microsoft.SqlServer.DTSPipelineWrap.dll` from the standard `160\DTS\Binn` directory or the SSIS 16 .NET Framework GAC location. `Microsoft.SqlServer.DTSRuntimeWrap.dll` is also required for data-flow column metadata and may be in the .NET Framework GAC_32 directory.
+- The adapter resolves `Microsoft.SQLServer.ManagedDTS.dll` and `Microsoft.SqlServer.DTSPipelineWrap.dll` from the standard `160\DTS\Binn` directory or the SSIS 16 .NET Framework GAC location. `Microsoft.SqlServer.DTSRuntimeWrap.dll` is also required for data-flow column metadata and may be in the .NET Framework GAC_32 directory. Typed Execute Package assignment inspection requires `Microsoft.SqlServer.ExecPackageTaskWrap.dll` from Binn or the SSIS 16 GAC.
 
-If the assemblies are installed elsewhere, provide their full paths through `SSIS16ManagedDtsPath`, `SSIS16PipelineWrapPath`, and `SSIS16RuntimeWrapPath`. The directory-based `SSIS16BinnPath` property is also supported. These are build-reference settings, not a replacement for installing the native runtime and required providers/components.
+If the assemblies are installed elsewhere, provide their full paths through `SSIS16ManagedDtsPath`, `SSIS16PipelineWrapPath`, `SSIS16RuntimeWrapPath`, and `SSIS16ExecPackageTaskWrapPath`. The directory-based `SSIS16BinnPath` property is also supported. These are build-reference settings, not a replacement for installing the native runtime and required providers/components.
 
 Run the commands below from the repository root.
 
@@ -25,7 +25,7 @@ dotnet build .\SsisAiRuntime.sln -c Release
 To use non-standard assembly locations, pass their full paths:
 
 ```console
-dotnet build .\SsisAiRuntime.sln -c Release -p:SSIS16ManagedDtsPath="C:\path\to\Microsoft.SQLServer.ManagedDTS.dll" -p:SSIS16PipelineWrapPath="C:\path\to\Microsoft.SqlServer.DTSPipelineWrap.dll" -p:SSIS16RuntimeWrapPath="C:\path\to\Microsoft.SqlServer.DTSRuntimeWrap.dll"
+dotnet build .\SsisAiRuntime.sln -c Release -p:SSIS16ManagedDtsPath="C:\path\to\Microsoft.SQLServer.ManagedDTS.dll" -p:SSIS16PipelineWrapPath="C:\path\to\Microsoft.SqlServer.DTSPipelineWrap.dll" -p:SSIS16RuntimeWrapPath="C:\path\to\Microsoft.SqlServer.DTSRuntimeWrap.dll" -p:SSIS16ExecPackageTaskWrapPath="C:\path\to\Microsoft.SqlServer.ExecPackageTaskWrap.dll"
 ```
 
 The CLI output is `src/SsisAiRuntime.Cli/bin/Release/net48/SsisAiRuntime.Cli.exe`, together with its configuration and application dependencies. Invoke the executable directly as described in [README.md](README.md#usage).
@@ -55,11 +55,11 @@ dotnet build .\tests\SsisAiRuntime.Ssis16IntegrationTests\SsisAiRuntime.Ssis16In
 
 By default, this separate x64 .NET Framework 4.8 test executable creates a fresh temporary package through the SSIS object model, configures only metadata for an integer-to-string Data Conversion, saves and reloads that scratch file, and checks the inspector, query, and actual CLI subprocess in both directions. It verifies redaction and an unchanged fixture hash after inspection, then removes the scratch directory. The default mode never executes or validates a package, acquires a database connection, or alters caller-supplied packages. Fixture creation is test-only; the production CLI remains strictly read-only and has no EzAPI dependency.
 
-The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` column-reference observer and Derived Column mappings. Successful native lookups are column evidence, not variable/parameter bindings. Separate scope fixtures verify heuristic reference resolution, owner identity, shadowing, project-context gating, redaction, and unchanged hashes. Test-only syntax probes do not evaluate expressions. Record verification outcomes in [HISTORY.md](HISTORY.md), rather than treating a previous host result as a guarantee for a new installation.
+The same test executable verifies the shared `IDTSExpressionEvaluatorEx100.Parse` column-reference observer and Derived Column mappings. Successful native lookups are column evidence, not variable/parameter bindings. A scratch Execute Package fixture uses the typed `IDTSExecutePackage100.ParameterAssignments` API, saves/reloads the assignment, and verifies that the metadata-only graph keeps invocation, parent source use, and child-parameter binding separate. It uses supplied synthetic project inventory, not a loaded `.dtproj`. Separate scope fixtures verify heuristic reference resolution, owner identity, shadowing, project-context gating, redaction, and unchanged hashes. Test-only syntax probes do not evaluate expressions. Record verification outcomes in [HISTORY.md](HISTORY.md), rather than treating a previous host result as a guarantee for a new installation.
 
 An additional test-only fixture constructs a source-to-destination data flow entirely in memory. It remaps a destination input between two source columns, inserts a Derived Column into the established flow, reconnects the paths, and maps the calculated output into a second destination column. Native `Package.SaveToXML` serialization is checked structurally for column types, expression references, path endpoints, destination mappings, and unchanged source metadata. `Package.LoadFromXML` reloads the edited result into another in-memory package. This fixture creates no files and acquires no database connection; it does not execute or validate a package. It probes native editing behavior, not a production mutation service or permission to execute mutation plans.
 
-A `CS8012` warning can occur with a GAC_32 interop reference. Confirm the verifier runs as x64 on the target host. Project-parameter resolution is covered by portable explicit-inventory tests; the native verifier does not provide a project-backed SSIS fixture.
+A `CS8012` warning can occur with a GAC_32 interop reference. Confirm the verifier runs as x64 on the target host. Project-parameter resolution, unique/missing/ambiguous target handling, graph composition, and cycle traversal are covered with explicit supplied inventories. The native verifier checks typed parameter-assignment persistence and graph projection, but does not load a real `.dtproj` or prove native project inventory discovery.
 
 The SQL scratch fixture uses stock Execute SQL tasks and metadata-only SQL Server OLE DB connections to verify connection-scoped object identities, parsed evidence, dynamic SQL gaps, and actual CLI context behavior. It checks metadata-only defaults, explicit SQL/expression sanitized-text opt-in, literal/comment redaction, option rejection, and unchanged hashes. It does not acquire a database connection, execute SQL, or validate a package.
 
@@ -89,7 +89,6 @@ Run the separate opt-in RenameTask lifecycle suite:
 This mode calls the actual MutationHost on scratch DTSX files, uses a test checkpoint artifact copy and metadata-only validator doubles, and checks rename/save/reload/publication plus refusal/cleanup paths. It covers nested/event-handler targets, stale names and hashes, missing requirements/targets, blocking coverage, checkpoint failure, injected save/reload failure, validator exceptions, unexpected semantic changes, destination races, source locking, and cancellation. It does not invoke native validation or package execution and cannot be combined with a caller-supplied package. A passed suite verifies orchestration, not a production checkpoint or native-validator implementation. See [src/SsisAiRuntime.MutationHost/README.md](src/SsisAiRuntime.MutationHost/README.md).
 
 ## Required SSIS 16 Windows Gate
-
 
 Run the provider-neutral gate script from the repository root as a single job named `SSIS16-Mutation-Gate` on a Windows x64 CI agent with SSIS 16 and the .NET 10 SDK installed:
 

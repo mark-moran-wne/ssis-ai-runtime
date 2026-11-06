@@ -139,6 +139,84 @@ public class DependencyAndPlanningTests
     }
 
     [Fact]
+    public void ExecutePackageProjectReferenceResolvesUniqueInventoryTarget()
+    {
+        var inventory = new ProjectInventory("project-identity", "ProjectDeployment", new[]
+        {
+            new ProjectPackageInfo("parent", "Parent.dtsx"),
+            new ProjectPackageInfo("child", "ChildPackage")
+        }, Array.Empty<ProjectParameterInfo>());
+
+        var graph = BuildProjectReferenceGraph(inventory);
+        var parent = graph.Nodes.Single(node => node.Kind == SemanticObjectKind.Package && node.NativeId == "parent");
+        var child = graph.Nodes.Single(node => node.Kind == SemanticObjectKind.Package && node.NativeId == "child");
+        var externalReference = graph.Nodes.Single(node => node.Kind == SemanticObjectKind.ExternalPackageReference);
+
+        Assert.Equal("project-identity", parent.ParentId);
+        Assert.Equal("project-identity", child.ParentId);
+        Assert.Contains(graph.Edges, edge => edge.From == "Executable:execute-package" &&
+            edge.To == externalReference.Key && edge.Kind == DependencyKind.InvokesPackage &&
+            edge.Evidence == "DeclaredProjectReference");
+        Assert.Contains(graph.Edges, edge => edge.From == "Executable:execute-package" && edge.To == child.Key &&
+            edge.Kind == DependencyKind.InvokesPackage && edge.Evidence == "ProjectInventoryResolved");
+        Assert.Contains(graph.Edges, edge => edge.From == externalReference.Key && edge.To == child.Key &&
+            edge.Kind == DependencyKind.ResolvesPackageReference && edge.Evidence == "ProjectInventoryResolved");
+        Assert.DoesNotContain(graph.UnsupportedItems, item => item.Id == "execute-package" &&
+            item.ReasonCode == UnsupportedItem.ExecutePackageTargetUnresolvedCode);
+    }
+
+    [Fact]
+    public void ExecutePackageProjectReferenceDoesNotResolveWithoutParentInventoryIdentity()
+    {
+        var inventory = new ProjectInventory("project-identity", "ProjectDeployment", new[]
+        {
+            new ProjectPackageInfo("child", "ChildPackage")
+        }, Array.Empty<ProjectParameterInfo>());
+
+        var graph = BuildProjectReferenceGraph(inventory);
+
+        Assert.DoesNotContain(graph.Nodes, node => node.Kind == SemanticObjectKind.Package && node.NativeId == "child");
+        Assert.Contains(graph.Edges, edge => edge.From == "Executable:execute-package" &&
+            edge.Kind == DependencyKind.InvokesPackage && edge.Evidence == "DeclaredProjectReference");
+        Assert.Contains(graph.UnsupportedItems, item => item.Id == "execute-package" &&
+            item.ReasonCode == UnsupportedItem.ExecutePackageTargetUnresolvedCode);
+    }
+
+    [Fact]
+    public void ExecutePackageProjectReferenceDoesNotGuessAmongDuplicateInventoryTargets()
+    {
+        var inventory = new ProjectInventory("project-identity", "ProjectDeployment", new[]
+        {
+            new ProjectPackageInfo("parent", "Parent.dtsx"),
+            new ProjectPackageInfo("child-a", "ChildPackage"),
+            new ProjectPackageInfo("child-b", "ChildPackage")
+        }, Array.Empty<ProjectParameterInfo>());
+
+        var graph = BuildProjectReferenceGraph(inventory);
+
+        Assert.DoesNotContain(graph.Nodes, node => node.Kind == SemanticObjectKind.Package &&
+            (node.NativeId == "child-a" || node.NativeId == "child-b"));
+        Assert.DoesNotContain(graph.Edges, edge => edge.From == "Executable:execute-package" &&
+            edge.Kind == DependencyKind.InvokesPackage && edge.Evidence == "ProjectInventoryResolved");
+        Assert.Contains(graph.UnsupportedItems, item => item.Id == "execute-package" &&
+            item.ReasonCode == UnsupportedItem.ExecutePackageTargetAmbiguousCode);
+    }
+
+    private static PackageDependencyGraph BuildProjectReferenceGraph(IProjectInventory inventory)
+    {
+        var package = new PackageOverview(Guid.NewGuid(), "Parent", "parent", string.Empty, DateTime.UnixEpoch,
+            1, 0, 0, "DontSaveSensitive", "Default", 0, 0, 1, 0, 0, false);
+        var task = new ExecutableOverview("execute-package", string.Empty, "Run Child Package",
+            "Microsoft.SqlServer.Dts.Tasks.ExecutePackageTask.ExecutePackageTask, Microsoft.SqlServer.ExecPkgTask",
+            string.Empty, 0, false, false, "ProjectReference", "ChildPackage");
+        return new PackageDependencyGraphBuilder().Build(package,
+            Array.Empty<ConnectionOverview>(), new[] { task }, Array.Empty<SqlStatementOverview>(),
+            Array.Empty<DataFlowOverview>(),
+            new ControlFlowGraph(Array.Empty<ControlFlowNode>(), Array.Empty<ControlFlowEdge>(), Array.Empty<UnsupportedItem>()),
+            Array.Empty<UnsupportedItem>(), inventory);
+    }
+
+    [Fact]
     public void PlannerRoutesDependencyQuestionWithoutResolvingItsSelector()
     {
         var plan = new QuestionPlanner().Plan("What uses WarehouseDB?");

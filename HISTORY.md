@@ -1,6 +1,23 @@
 # SSIS AI Runtime History
 
+## 2026-11-06 Execute Package Bindings and Project Graph Composition
+
+- Researched Microsoft Learn's `IDTSExecutePackage100`, `IDTSParameterAssignments`, and `IDTSParameterAssignment` APIs before adding a narrow SSIS 16 wrapper reference. Assignment capture reads child parameter names and parent source references only. The host's COM `GetEnumerator()` throws despite a nonzero count; indexed typed access succeeds and is used in production.
+- Added a runtime-neutral binding node with distinct task ownership (`HasPackageParameterBinding`), scope-resolved source use (`UsesVariable`/`UsesParameter`, `LexicalAndScopeResolved`), and child target (`BindsPackageParameter`, `DeclaredPackageParameterBinding`). Invocation remains a separate relationship. Missing or ambiguous bindings produce explicit coverage instead of guessed edges.
+- Added explicit project graph composition, bounded to 128 supplied package graphs, 20,000 nodes, and 50,000 edges. Inventory package/parameter identities are retained; omitted package contents produce coverage gaps. Local graph identities are project/package-qualified. Composition performs no artifact loading.
+- Portable tests cover bindings, source/target ambiguity and omission, A->B, A->B->C, A->A, A->B->A, omitted package contents, input bounds, and cross-package rich impact that must traverse the binding. Cycles remain real graph edges without being mislabeled unresolved. There is no separate cycle-path report yet.
+- The native scratch fixture authors a variable-to-child assignment through the typed interface, saves/reloads it, and verifies its projection and separate binding/invocation/source edges. Child inventory metadata is synthetic and explicitly supplied; no real `.dtproj` or project-backed child package is loaded. Project discovery, bounded candidate reports, project CLI routes, and approved project/multi-input corpus fixtures remain open.
+- The full `SSIS16-Mutation-Gate` passed: Release build, 225 runtime tests, 13 corpus tests, 23 mutation tests, nine unchanged baselines, and all native/lifecycle/layout stages. A subsequent stronger binding-path assertion passed all seven focused project graph tests. The known `CS8012` warning remains. No package execution or data-source connection occurred.
+
+## 2026-11-06 Supplied Project Inventory Resolution
+
+- Added runtime-neutral `IProjectInventory`, `ProjectPackageInfo`, and `ProjectParameterInfo` projections. `PackageAnalysisSnapshotFactory.CreateWithProjectInventory` uses supplied project parameters only when the analyzed package identity occurs exactly once in the inventory; it does not parse project files or discover artifacts.
+- Execute Package Project References retain their declared external-reference edge. A unique exact target match adds `ProjectInventoryResolved` invocation and resolution edges; missing parent/target context stays unresolved, and duplicate matches produce explicit ambiguity coverage without guessed edges.
+- Portable tests cover unique, missing-context, and ambiguous resolution. The SSIS 16 harness covers supplied-inventory package-parameter projection and a uniquely resolved target using synthetic inventory metadata. This is not evidence of `.dtproj` loading, candidate-list projection, child parameter bindings, cycles, or recursive package traversal.
+- `SSIS16-Mutation-Gate` passes: 214 runtime, 13 corpus, and 23 mutation tests; nine unchanged corpus baselines; and all native/layout/lifecycle stages. No package execution or data-source connection occurred.
+
 ## 2026-11-05 Synthetic Semantic Corpus Fixtures
+
 - VP-12 case mismatch now yields unresolved heuristic coverage: the resolver uses ordinal namespace/name comparisons, portable tests cover case variants, and the native expression graph asserts no guessed variable edge. This does not claim native binding proof.
 
 - Added `SyntheticScopedControlFlow.dtsx` for nested scope, shadowing, precedence, and expression references, plus `SyntheticSqlDependencies.dtsx` for connection-scoped table, procedure, and function edges. Both are generated through SSIS 16's object model, contain no production data, and do not execute or connect to a data source.

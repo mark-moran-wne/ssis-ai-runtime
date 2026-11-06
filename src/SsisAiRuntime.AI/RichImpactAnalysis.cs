@@ -76,9 +76,12 @@ namespace SsisAiRuntime.AI
             while (queue.Count > 0)
             {
                 var state = queue.Dequeue();
-                foreach (var edge in graph.Edges.Where(item => item.To == state.NodeKey))
+                foreach (var edge in graph.Edges.Where(item => item.To == state.NodeKey ||
+                    (item.Kind == DependencyKind.BindsPackageParameter && item.From == state.NodeKey)))
                 {
-                    var consumer = graph.Nodes.SingleOrDefault(node => node.Key == edge.From);
+                    var consumerKey = edge.Kind == DependencyKind.BindsPackageParameter && edge.From == state.NodeKey
+                        ? edge.To : edge.From;
+                    var consumer = graph.Nodes.SingleOrDefault(node => node.Key == consumerKey);
                     if (consumer == null) { continue; }
                     var path = state.Path.Concat(new[] { edge }).ToArray();
                     var distance = path.Length;

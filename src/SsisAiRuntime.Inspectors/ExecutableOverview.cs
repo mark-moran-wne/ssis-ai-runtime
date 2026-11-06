@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+
 namespace SsisAiRuntime.Inspectors
 {
     public sealed class ExecutableOverview
@@ -12,7 +17,8 @@ namespace SsisAiRuntime.Inspectors
             bool isContainer,
             bool hasExpressions,
             string executePackageReferenceType = "",
-            string executePackageTargetName = "")
+            string executePackageTargetName = "",
+            IEnumerable<ExecutePackageParameterBindingOverview> packageParameterBindings = null)
         {
             Id = id ?? string.Empty;
             ParentId = parentId ?? string.Empty;
@@ -24,6 +30,8 @@ namespace SsisAiRuntime.Inspectors
             HasExpressions = hasExpressions;
             ExecutePackageReferenceType = executePackageReferenceType ?? string.Empty;
             ExecutePackageTargetName = executePackageTargetName ?? string.Empty;
+            PackageParameterBindings = new ReadOnlyCollection<ExecutePackageParameterBindingOverview>(
+                (packageParameterBindings ?? Array.Empty<ExecutePackageParameterBindingOverview>()).ToArray());
         }
 
         public string Id { get; }
@@ -45,5 +53,7 @@ namespace SsisAiRuntime.Inspectors
         public string ExecutePackageReferenceType { get; }
 
         public string ExecutePackageTargetName { get; }
+
+        public IReadOnlyList<ExecutePackageParameterBindingOverview> PackageParameterBindings { get; }
     }
 }

@@ -13,6 +13,8 @@
     <SSIS16PipelineWrapPath Condition="'$(SSIS16PipelineWrapPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SqlServer.DTSPipelineWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSPipelineWrap.dll</SSIS16PipelineWrapPath>
     <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SqlServer.DTSRuntimeWrap.dll')">$(SSIS16BinnPath)\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
     <SSIS16RuntimeWrapPath Condition="'$(SSIS16RuntimeWrapPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_32\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</SSIS16RuntimeWrapPath>
+    <SSIS16ExecPackageTaskWrapPath Condition="'$(SSIS16ExecPackageTaskWrapPath)' == '' and Exists('$(SSIS16BinnPath)\Microsoft.SqlServer.ExecPackageTaskWrap.dll')">$(SSIS16BinnPath)\Microsoft.SqlServer.ExecPackageTaskWrap.dll</SSIS16ExecPackageTaskWrapPath>
+    <SSIS16ExecPackageTaskWrapPath Condition="'$(SSIS16ExecPackageTaskWrapPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SqlServer.ExecPackageTaskWrap\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.ExecPackageTaskWrap.dll</SSIS16ExecPackageTaskWrapPath>
     <SSIS16TransferTaskPath Condition="'$(SSIS16TransferTaskPath)' == '' and Exists('$(ProgramFiles)\Microsoft SQL Server\160\DTS\Tasks\Microsoft.SqlServer.TransferSqlServerObjectsTask.dll')">$(ProgramFiles)\Microsoft SQL Server\160\DTS\Tasks\Microsoft.SqlServer.TransferSqlServerObjectsTask.dll</SSIS16TransferTaskPath>
     <SSIS16TransferTaskPath Condition="'$(SSIS16TransferTaskPath)' == ''">$(WINDIR)\Microsoft.NET\assembly\GAC_MSIL\Microsoft.SqlServer.TransferSqlServerObjectsTask\v4.0_16.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.TransferSqlServerObjectsTask.dll</SSIS16TransferTaskPath>
   </PropertyGroup>
@@ -26,6 +28,7 @@
     <Reference Include="Microsoft.SQLServer.ManagedDTS"><HintPath>$(SSIS16ManagedDtsPath)</HintPath><Private>false</Private></Reference>
     <Reference Include="Microsoft.SqlServer.DTSPipelineWrap"><HintPath>$(SSIS16PipelineWrapPath)</HintPath><Private>false</Private></Reference>
     <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap"><HintPath>$(SSIS16RuntimeWrapPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.SqlServer.ExecPackageTaskWrap"><HintPath>$(SSIS16ExecPackageTaskWrapPath)</HintPath><Private>false</Private></Reference>
     <Reference Include="Microsoft.SqlServer.TransferSqlServerObjectsTask"><HintPath>$(SSIS16TransferTaskPath)</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>

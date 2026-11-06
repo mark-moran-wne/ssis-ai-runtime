@@ -4,7 +4,7 @@ A headless toolkit for inspecting and making supported, user-requested SSIS pack
 
 ## Milestone Progress
 
-Current local implementation as of 2026-11-04. Implemented does not imply general production mutation support or verification on every SSIS installation.
+This describes current checked-in behavior. Implemented does not imply general production mutation support or verification on every SSIS installation; dated implementation history is in [HISTORY.md](HISTORY.md).
 
 | Area | Status | Current Scope |
 | --- | --- | --- |
@@ -17,7 +17,8 @@ Current local implementation as of 2026-11-04. Implemented does not imply genera
 | Synthetic flow execution | Implemented | Native Derived Column, Int32-to-Int16/Int64 Data Conversion, and Unicode Flat File text probes with output assertions |
 | Coordinated column resizing | Bounded lifecycle verified | Exact-ID resize analysis and copy-edit plan supports grow/shrink; add/remove remain in-memory schema edits |
 | Designer layout | Implemented, bounded | Fractional Control Flow/Data Flow positions, TaskHost layout, sampled EdgeLayout routes, stable refId/native-ID rebinding, native writer and round-trip verification |
-| Shared component catalog | Foundation implemented | 59 seeded SSIS 16 definitions and local matching; discovery is distinct from runnable recipe support |
+| Shared component catalog | Foundation implemented | Curated SSIS 16 reference definitions and exact-name local matching; it is not a universal or complete Toolbox inventory |
+| Project-aware dependency graphs | Runtime-neutral foundation | Explicit project inventories, unique Project Reference resolution, and child-parameter binding projection; no `.dtproj` discovery or project graph CLI route |
 | Component support tooling and diagnostics | Implemented, bounded | Native describe, recipe probes, structural XML compare, catalog validation, native errors and output mismatch details; catalog PR guide remains pending |
 | Real-package editing lifecycle | Typed operations implemented | MutationHost supports writable scalar/collection TaskHost properties, exact-path insertion through supported one-input/one-output adapters, and Transfer SQL Server Objects Task table-selection updates. The AI CLI exposes discovery, preview, and apply with offline validation and semantic verification |
 
@@ -69,19 +70,19 @@ Schema `1.0` Derived Column requests remain supported. Schema `1.1` selects `der
 
 ```json
 {
-	"schemaVersion": "1.1",
-	"recipe": "flat-file-text",
-	"values": ["Long student name"],
-	"expectedValues": ["Long student name"],
-	"sourceWidth": 4,
-	"destinationWidth": 4,
-	"widenTo": 64
+    "schemaVersion": "1.1",
+    "recipe": "flat-file-text",
+    "values": ["Long student name"],
+    "expectedValues": ["Long student name"],
+    "sourceWidth": 4,
+    "destinationWidth": 4,
+    "widenTo": 64
 }
 ```
 
 The probe builds the narrow flow, widens the connection managers and connected source/destination metadata, executes SSIS, and verifies that the full string survives. Source truncation is a real native failure. Delimited Flat File destinations can write values beyond their declared width, so the harness explicitly rejects narrower destination metadata rather than claiming native destination truncation.
 
-The shared catalog and installed inventory are separate: this host has 59 registrations, but only four selected components currently have execution recipes. `executionTestAvailable` describes test coverage; listing components does not execute them or certify them on another machine.
+The shared catalog and installed inventory are separate. Installed registration counts vary by SSIS version and optional providers; `components` reports the local inventory each invocation. Only selected components currently have execution recipes. `executionTestAvailable` describes test coverage; listing components does not execute them or certify them on another machine.
 
 `NativeFlatFileColumnEditor` provides in-memory `Widen`, `Shrink`, `Add`, and `Remove` methods. Shrinking and removal require explicit data-loss acknowledgement. Addition/removal currently support direct Unicode delimited Flat File source-to-destination flows; arbitrary intermediate transformations and branches are outside that scope. OLE DB destination changes affect SSIS external-column metadata and mappings only, not a database table's actual schema. These methods are not yet exposed as commands that load and save caller-supplied packages.
 
@@ -99,24 +100,24 @@ Running without arguments returns exit `2` and includes this usage in the `cli.u
 
 ```text
 Usage:
-	  SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|control-flow> <package.dtsx> [--details]
-	  SsisAiRuntime.Cli.exe inspect <package.dtsx> [--include <overview|sql|lineage|configuration>[,...]]... [--details]
-	  Repeat --include or comma-separate report names; omit it to include all four reports.
-	SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]
-	SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]
-	SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]
-	  SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>
-	  SsisAiRuntime.Cli.exe ai dependency.query <package.dtsx> --node <node-key> [--recursive]
-	  SsisAiRuntime.Cli.exe ai impact.analysis <package.dtsx> --node <node-key>
-	  SsisAiRuntime.Cli.exe ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]
-	  SsisAiRuntime.Cli.exe ai impact.classified <package.dtsx> --node <node-key>
-	  SsisAiRuntime.Cli.exe ai question.plan <question>
-	  SsisAiRuntime.Cli.exe ai context <package.dtsx> [--include-sanitized-text]
-	  SsisAiRuntime.Cli.exe ai corpus.snapshot <package.dtsx>
-	  SsisAiRuntime.Cli.exe ai corpus.diff <package.dtsx> --baseline <file>
-	  SsisAiRuntime.Cli.exe ai corpus.verify <package.dtsx> --baseline <file>
-	  SsisAiRuntime.Cli.exe ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]
-	SsisAiRuntime.Cli.exe ai variable.properties <package.dtsx>
+  SsisAiRuntime.Cli.exe <overview|sql|lineage|configuration|control-flow> <package.dtsx> [--details]
+  SsisAiRuntime.Cli.exe inspect <package.dtsx> [--include <overview|sql|lineage|configuration>[,...]]... [--details]
+  Repeat --include or comma-separate report names; omit it to include all four reports.
+  SsisAiRuntime.Cli.exe trace <package.dtsx> --flow <id> --component <id> --column <id> [--direction upstream|downstream] [--details]
+  SsisAiRuntime.Cli.exe <predecessors|successors> <package.dtsx> --task <id> [--recursive] [--details]
+  SsisAiRuntime.Cli.exe search <package.dtsx> --query <text> [--kind <object-kind>] [--details]
+  SsisAiRuntime.Cli.exe ai <package.summary|dependency.graph> <package.dtsx>
+  SsisAiRuntime.Cli.exe ai dependency.query <package.dtsx> --node <node-key> [--recursive]
+  SsisAiRuntime.Cli.exe ai impact.analysis <package.dtsx> --node <node-key>
+  SsisAiRuntime.Cli.exe ai selector.resolve <package.dtsx> --selector <text> [--kind <object-kind>]
+  SsisAiRuntime.Cli.exe ai impact.classified <package.dtsx> --node <node-key>
+  SsisAiRuntime.Cli.exe ai question.plan <question>
+  SsisAiRuntime.Cli.exe ai context <package.dtsx> [--include-sanitized-text]
+  SsisAiRuntime.Cli.exe ai corpus.snapshot <package.dtsx>
+  SsisAiRuntime.Cli.exe ai corpus.diff <package.dtsx> --baseline <file>
+  SsisAiRuntime.Cli.exe ai corpus.verify <package.dtsx> --baseline <file>
+  SsisAiRuntime.Cli.exe ai corpus.approve <package.dtsx> --baseline <file> [--upgrade]
+  SsisAiRuntime.Cli.exe ai variable.properties <package.dtsx>
   SsisAiRuntime.Cli.exe ai mutation.capabilities
   SsisAiRuntime.Cli.exe ai mutation.preview <package.dtsx> (versioned request JSON on stdin)
   SsisAiRuntime.Cli.exe ai mutation.apply <source.dtsx> <destination.dtsx> <checkpoint-directory> (same JSON on stdin)
@@ -137,14 +138,14 @@ Transfer table-selection request example:
 
 ```json
 {
-	"schemaVersion": "2.0",
+  "schemaVersion": "2.0",
   "operation": "update_transfer_tables",
-	"target": { "kind": "TaskHost", "nativeId": "<transfer-task-native-id>" },
-	"request": {
-		"mode": "Replace",
-		"tableNames": ["ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards"]
-	},
-	"sourceArtifactHash": "<source-package-sha256>"
+  "target": { "kind": "TaskHost", "nativeId": "<transfer-task-native-id>" },
+  "request": {
+    "mode": "Replace",
+    "tableNames": ["ODS_APPLICANTS", "SPT_CS_ACYR", "ODS_FA_TERM_AWARDS", "PersonCards"]
+  },
+  "sourceArtifactHash": "<source-package-sha256>"
 }
 ```
 

@@ -6,4 +6,6 @@ Runtime-neutral corpus models and baseline operations for SSIS package analysis.
 
 `CorpusComparer` reports added, removed, and metadata-changed nodes; edge changes; package identity/name changes; and coverage-gap deltas. `CorpusBaselineStore` reads and writes versioned JSON baselines, validates their structure and compatibility, and atomically replaces approved baselines.
 
-The library does not load, execute, validate, or modify DTSX packages. Package inspection remains the responsibility of `SsisAiRuntime.Ssis16`; the CLI composes an analysis snapshot and passes it to this library.
+This library does not load, execute, validate, or modify DTSX packages. Inspection belongs to `SsisAiRuntime.Ssis16`; the CLI composes an analysis snapshot and passes it to these runtime-neutral corpus models.
+
+Corpus fingerprints describe projected graph state, not package content omitted from snapshots.

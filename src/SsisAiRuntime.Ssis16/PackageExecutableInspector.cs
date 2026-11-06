@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using SsisAiRuntime.Core;
 using SsisAiRuntime.Inspectors;
 using DtsRuntime = Microsoft.SqlServer.Dts.Runtime;
+using ExecutePackageTask = Microsoft.SqlServer.Dts.Tasks.ExecutePackageTask;
 
 namespace SsisAiRuntime.Ssis16
 {
@@ -42,21 +43,44 @@ namespace SsisAiRuntime.Ssis16
                 var expressionProvider = executable as DtsRuntime.IDTSPropertiesProviderEx;
                 var executePackageReferenceType = string.Empty;
                 var executePackageTargetName = string.Empty;
+                var packageParameterBindings = new List<ExecutePackageParameterBindingOverview>();
                 if (executable is DtsRuntime.TaskHost taskHost &&
                     metadata.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    try
+                    if (taskHost.InnerObject is ExecutePackageTask.IDTSExecutePackage100 executePackage)
                     {
-                        if ((bool)taskHost.Properties["UseProjectReference"].GetValue(taskHost))
+                        try
                         {
-                            executePackageReferenceType = "ProjectReference";
-                            executePackageTargetName = taskHost.Properties["PackageName"].GetValue(taskHost) as string ?? string.Empty;
+                            var usesProjectReference = executePackage.UseProjectReference;
+                            executePackageReferenceType = usesProjectReference ? "ProjectReference" : "ExternalReference";
+                            if (usesProjectReference)
+                            { executePackageTargetName = executePackage.PackageName ?? string.Empty; }
+                        }
+                        catch
+                        {
+                            unsupportedItems.Add(new UnsupportedItem(metadata.ID, metadata.Name, metadata.CreationName,
+                                "Execute Package target metadata could not be inspected.", UnsupportedItem.ReadFailureCode));
+                        }
+                        try
+                        {
+                            var assignments = executePackage.ParameterAssignments;
+                            for (var index = 0; index < assignments.Count; index++)
+                            {
+                                var assignment = assignments[index];
+                                packageParameterBindings.Add(new ExecutePackageParameterBindingOverview(
+                                    assignment.ParameterName, assignment.BindedVariableOrParameterName));
+                            }
+                        }
+                        catch
+                        {
+                            unsupportedItems.Add(new UnsupportedItem(metadata.ID, metadata.Name, metadata.CreationName,
+                                "Execute Package parameter assignments could not be inspected.", UnsupportedItem.ReadFailureCode));
                         }
                     }
-                    catch
+                    else
                     {
                         unsupportedItems.Add(new UnsupportedItem(metadata.ID, metadata.Name, metadata.CreationName,
-                            "Execute Package target metadata could not be inspected.", UnsupportedItem.ReadFailureCode));
+                            "Execute Package native metadata could not be inspected.", UnsupportedItem.ReadFailureCode));
                     }
                 }
                 overviews.Add(new ExecutableOverview(
@@ -69,7 +93,8 @@ namespace SsisAiRuntime.Ssis16
                     sequence != null,
                     expressionProvider != null && expressionProvider.HasExpressions,
                     executePackageReferenceType,
-                    executePackageTargetName));
+                    executePackageTargetName,
+                    packageParameterBindings));
 
                 if (sequence != null)
                 {

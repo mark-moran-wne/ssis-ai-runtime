@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
+using ExecutePackageTask = Microsoft.SqlServer.Dts.Tasks.ExecutePackageTask;
 using SsisAiRuntime.AI;
 using SsisAiRuntime.Corpus;
 using SsisAiRuntime.Ssis16;
@@ -354,25 +355,29 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 info.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0);
             Require(taskInfo != null, "execute-package.task-unavailable");
             string taskId;
+            int authoredAssignmentCount;
+            string parentInputId;
             using (var package = new Package
             {
                 Name = "ExecutePackageTargetCoverage",
                 ProtectionLevel = DTSProtectionLevel.DontSaveSensitive
             })
             {
+                parentInputId = package.Variables.Add("ParentInput", false, "User", 23).ID;
                 var task = (TaskHost)package.Executables.Add(taskInfo.CreationName);
                 task.Name = "RunChildPackage";
                 taskId = task.ID;
-                var projectReferenceProperty = task.Properties["UseProjectReference"];
-                var packageNameProperty = task.Properties["PackageName"];
-                Require(projectReferenceProperty.Get && projectReferenceProperty.Set &&
-                    projectReferenceProperty.Type == TypeCode.Boolean && packageNameProperty.Get &&
-                    packageNameProperty.Set && packageNameProperty.Type == TypeCode.String,
-                    "execute-package.project-reference.properties");
-                projectReferenceProperty.SetValue(task, true);
-                packageNameProperty.SetValue(task, "SyntheticMissingChild");
+                var executePackage = task.InnerObject as ExecutePackageTask.IDTSExecutePackage100;
+                Require(executePackage != null, "execute-package.typed-interface");
+                executePackage.UseProjectReference = true;
+                executePackage.PackageName = "SyntheticMissingChild";
+                var assignment = executePackage.ParameterAssignments.Add();
+                assignment.ParameterName = "ChildInput";
+                assignment.BindedVariableOrParameterName = "User::ParentInput";
+                authoredAssignmentCount = executePackage.ParameterAssignments.Count;
                 application.SaveToXml(path, package, null);
             }
+            Require(authoredAssignmentCount == 1, "execute-package.native-binding-authored");
 
             stage = "execute-package.fixture.reload";
             var loaded = new PackageLoader().Load(path);
@@ -382,12 +387,44 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
                 var executePackageTask = (TaskHost)loaded.Session.Package.Executables.Cast<Executable>()
                     .Single(executable => ((IDTSName)executable).ID == taskId);
+                var loadedExecutePackage = executePackageTask.InnerObject as ExecutePackageTask.IDTSExecutePackage100;
+                var nativeAssignmentCount = loadedExecutePackage?.ParameterAssignments.Count ?? -1;
+                var enumeratedAssignmentCount = 0;
+                if (loadedExecutePackage != null)
+                {
+                    try
+                    {
+                        foreach (ExecutePackageTask.IDTSParameterAssignment ignored in loadedExecutePackage.ParameterAssignments)
+                        { enumeratedAssignmentCount++; }
+                    }
+                    catch { enumeratedAssignmentCount = -1; }
+                }
+                var indexedAssignmentCount = 0;
+                if (loadedExecutePackage != null)
+                {
+                    for (var index = 0; index < nativeAssignmentCount; index++)
+                    {
+                        try { if (loadedExecutePackage.ParameterAssignments[index] != null) { indexedAssignmentCount++; } }
+                        catch { }
+                    }
+                }
                 var taskPropertyNames = executePackageTask.Properties.Cast<DtsProperty>()
                     .Select(property => property.Name + ":" + property.Type + ":read=" + property.Get + ":write=" + property.Set)
                     .OrderBy(value => value, StringComparer.Ordinal);
-                Console.WriteLine("Execute Package task property inventory: " + string.Join(", ", taskPropertyNames));
+                Console.WriteLine("Execute Package task metadata: properties=" + string.Join(", ", taskPropertyNames) +
+                    "; assignments.authored=" + authoredAssignmentCount + "; assignments.reloaded=" + nativeAssignmentCount +
+                    "; assignments.enumerated=" + enumeratedAssignmentCount + "; assignments.indexed=" + indexedAssignmentCount +
+                    "; readFailures=" + string.Join(",", snapshot.UnsupportedItems.Where(item => item.Id == taskId)
+                        .Select(item => item.ReasonCode).OrderBy(code => code, StringComparer.Ordinal)));
+                Require(nativeAssignmentCount == authoredAssignmentCount, "execute-package.native-binding-roundtrip");
                 var taskNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Executable &&
                     node.NativeId == taskId);
+                var executableOverview = snapshot.Executables.Single(item => item.Id == taskId);
+                Console.WriteLine("Execute Package assignment projection count: " + executableOverview.PackageParameterBindings.Count);
+                var nativeBinding = executableOverview.PackageParameterBindings.Single();
+                Require(nativeBinding.ChildParameterName == "ChildInput" &&
+                    nativeBinding.ParentSourceReference == "User::ParentInput",
+                    "execute-package.native-binding-projection");
                 Require(snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
                     edge.From == "Package:" + loaded.Session.Package.ID && edge.To == taskNode.Key),
                     "execute-package.containment");
@@ -399,6 +436,37 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(snapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key && edge.To == externalTarget.Key &&
                     edge.Kind == DependencyKind.InvokesPackage && edge.Evidence == "DeclaredProjectReference"),
                     "execute-package.declared-reference-edge");
+                var projectInventory = new ProjectInventory("synthetic-project", "ProjectDeployment", new[]
+                {
+                    new ProjectPackageInfo(loaded.Session.Package.ID, "Parent.dtsx"),
+                    new ProjectPackageInfo("synthetic-child", "SyntheticMissingChild",
+                        new[] { new PackageParameterInfo("child-input-id", "ChildInput") })
+                }, Array.Empty<ProjectParameterInfo>());
+                var resolvedSnapshot = new PackageAnalysisSnapshotFactory()
+                    .CreateWithProjectInventory(loaded.Session, projectInventory).Items.Single();
+                var resolvedChild = resolvedSnapshot.Dependencies.Nodes.Single(node =>
+                    node.Kind == SemanticObjectKind.Package && node.NativeId == "synthetic-child");
+                var resolvedChildParameter = resolvedSnapshot.Dependencies.Nodes.Single(node =>
+                    node.Kind == SemanticObjectKind.Parameter && node.Name == "$Package::ChildInput");
+                var parentInput = resolvedSnapshot.Dependencies.Nodes.Single(node =>
+                    node.Kind == SemanticObjectKind.Variable && node.NativeId == parentInputId);
+                var parameterBinding = resolvedSnapshot.Dependencies.Nodes.Single(node =>
+                    node.Kind == SemanticObjectKind.PackageParameterBinding && node.ParentId == taskId);
+                Require(resolvedSnapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key &&
+                    edge.To == resolvedChild.Key && edge.Kind == DependencyKind.InvokesPackage &&
+                    edge.Evidence == "ProjectInventoryResolved") &&
+                    resolvedSnapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key &&
+                        edge.To == parameterBinding.Key && edge.Kind == DependencyKind.HasPackageParameterBinding &&
+                        edge.Evidence == "DeclaredPackageParameterBinding") &&
+                    resolvedSnapshot.Dependencies.Edges.Any(edge => edge.From == parameterBinding.Key &&
+                        edge.To == resolvedChildParameter.Key && edge.Kind == DependencyKind.BindsPackageParameter &&
+                        edge.Evidence == "DeclaredPackageParameterBinding") &&
+                    resolvedSnapshot.Dependencies.Edges.Any(edge => edge.From == parameterBinding.Key &&
+                        edge.To == parentInput.Key && edge.Kind == DependencyKind.UsesVariable &&
+                        edge.Evidence == "LexicalAndScopeResolved") &&
+                    !resolvedSnapshot.Dependencies.UnsupportedItems.Any(item => item.Id == taskId &&
+                        item.ReasonCode == UnsupportedItem.ExecutePackageTargetUnresolvedCode),
+                    "execute-package.inventory.unique-resolution");
                 Require(!snapshot.Dependencies.Nodes.Any(node => node.Kind == SemanticObjectKind.SchemaObject) &&
                     !snapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key &&
                         (edge.Kind == DependencyKind.ReadsSchemaObject || edge.Kind == DependencyKind.WritesSchemaObject ||
@@ -1100,14 +1168,14 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     !snapshot.Dependencies.Edges.Any(edge => edge.From == "Executable:" + projectParameterOwnerId &&
                         edge.Kind == DependencyKind.UsesParameter),
                     "heuristic.project_parameter.without_context");
-                var projectParameter = new SsisAiRuntime.Inspectors.Expressions.ExpressionSymbol(
-                    "synthetic-project-toggle", package.ID,
-                    SsisAiRuntime.Inspectors.Expressions.ExpressionSymbolKind.ProjectParameter,
-                    "$Project", "ProjectToggle");
+                var projectInventory = new ProjectInventory("synthetic-expression-project", "ProjectDeployment",
+                    new[] { new ProjectPackageInfo(package.ID, "ExpressionScopes.dtsx") },
+                    new[] { new ProjectParameterInfo("synthetic-project-toggle", "ProjectToggle") });
                 var projectBackedSnapshot = new PackageAnalysisSnapshotFactory()
-                    .Create(loaded.Session, new[] { projectParameter }).Items.Single();
+                    .CreateWithProjectInventory(loaded.Session, projectInventory).Items.Single();
+                var projectParameterId = "synthetic-project-toggle";
                 var projectParameterNode = projectBackedSnapshot.Dependencies.Nodes.Single(node =>
-                    node.Kind == SemanticObjectKind.Parameter && node.NativeId == projectParameter.NativeId);
+                    node.Kind == SemanticObjectKind.Parameter && node.NativeId == projectParameterId);
                 Require(projectBackedSnapshot.Dependencies.Edges.Any(edge =>
                     edge.From == "Executable:" + projectParameterOwnerId && edge.To == projectParameterNode.Key &&
                     edge.Kind == DependencyKind.UsesParameter && edge.Evidence == "LexicalAndScopeResolved"),

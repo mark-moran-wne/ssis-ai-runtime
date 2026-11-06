@@ -28,9 +28,9 @@ Description is design-time probing, not package execution or a claim of supporte
 
 ```json
 {
-	"schemaVersion": "1.0",
-	"beforeXml": "<flow width='4'/>",
-	"afterXml": "<flow width='64'/>"
+    "schemaVersion": "1.0",
+    "beforeXml": "<flow width='4'/>",
+    "afterXml": "<flow width='64'/>"
 }
 ```
 
@@ -58,10 +58,10 @@ The recipe constructs Flat File Source -> Derived Column -> Flat File Destinatio
 
 ```json
 {
-	"schemaVersion": "1.0",
-	"values": [-2, 0, 3],
-	"expression": "Value * 2",
-	"expectedValues": [-4, 0, 6]
+    "schemaVersion": "1.0",
+    "values": [-2, 0, 3],
+    "expression": "Value * 2",
+    "expectedValues": [-4, 0, 6]
 }
 ```
 
@@ -71,11 +71,11 @@ Numeric input and expected output contain the same number of Int32 values, betwe
 
 ```json
 {
-	"schemaVersion": "1.1",
-	"recipe": "data-conversion",
-	"values": [-32768, 0, 32767],
-	"conversionType": "Int16",
-	"expectedValues": [-32768, 0, 32767]
+    "schemaVersion": "1.1",
+    "recipe": "data-conversion",
+    "values": [-32768, 0, 32767],
+    "conversionType": "Int16",
+    "expectedValues": [-32768, 0, 32767]
 }
 ```
 
@@ -85,13 +85,13 @@ Supported targets are `Int16` and `Int64`. This tests native narrowing/widening 
 
 ```json
 {
-	"schemaVersion": "1.1",
-	"recipe": "flat-file-text",
-	"values": ["Long student name"],
-	"expectedValues": ["Long student name"],
-	"sourceWidth": 4,
-	"destinationWidth": 4,
-	"widenTo": 64
+    "schemaVersion": "1.1",
+    "recipe": "flat-file-text",
+    "values": ["Long student name"],
+    "expectedValues": ["Long student name"],
+    "sourceWidth": 4,
+    "destinationWidth": 4,
+    "widenTo": 64
 }
 ```
 

@@ -16,6 +16,7 @@ namespace SsisAiRuntime.Inspectors
         DataFlowRuntimeConnection,
         ExpressionOwner,
         SchemaObject,
-        ExternalPackageReference
+        ExternalPackageReference,
+        PackageParameterBinding
     }
 }

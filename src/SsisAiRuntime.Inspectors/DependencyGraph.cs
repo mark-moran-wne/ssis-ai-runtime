@@ -22,7 +22,10 @@ namespace SsisAiRuntime.Inspectors
         WritesSchemaObject,
         ExecutesSchemaObject,
         ReferencesSqlFunction,
-        InvokesPackage
+        InvokesPackage,
+        ResolvesPackageReference,
+        HasPackageParameterBinding,
+        BindsPackageParameter
     }
 
     public sealed class DependencyNode
@@ -64,7 +67,8 @@ namespace SsisAiRuntime.Inspectors
     {
         public static string Safe(string evidence) => evidence == "LexicalAndScopeResolved" || evidence == "ParsedSchemaObject" ||
             evidence == "ParsedExecuteTarget" || evidence == "ParsedFunctionReference" ||
-            evidence == "DeclaredProjectReference" ? evidence : string.Empty;
+            evidence == "DeclaredProjectReference" || evidence == "ProjectInventoryResolved" ||
+            evidence == "DeclaredPackageParameterBinding" ? evidence : string.Empty;
     }
 
     public sealed class PackageDependencyGraph
@@ -96,13 +100,34 @@ namespace SsisAiRuntime.Inspectors
             IEnumerable<DataFlowOverview> dataFlows, ControlFlowGraph controlFlow,
             IEnumerable<UnsupportedItem> unsupportedItems)
         {
+            return Build(package, connections, executables, sqlStatements, dataFlows, controlFlow, unsupportedItems, null);
+        }
+
+        public PackageDependencyGraph Build(PackageOverview package, IEnumerable<ConnectionOverview> connections,
+            IEnumerable<ExecutableOverview> executables, IEnumerable<SqlStatementOverview> sqlStatements,
+            IEnumerable<DataFlowOverview> dataFlows, ControlFlowGraph controlFlow,
+            IEnumerable<UnsupportedItem> unsupportedItems, IProjectInventory projectInventory)
+        {
             if (package == null) { throw new ArgumentNullException(nameof(package)); }
             if (controlFlow == null) { throw new ArgumentNullException(nameof(controlFlow)); }
+            var projectPackages = projectInventory == null
+                ? Array.Empty<ProjectPackageInfo>()
+                : projectInventory.Packages?.ToArray() ?? throw new ArgumentException("Project packages are required.", nameof(projectInventory));
+            if (projectInventory != null && (string.IsNullOrWhiteSpace(projectInventory.ProjectIdentity) ||
+                string.IsNullOrWhiteSpace(projectInventory.DeploymentModel) || projectInventory.Parameters == null))
+            { throw new ArgumentException("Project inventory metadata is incomplete.", nameof(projectInventory)); }
             var nodes = new Dictionary<string, DependencyNode>(StringComparer.Ordinal);
             var edges = new List<DependencyEdge>();
             var unsupported = new List<UnsupportedItem>(unsupportedItems ?? throw new ArgumentNullException(nameof(unsupportedItems)));
-            var packageKey = Key(SemanticObjectKind.Package, package.PackageId);
-            Add(nodes, new DependencyNode(packageKey, SemanticObjectKind.Package, package.PackageName, package.PackageId));
+            var currentProjectPackages = projectPackages.Where(item => item.PackageId == package.PackageId).ToArray();
+            var currentProjectPackage = currentProjectPackages.Length == 1 ? currentProjectPackages[0] : null;
+            var packageKey = currentProjectPackage == null
+                ? Key(SemanticObjectKind.Package, package.PackageId)
+                : currentProjectPackage.DependencyKey(projectInventory.ProjectIdentity);
+            Add(nodes, new DependencyNode(packageKey, SemanticObjectKind.Package,
+                currentProjectPackage == null ? package.PackageName : currentProjectPackage.ProjectRelativeName,
+                package.PackageId,
+                currentProjectPackage == null ? string.Empty : projectInventory.ProjectIdentity));
 
             foreach (var connection in connections ?? throw new ArgumentNullException(nameof(connections)))
             {
@@ -124,18 +149,43 @@ namespace SsisAiRuntime.Inspectors
                     DependencyKind.ContainsTask), executable.Id, executable.Name);
                 if (executable.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
+                    var targetName = executable.ExecutePackageTargetName;
                     if (string.Equals(executable.ExecutePackageReferenceType, "ProjectReference", StringComparison.Ordinal) &&
-                        !string.IsNullOrWhiteSpace(executable.ExecutePackageTargetName))
+                        !string.IsNullOrWhiteSpace(targetName))
                     {
                         var targetKey = "ExternalPackageReference:ProjectReference:" +
-                            Uri.EscapeDataString(executable.ExecutePackageTargetName);
+                            Uri.EscapeDataString(targetName);
                         Add(nodes, new DependencyNode(targetKey, SemanticObjectKind.ExternalPackageReference,
-                            executable.ExecutePackageTargetName, string.Empty));
+                            targetName, string.Empty));
                         AddEdge(nodes, edges, unsupported, new DependencyEdge(key, targetKey,
                             DependencyKind.InvokesPackage, "DeclaredProjectReference"), executable.Id, executable.Name);
+
+                        var candidates = projectPackages.Where(item => string.Equals(item.ProjectRelativeName,
+                            targetName, StringComparison.Ordinal)).ToArray();
+                        if (currentProjectPackage != null && candidates.Length == 1)
+                        {
+                            var candidate = candidates[0];
+                            var packageTargetKey = candidate.DependencyKey(projectInventory.ProjectIdentity);
+                            Add(nodes, new DependencyNode(packageTargetKey, SemanticObjectKind.Package,
+                                candidate.ProjectRelativeName, candidate.PackageId, projectInventory.ProjectIdentity));
+                            AddEdge(nodes, edges, unsupported, new DependencyEdge(key, packageTargetKey,
+                                DependencyKind.InvokesPackage, "ProjectInventoryResolved"), executable.Id, executable.Name);
+                            AddEdge(nodes, edges, unsupported, new DependencyEdge(targetKey, packageTargetKey,
+                                DependencyKind.ResolvesPackageReference, "ProjectInventoryResolved"), executable.Id, executable.Name);
+                            continue;
+                        }
+
+                        var ambiguous = currentProjectPackage != null && candidates.Length > 1;
+                        unsupported.Add(new UnsupportedItem(executable.Id, executable.Name, executable.CreationName,
+                            ambiguous
+                                ? "The declared package target matches multiple project inventory entries."
+                                : "The declared package target is not uniquely resolved against project inventory.",
+                            ambiguous ? UnsupportedItem.ExecutePackageTargetAmbiguousCode :
+                                UnsupportedItem.ExecutePackageTargetUnresolvedCode));
+                        continue;
                     }
                     unsupported.Add(new UnsupportedItem(executable.Id, executable.Name, executable.CreationName,
-                        string.IsNullOrWhiteSpace(executable.ExecutePackageTargetName)
+                        string.IsNullOrWhiteSpace(targetName)
                             ? "The referenced package target is not projected."
                             : "The declared package target is not resolved against project inventory.",
                         UnsupportedItem.ExecutePackageTargetUnresolvedCode));

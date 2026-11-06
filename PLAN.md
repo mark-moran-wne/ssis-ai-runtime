@@ -33,29 +33,50 @@ Prototype slices may continue in parallel; the gates below control promotion, no
 
 1. **Require the SSIS gate in CI.** Run `eng/ci/Invoke-Ssis16MutationGate.ps1` as a Windows x64 SSIS 16 job with stable status name `SSIS16-Mutation-Gate`, then configure that status as required in the provider. No workflow or branch-protection configuration currently exists in this repository, so the provider-side setup remains an external prerequisite for promotion.
 2. **Maintain the operation evidence matrix.** Keep [STATUS.md](STATUS.md) aligned with checked-in native fixtures, lifecycle cases, approved corpus evidence, and provider configuration. Do not infer completion from an implementation or a passing local script alone.
-3. **Close the remaining graph evidence gaps.** Control Flow CF-01 through CF-12, Variable/Parameter VP-01 through VP-15, and SQL SQL-01 through SQL-05 have portable and/or native test evidence. Remaining priorities are project-inventory-backed Execute Package resolution and bindings, additional Execute Package target/cycle cases, and native Data Flow coverage for multi-input lineage, asynchronous transformations, Lookup, Aggregate, custom components, and exact-port failure attribution. The corpus still has seven layout fixtures and two native-generated synthetic semantic fixtures, not representative business packages; add sanitized representatives when available and review semantic diffs before approving baselines.
+3. **Advance project-aware and multi-input graph closure.** Do not expand CF-01 through CF-12 or VP-01 through VP-15 merely to increase coverage counts; their defined scopes have evidence. SQL-01 through SQL-05 are complete for the defined v1 matrix. Prioritize authoritative project context and package-parameter propagation, then native multi-input and asynchronous Data Flow lineage. Preserve current evidence and coverage semantics. The corpus still has seven layout fixtures and two native-generated synthetic semantic fixtures, not representative business packages; add the project and multi-input synthetic fixtures, then sanitized representatives when available.
 4. **Promote `rename_task` only after its remaining gates pass.** It is the strongest first candidate because its intended semantic delta is narrow. Preserve the existing task ID/count, hierarchy, connections, expressions, SQL dependencies, and unrelated properties. Require reviewed representative corpus evidence and required CI before marking it Supported.
 5. **Harden exact-path insertion.** `DataFlowPathSpliceFixtureTests` proves that a component-configuration failure triggers rollback, restores the original endpoint topology, and removes the inserted component; a Union All duplicate-output conflict is refused before mutation. `DesignerLayoutTests` rejects nonpositive placement dimensions. Derived Column host tests now inject save/reload failure and an unexpected package-identity delta; these use host/validator test doubles. Remaining work: rollback after failures during/after native adapter refresh and corresponding failure cases for Data Conversion. Preserve nonselected paths, component metadata, and layout.
 6. **Establish trusted sensitivity classification.** Until a verifiable policy distinguishes safe from sensitive targets, do not promote writes to sensitive or unclassified variables. Keep the environment-backed value prototype redacted and unsupported for secret writing.
 
-The current corpus has seven structural layout fixtures and two synthetic semantic examples, not representative business packages. For `rename_task` promotion, target 3-5 sanitized packages from at least two projects, including nested control flow and a nontrivial Data Flow. For broader graph confidence, target 8-12 representative packages and review every unresolved item in each approved baseline. These are engineering targets, not universal standards or prerequisites for independent prototypes. Add sanitized artifacts only when available; review semantic diffs before explicitly approving baselines, and never present synthetic fixtures as business coverage.
+The current corpus has seven structural layout fixtures and two synthetic semantic examples, not representative business packages. Add `SyntheticProjectDependencies` and `SyntheticMultiInputLineage` as the next semantic fixtures. For `rename_task` promotion, target 3-5 sanitized packages from at least two projects, including nested control flow and a nontrivial Data Flow. For broader graph confidence, target 8-12 representative packages and review every unresolved item in each approved baseline. These are engineering targets, not universal standards or prerequisites for independent prototypes. Add sanitized artifacts only when available; review semantic diffs before explicitly approving baselines, and never present synthetic fixtures as business coverage.
 
-## Graph Acceptance Matrix
+### Next Graph Milestone: Project-Aware and Multi-Input Graph Closure
 
-This matrix is the acceptance contract for expanding dependency and control-flow graphs. Each fixture records expected nodes, edge direction and kind, evidence class, implementation status, impact-query behavior, and negative behavior. A package snapshot may have unrelated coverage gaps; assert completeness for the tested slice rather than treating global `IsComplete` as the only result.
+Deliver four outcomes: resolve cross-package dependencies only from authoritative project context; preserve parameter propagation across package invocation as a distinct binding relationship; extend native lineage through multi-input transformations; and never weaken existing evidence or coverage semantics. Keep this milestone independent from `rename_task` promotion: project-graph completion, Lookup/Aggregate lineage, and future SQL extensions must not block rename when its own invariants, representative corpus evidence, and required CI are satisfied.
+
+## Graph Acceptance Matrix v1
+
+This matrix is the frozen v1 acceptance contract. Its complete scope is CF-01..CF-12, VP-01..VP-15, and SQL-01..SQL-05. Do not add v1 rows to expand those scopes. Execute Package and Data Flow follow-on cases below are v2 planning material; retain their statuses without treating them as v1 acceptance rows. New scenarios go into v2. Each fixture records expected nodes, edge direction and kind, evidence class, implementation status, impact-query behavior, and negative behavior. A package snapshot may have unrelated coverage gaps; assert completeness for the tested slice rather than treating global `IsComplete` as the only result.
 
 Use only these row statuses: **Complete**, **Partial**, **Open**, **Blocked by fixture**, **Deferred**, and **Not supported**. `Complete` means the row's stated assertions have evidence; it does not imply support beyond that fixture or evidence class. `Partial` means only part of the row is asserted. `Open` means no adequate assertion exists. `Blocked by fixture` means the capability cannot be tested until an identified fixture/runtime dependency is available. `Deferred` is intentionally out of the current milestone. `Not supported` is an explicit product boundary.
 
-Keep evidence layers distinct:
+### Current Status
 
-| Layer | Authority | Examples |
+| Area | Assessment | Remaining |
 | --- | --- | --- |
-| Structural | Native SSIS object model | containment, precedence constraints, Data Flow paths |
-| Declared dependency | Native metadata or explicit binding | parameter binding, connection assignment, static Execute Package target |
-| Parsed dependency | ScriptDom or expression parser plus scope resolution | SQL objects, parsed expression references |
-| Heuristic dependency | Lexical candidate plus bounded scope resolution | variable/parameter references without authoritative native binding |
+| Control Flow CF-01..CF-12 | Complete for the defined matrix | Regression maintenance |
+| Variables/Parameters VP-01..VP-15 | Complete for current architecture | Discover project parameters from actual project inventory |
+| SQL SQL-01..SQL-05 | Complete for the defined matrix | Future SQL matrix is separate |
+| Execute Package | Partial; declared references, supplied-inventory resolution, typed assignment projection, and binding graph are in place | Real project discovery, candidate reporting, real-project verification, and bounded transitive traversal |
+| Data Flow lineage | Partial | Multi-input, asynchronous/Aggregate, Lookup, and exact failure attribution |
+| Corpus graph regression | Synthetic foundation established | Project/multi-input fixtures and representative sanitized packages |
+| Mutation graph verification | Strong shared foundation | Operation-specific representative corpus evidence |
+| CI | Gate passes locally | Provider must require `SSIS16-Mutation-Gate` |
+
+Keep evidence authority distinct from coverage status:
+
+| Evidence authority | Source | Examples |
+| --- | --- | --- |
+| `Native` | Authoritative SSIS object model | containment, precedence, pipeline paths, native column mappings |
+| `Parsed` | Deterministic parser over native-projected text | ScriptDom schema objects, parsed expression references |
+| `ResolvedHeuristic` | Deterministic lexical candidate plus bounded scope resolution | variable/parameter references without native binding proof |
+| `Declared` | Explicit package metadata that has not been resolved to an authoritative target identity | `DeclaredProjectReference`, external reference declarations |
+
+These are provenance categories, not confidence scores. Preserve specific evidence codes such as `ParsedSchemaObject` or `DeclaredProjectReference` independently from any normalized authority field.
 
 Do not flatten these relationships into a generic `DependsOn` edge. Preserve current owner-to-dependency orientation; answer “what consumes this?” through incoming/impact queries instead of adding duplicate reverse edges. For every positive edge fixture, assert direct and recursive impact/query results and that the expected path is retained. For ambiguous, missing, or dynamic targets, assert no guessed edge, explicit candidates or coverage, and no fabricated impact path. Expression-derived variable/parameter edges remain heuristic and never replace native column-lineage evidence.
+
+Evidence and coverage are orthogonal. A declared invocation edge may be present while its target remains unresolved and a coverage gap is reported. Conversely, extraction failure may produce a gap without an edge. Graph completeness must not mean every reference resolved; represent known relationships faithfully and report unknowns separately.
 
 ### A. Control-Flow Structure
 
@@ -105,53 +126,56 @@ Project-aware maturity is split deliberately:
 | Capability | Evidence class | Status | Evidence |
 | --- | --- | --- | --- |
 | Construct a project-parameter dependency from supplied project metadata | Portable + native host harness | Complete | [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs); [DependencyAndPlanningTests.cs](tests/SsisAiRuntime.Tests/DependencyAndPlanningTests.cs) |
+| Resolve a project reference against supplied inventory metadata | Portable + native host harness with synthetic inventory | Complete | [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs); [DependencyAndPlanningTests.cs](tests/SsisAiRuntime.Tests/DependencyAndPlanningTests.cs) |
 | Discover project parameters from a loaded `.dtproj` or equivalent project inventory | None | Open | No project-loading fixture or inventory provider |
-| Resolve package references against actual project inventory | None | Open | No authoritative project package inventory |
+| Discover and project package inventory from a loaded `.dtproj` | None | Open | No project-loading fixture or native project provider |
 
 VP-08 proves graph construction from injected host metadata; it does not prove `.dtproj` discovery or project loading. Add parser cases for `@ParserFlag`, `@[User::ParserFlag]`, `@[$Package::ProbeParameter]`, and `@[$Project::ProjectParameter]`; also casts, conditional operators, function arguments, concatenation, nested parentheses, string literals resembling references, and comments/escaped strings where supported. SSIS expressions may be owned by variables, constraints, For Loops, task/connection properties, Conditional Split, Derived Column, Execute SQL properties, and Execute Package targets. `@` references and `#` Data Flow lineage identifiers are distinct token classes; `#138` must never become a variable candidate.
 
 Add parser cases for `@ParserFlag`, `@[User::ParserFlag]`, `@[$Package::ProbeParameter]`, and `@[$Project::ProjectParameter]`; also casts, conditional operators, function arguments, concatenation, nested parentheses, string literals resembling references, and comments/escaped strings where supported. SSIS expressions may be owned by variables, constraints, For Loops, task/connection properties, Conditional Split, Derived Column, Execute SQL properties, and Execute Package targets. `@` references and `#` Data Flow lineage identifiers are distinct token classes; `#138` must never become a variable candidate.
 
-### C. Execute Package Relationships
+### Follow-on Matrix v2: Execute Package Relationships
 
 An Execute Package invocation is not containment or precedence. Add a distinct `InvokesPackage` relationship only when the target evidence supports it. Keep child parameter bindings separate from invocation edges.
 
 | ID | Fixture | Required assertions | Evidence class | Status | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| EP-01 | Project-reference child present | Resolve exact child package and emit `InvokesPackage` only from authoritative inventory | Native + project inventory | Open | No project inventory fixture |
+| EP-01 | Project-reference child present | Resolve exact child package and emit `InvokesPackage` only from authoritative inventory | Portable + native host with supplied inventory | Partial | Unique supplied-inventory match is tested; no loaded-project fixture |
 | EP-02 | Project-reference target absent | Preserve declared name; unresolved-target gap | Native + portable | Complete | [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs); [DependencyAndPlanningTests.cs](tests/SsisAiRuntime.Tests/DependencyAndPlanningTests.cs) |
-| EP-03 | Duplicate candidate package names | No guessed edge; return candidate identities | Project inventory | Open | No inventory ambiguity fixture |
+| EP-03 | Duplicate candidate package names | No guessed edge; report ambiguity and candidate identities | Project inventory | Partial | Duplicate matches are refused with explicit ambiguity coverage; candidate identities are not yet projected |
 | EP-04 | Literal file-system package path | External reference node with normalized evidence; do not imply loaded child | Native | Open | No file-reference fixture |
 | EP-05 | File path supplied by expression | Link expression inputs; target remains dynamic | Native + heuristic | Open | No dynamic target graph assertion |
 | EP-06 | SQL Server package reference | External catalog/storage reference node | Native | Open | No SQL Server reference fixture |
 | EP-07 | Child package also in corpus | Optionally correlate corpus identity without claiming same-session load evidence | Corpus | Deferred | Corpus identity correlation is outside the current graph slice |
-| EP-08 | Self-reference | Cycle diagnostic; no recursive load | Project inventory | Open | No cycle fixture |
-| EP-09 | A invokes B, B invokes C | Bounded transitive impact traverses package calls | Project graph | Open | No package traversal implementation |
-| EP-10 | A invokes B, B invokes A | Cycle-safe traversal and explicit cycle evidence | Project graph | Open | No cycle fixture |
+| EP-08 | Self-reference | Detect a cycle by project/package identity; do not recursively load | Portable project graph | Partial | Self-cycle is preserved and recursive queries terminate; no native project fixture |
+| EP-09 | A invokes B, B invokes C | Bounded transitive impact traverses package calls using stable identities | Portable project graph | Partial | Multi-hop query reaches supplied package identities; no native project fixture |
+| EP-10 | A invokes B, B invokes A | Cycle-safe traversal emits bounded cycle evidence and terminates without marking the graph incomplete solely for the cycle | Portable project graph | Partial | Mutual cycle edges remain and recursive query terminates; no native project fixture |
 | EP-11 | Multiple parents invoke one child | Preserve every incoming invocation edge | Project inventory | Open | No resolved-child inventory fixture |
-| EP-12 | Child parameter bindings | Separate binding edge with invoking task, child parameter, source symbol, target package, and evidence | Native + project inventory | Open | No binding fixture or graph model |
+| EP-12 | Child parameter bindings | Preserve invoking task, parent source, target package, and child parameter as distinct binding semantics; do not substitute `UsesParameter` | Native assignment API + supplied inventory | Partial | Typed assignment projection and binding-node graph tests exist; no real project fixture |
 | EP-13 | Disabled Execute Package task | Preserve invocation topology and disabled state | Native | Open | No disabled-task invocation assertion |
 | EP-14 | Statically unresolved target expression | Dynamic-target gap and links to controlling variables/parameters | Native + heuristic | Open | No dynamic target graph assertion |
 
-EP-02 is the only complete Execute Package matrix row. The current native behavior preserves a declared Project Reference as an `ExternalPackageReference` node and `InvokesPackage` edge with `DeclaredProjectReference` evidence, while retaining an unresolved-target gap because project inventory is absent. See [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs) and [DependencyAndPlanningTests.cs](tests/SsisAiRuntime.Tests/DependencyAndPlanningTests.cs).
+EP-02 remains complete for standalone inspection: a declared Project Reference is retained as an `ExternalPackageReference` node and `InvokesPackage` edge with `DeclaredProjectReference` evidence while an unresolved-target gap remains without inventory. With supplied inventory, one exact match additionally emits project-resolved invocation/reference edges. EP-01 and EP-12 are partial: the native assignment API and explicit synthetic inventory path are tested, but no real `.dtproj` is loaded. See [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs), [DependencyAndPlanningTests.cs](tests/SsisAiRuntime.Tests/DependencyAndPlanningTests.cs), and [PackageParameterBindingGraphTests.cs](tests/SsisAiRuntime.Tests/PackageParameterBindingGraphTests.cs).
 
-### Next Graph Milestone: Project-Aware Graph Closure
+#### Project Inventory Design
 
-Introduce an explicit project inventory abstraction (for example, `IProjectPackageInventory`) that supplies package identities and project parameter identities without implicit file or network discovery. Package identity should retain project identity, project-relative package name, package identity when available, deployment model, and reference type. Resolve only a unique authoritative match; preserve missing and ambiguous candidates without guessing.
+The runtime-neutral `IProjectInventory` contract and immutable project/package parameter projections are implemented. `PackageAnalysisSnapshotFactory.CreateWithProjectInventory` accepts this explicit context; the graph builder verifies that the analyzed parent package occurs exactly once, then resolves an Execute Package `PackageName` only against one exact project-relative-name match. The native SSIS 16 inspector uses typed `IDTSExecutePackage100.ParameterAssignments` and `IDTSParameterAssignment` interfaces to project child parameter names and parent variable/parameter references; it never reads assignment values. Each binding is represented by a `PackageParameterBinding` node: the invoking task has a `HasPackageParameterBinding` edge to it, it links to its scope-resolved parent source with `UsesVariable` or `UsesParameter`, and it targets the child parameter with `BindsPackageParameter`. This keeps invocation, source use, and child binding distinct. No `.dtproj` parsing, file discovery, or recursive package loading is implemented. A real SSIS 16 host projection from a loaded project remains open. Package identity retains project identity, project-relative package name, and package identity; the inventory also carries deployment model, and the task projection retains reference type.
+
+Keep reference kinds distinct: `DeclaredProjectReference`, `ProjectInventoryResolved`, `ExternalFileReference`, `ExternalSqlServerReference`, and `DynamicPackageReference`. Project resolution adds identity evidence; it does not erase the original declaration.
 
 Implementation order:
 
-1. EP-01: uniquely resolve a Project Reference against a supplied inventory.
-2. EP-03: reject duplicate or ambiguous inventory matches.
-3. EP-12: model child parameter bindings separately from invocation edges.
-4. EP-08 and EP-10: detect self-reference and cycles without recursive loading.
-5. EP-09: add deterministic, bounded transitive package-impact traversal.
+1. EP-01: add a real project-backed fixture to verify unique resolution through an SSIS 16 project provider; the supplied-inventory path is implemented but not `.dtproj` discovery.
+2. EP-03: expose bounded candidate identities for duplicate matches; the current implementation refuses resolution and emits explicit ambiguity coverage.
+3. EP-12: the typed assignment reader and binding-node graph are implemented and covered by synthetic native/portable tests. Add a real project fixture and verify CLI/corpus redaction before treating this row as complete.
+4. EP-08 and EP-10: portable project graph composition and recursive queries preserve self/mutual cycle edges and terminate without unresolved gaps. Add bounded cycle-path reporting and a native project-backed case.
+5. EP-09: project graph composition is explicitly bounded (128 package graphs, 20,000 nodes, 50,000 edges); add caller-facing traversal limits and project-impact reporting through AI/CLI.
 6. EP-05 and EP-14: connect dynamic target expressions to their controlling symbols while keeping the target unresolved.
 7. EP-04 and EP-06: model file-system and SQL Server references after project-reference semantics are stable.
 
-The acceptance fixture should contain `Project.params`, `Parent.dtsx`, and `Child.dtsx`; a project parameter used by both packages; a child package parameter; a parent Execute Package task with a binding from a parent variable or parameter; and a deliberately missing child reference. Use it for VP-08, EP-01, EP-02, and EP-12, while retaining separate fixtures for ambiguity and cycles. Add deterministic project graph snapshots and expose project graph coverage through CLI and AI results. Keep child artifact loading explicit and bounded; ordinary package inspection must not recursively load packages. No package execution or source-artifact mutation is permitted, and all values and expressions remain redacted.
+The acceptance fixture should contain `GraphProject.dtproj`, `Project.params`, `Parent.dtsx`, and `Child.dtsx`; a project parameter used by both packages; a child package parameter; a parent Execute Package task bound from a parent variable or parameter; and a deliberately missing child reference. Use it for project-parameter discovery, EP-01, EP-02, and EP-12, while retaining separate fixtures for ambiguous inventory and cycles (`A -> B -> C`, `A -> B -> A`, `A -> A`). Assert bindings remain distinct from invocation and ordinary expression-use edges. Add deterministic project graph snapshots and expose project graph coverage through CLI and AI results. Keep child artifact loading explicit and bounded; ordinary package inspection must not recursively load packages. No package execution or source-artifact mutation is permitted, and all values and expressions remain redacted.
 
-### D. Expression-Owner Coverage
+### Follow-on: Expression-Owner Coverage
 
 Test parser/scope resolution independently from graph construction: a parsed candidate is not proof of binding. Add at least one owner fixture for each supported category.
 
@@ -167,7 +191,7 @@ Test parser/scope resolution independently from graph construction: a parsed can
 | Execute SQL | SQL source property supplied by an expression |
 | Execute Package | Dynamic path/name expression and unresolved child target |
 
-### E. Data-Flow and Column-Lineage Graph
+### Follow-on Matrix v2: Data-Flow and Column-Lineage Graph
 
 | ID | Fixture | Required assertions | Evidence class | Status | Evidence |
 | --- | --- | --- | --- | --- | --- |
@@ -190,14 +214,15 @@ Every case must assert that heuristic enrichment neither upgrades nor replaces n
 
 Split remaining Data Flow work into independently testable slices:
 
-1. **Multi-input provenance:** Union All, Merge, and Merge Join. Keep input ports distinct; do not merge mappings by column name; test duplicate names, upstream traversal across all contributors, and bounded downstream traversal.
-2. **Asynchronous lineage boundaries:** Aggregate and other transformations that create new buffers (include Sort when the fixture environment supports it). Recognize new lineage IDs without labeling derivation as identity; use qualified relationships when semantics are incomplete.
-3. **Lookup semantics:** Separate pass-through, reference-derived, no-match, and error outputs. Do not claim table-level lineage unless connection and query metadata independently support it.
-4. **Exact failure attribution:** Attach each gap to Data Flow task, component native ID/name, input or output port ID, lineage ID when available, failure code, and evidence source.
+1. **Union All provenance:** Add distinct input-to-output `ExplicitMapping` edges for every contributing input. Keep ports distinct; do not collapse by column name; test duplicate names, multi-source upstream traversal, and bounded downstream traversal. Reuse component-mutation knowledge, but assert read-only lineage independently.
+2. **Merge and Merge Join provenance:** Preserve left/right provenance when both contribute, and report one-source derivation when only one side contributes. Never infer a two-source dependency solely from the component having two inputs.
+3. **Aggregate/asynchronous derivation:** Add a narrow `ExplicitDerivation` relationship from source columns to aggregate outputs; keep derivation distinct from identity and preserve asynchronous buffer boundaries. A broader derivation taxonomy is not a prerequisite.
+4. **Lookup semantics:** Separate pass-through, reference-derived, no-match, and error outputs. Do not claim table-level lineage unless connection and query metadata independently support it.
+5. **Exact failure attribution:** Attach each gap to Data Flow task, component native ID/name, input or output port ID, lineage ID when available, failure code, and evidence source.
 
-Native Conditional Split coverage and a native custom-component topology fixture also remain open. See [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs), [DataFlowOverviewTests.cs](tests/SsisAiRuntime.Tests/DataFlowOverviewTests.cs), and [UnionAllMetadataProbe.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/UnionAllMetadataProbe.cs).
+For asynchronous transformations, recognize new lineage IDs and qualified derivation boundaries; do not label derivation as identity. Include Sort when the fixture environment supports it. Native Conditional Split coverage and a native custom-component topology fixture also remain open. See [Program.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/Program.cs), [DataFlowOverviewTests.cs](tests/SsisAiRuntime.Tests/DataFlowOverviewTests.cs), and [UnionAllMetadataProbe.cs](tests/SsisAiRuntime.Ssis16IntegrationTests/UnionAllMetadataProbe.cs).
 
-### F. SQL Dependency Graph
+### C. SQL Dependency Graph (v1)
 
 Continue connection-scoped ScriptDom evidence with these fixtures:
 
@@ -213,7 +238,7 @@ For all SQL cases, preserve parsed evidence, connection scope, redaction, and ne
 
 SQL-01 through SQL-05 have portable test evidence. This foundation does not imply database catalog resolution or exhaustive SQL dialect coverage; analysis must remain connection-scoped, redacted, and offline.
 
-#### Future SQL Matrix
+#### Graph Acceptance Matrix v2: Future SQL Cases
 
 Keep follow-on SQL cases separate from the completed foundation. Catalog classification requires an explicit credential-safe metadata provider; until then, do not connect to a database to resolve object existence.
 
@@ -230,6 +255,36 @@ Keep follow-on SQL cases separate from the completed foundation. Catalog classif
 | SQL-14 | Parse failure | Preserve owner and connection evidence with an explicit gap | Portable | Partial |
 
 Existing dynamic-SQL and parse-failure tests establish basic negative behavior; SQL-08 and SQL-14 remain partial until their owner, connection, and graph-coverage assertions are explicit.
+
+Add new project, Execute Package, and Data Flow acceptance cases to v2 rather than extending the frozen v1 lists. Candidate additions include loaded-project parameter discovery and cross-package parameter propagation, explicit distinctions among project/file/SQL Server/dynamic package references, cycle-path and bounded traversal assertions, and detailed multi-input provenance cases. The project fixture should be the third synthetic semantic baseline; a separate multi-input lineage fixture should be the fourth. After these are stable, prioritize sanitized real packages over additional synthetic-only graph tests.
+
+### Toolbox Coverage Inventory
+
+Do not promise bespoke semantic or mutation support for every Toolbox item. Build an extensible, per-environment coverage inventory from the existing SSIS 16 reference catalog plus native installed-registration discovery. Keep pipeline component registrations and `Application.TaskInfos` task registrations as distinct discovery sources; do not infer one inventory from the other. Record SSIS version, host/installation provenance, Microsoft built-in versus optional/vendor/unknown disposition, and exact creation name/CLSID. The present `ssis16.json` is a curated reference set, not the universal Toolbox; installed counts vary by host.
+
+| Level | Disposition | Minimum evidence |
+| --- | --- | --- |
+| L0 Discovered | Registration or TaskInfo is present in the named runtime inventory | Native identity, creation name/CLSID, name, component/task kind, source host/version |
+| L1 Structural | Package projection preserves topology and readable shape | Inputs, outputs, paths, connections, columns, containment, and exact native identities |
+| L2 Semantic | Specific behavior is interpreted without conflating evidence sources | Named native/parsed/heuristic evidence and explicit unsupported semantics |
+| L3 Editable | An operation-specific mutation exists | Typed preview/apply, lifecycle verification, limitations, and refusal coverage |
+| L4 Executable Fixture | A synthetic fixture executed successfully under an explicit developer test | Recipe, prerequisites, assertions, redaction boundary, and isolated opt-in execution |
+
+Discovery does not imply semantic support; semantics do not imply editability; editability does not imply execution verification. Current registration discovery is host-specific and the component catalog has no complete coverage level for every entry. The default Data Flow inspector preserves readable component identity/topology, inputs, outputs, paths, runtime connections, and columns, while component-specific semantic support is selective. Add explicit unsupported-semantic coverage for unknown/third-party components; preserve their structural metadata when readable instead of guessing behavior. Keep the 59-registration count as a measurement from the tested host, never as the universal SSIS Toolbox size. Pipeline and task discovery, and all L0-L4 levels, need separate inventory assertions.
+
+Current maturity by surface:
+
+| Surface | Highest established level | Remaining boundary |
+| --- | --- | --- |
+| Installed pipeline registrations from `FlowRunner components` | L0 | Per-registration maturity is not yet reported; list is local to the installed host |
+| `catalog/components/ssis16.json` definitions | L0 reference metadata | Curated set, not a complete Toolbox snapshot or universal installation list |
+| Generic Data Flow package projection | L1 when native metadata is readable | Per-component L2 semantics are selective; unknown/custom behavior remains unsupported |
+| Specialized Derived Column, Data Conversion, SQL, and expression analysis | Selective L2 | Evidence is operation/component-specific and is not universal semantic coverage |
+| Typed TaskHost/Transfer/selected Data Flow mutations | Selective L3 | Only advertised operations and their lifecycle cases are editable |
+| Synthetic FlowRunner recipes | L4 for their named fixtures | Four selected component registrations have recipes; no general package execution certification |
+| `Application.TaskInfos` tasks | Discovery used in native fixtures only | No general task inventory or L0-L4 report is exposed |
+
+Unknown and third-party components should remain visible at L0/L1 when native identity and topology are readable, with explicit unsupported semantic coverage; they must not be silently promoted to L2-L4 based on catalog similarity.
 
 ## Next Independent Mutation Slices
 

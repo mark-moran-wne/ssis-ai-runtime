@@ -10,6 +10,10 @@ namespace SsisAiRuntime.Inspectors
         public const string UnsupportedMetadataCode = "coverage.unsupported_metadata";
         public const string ReadFailureCode = "coverage.read_failed";
         public const string ExecutePackageTargetUnresolvedCode = "dependency.execute_package_target_unresolved";
+        public const string ExecutePackageTargetAmbiguousCode = "dependency.execute_package_target_ambiguous";
+        public const string PackageParameterBindingUnresolvedCode = "dependency.package_parameter_binding_unresolved";
+        public const string PackageParameterBindingAmbiguousCode = "dependency.package_parameter_binding_ambiguous";
+        public const string ProjectPackageContentsNotLoadedCode = "dependency.project_package_contents_not_loaded";
         public const string VariableScopesNotInspectedCode = "coverage.variable_scopes_not_inspected";
 
         public UnsupportedItem(string id, string name, string creationName, string reason)
@@ -21,7 +25,10 @@ namespace SsisAiRuntime.Inspectors
         {
             if (reasonCode != UnspecifiedCode && reasonCode != TaskPropertiesNotInspectedCode && reasonCode != IntentionalOmissionCode &&
                 reasonCode != UnsupportedMetadataCode && reasonCode != ReadFailureCode &&
-                reasonCode != ExecutePackageTargetUnresolvedCode && reasonCode != VariableScopesNotInspectedCode &&
+                reasonCode != ExecutePackageTargetUnresolvedCode && reasonCode != ExecutePackageTargetAmbiguousCode &&
+                reasonCode != PackageParameterBindingUnresolvedCode && reasonCode != PackageParameterBindingAmbiguousCode &&
+                reasonCode != ProjectPackageContentsNotLoadedCode &&
+                reasonCode != VariableScopesNotInspectedCode &&
                 reasonCode != "expression.parse_failed" && reasonCode != "expression.owner_scope_missing" &&
                 reasonCode != "expression.scope_cycle" && reasonCode != "expression.reference_ambiguous" &&
                 reasonCode != "expression.reference_not_found" && reasonCode != "expression.project_context_unavailable" &&

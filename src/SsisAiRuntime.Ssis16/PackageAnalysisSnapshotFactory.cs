@@ -10,12 +10,28 @@ namespace SsisAiRuntime.Ssis16
 {
     public sealed class PackageAnalysisSnapshotFactory
     {
-        public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session) => Create(session, null);
+        public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session) =>
+            Create(session, (IEnumerable<ExpressionSymbol>)null);
         public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session, bool includeSanitizedText) =>
-            Create(session, null, includeSanitizedText);
+            Create(session, (IEnumerable<ExpressionSymbol>)null, includeSanitizedText);
 
         public InspectionResult<PackageAnalysisSnapshot> Create(PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session,
             IEnumerable<ExpressionSymbol> projectParameters, bool includeSanitizedText = false)
+        {
+            return CreateCore(session, projectParameters, null, includeSanitizedText);
+        }
+
+        public InspectionResult<PackageAnalysisSnapshot> CreateWithProjectInventory(
+            PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session, IProjectInventory projectInventory,
+            bool includeSanitizedText = false)
+        {
+            if (projectInventory == null) { throw new ArgumentNullException(nameof(projectInventory)); }
+            return CreateCore(session, null, projectInventory, includeSanitizedText);
+        }
+
+        private InspectionResult<PackageAnalysisSnapshot> CreateCore(
+            PackageSession<Microsoft.SqlServer.Dts.Runtime.Package> session, IEnumerable<ExpressionSymbol> projectParameters,
+            IProjectInventory projectInventory, bool includeSanitizedText)
         {
             if (session == null) { throw new ArgumentNullException(nameof(session)); }
             var overview = new PackageOverviewInspector().InspectDetailed(session);
@@ -40,9 +56,21 @@ namespace SsisAiRuntime.Ssis16
                 parameters.Items, executables.Items, dataFlows.Items);
             var controlFlow = new ControlFlowGraphBuilder().Build(executables.Items, precedence, catalog);
             unsupported = Merge(unsupported, controlFlow.UnsupportedItems);
+            var effectiveProjectParameters = projectParameters;
+            if (projectInventory != null)
+            {
+                var packages = projectInventory.Packages ?? throw new ArgumentException("Project packages are required.", nameof(projectInventory));
+                var inventoryParameters = projectInventory.Parameters ?? throw new ArgumentException("Project parameters are required.", nameof(projectInventory));
+                if (packages.Count(item => item.PackageId == package.PackageId) == 1)
+                {
+                    effectiveProjectParameters = inventoryParameters.Select(parameter => new ExpressionSymbol(
+                        parameter.NativeId, package.PackageId, ExpressionSymbolKind.ProjectParameter, "$Project", parameter.Name)).ToArray();
+                }
+            }
             var dependencies = new PackageDependencyGraphBuilder().Build(package, connections.Items, executables.Items,
-                sql.Items, dataFlows.Items, controlFlow, unsupported);
-            var expressionDependencies = new PackageExpressionDependencyInspector().Inspect(session, projectParameters, includeSanitizedText);
+                sql.Items, dataFlows.Items, controlFlow, unsupported, projectInventory);
+            var expressionDependencies = new PackageExpressionDependencyInspector().Inspect(session,
+                effectiveProjectParameters, includeSanitizedText);
             if (expressionDependencies.Catalog != null)
             {
                 dependencies = new ExpressionDependencyGraphBuilder().Enrich(dependencies, expressionDependencies.Catalog,
@@ -52,6 +80,11 @@ namespace SsisAiRuntime.Ssis16
             {
                 dependencies = new PackageDependencyGraph(dependencies.Nodes, dependencies.Edges,
                     dependencies.UnsupportedItems.Concat(expressionDependencies.Analyses.UnsupportedItems));
+            }
+            if (projectInventory != null)
+            {
+                dependencies = new PackageParameterBindingGraphBuilder().Enrich(dependencies, executables.Items,
+                    projectInventory, expressionDependencies.Catalog);
             }
             unsupported = Merge(unsupported, expressionDependencies.Analyses.UnsupportedItems);
             unsupported = Merge(unsupported, dependencies.UnsupportedItems);
