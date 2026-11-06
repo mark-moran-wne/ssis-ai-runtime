@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
 using SsisAiRuntime.MutationHost;
+using RuntimeWrapper = Microsoft.SqlServer.Dts.Runtime.Wrapper;
 
 namespace SsisAiRuntime.Ssis16IntegrationTests
 {
@@ -21,6 +22,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 currentFixture = "UnionAllRefreshProbe";
                 currentFixture = "CrossedPaths";
                 VerifyFixture("CrossedPaths.dtsx", "CrossedPathsFlow");
+                currentFixture = "ConfigureFailureRollback";
+                VerifyConfigureFailureRollback();
+                currentFixture = "EndpointAdapterRejectionRollback";
+                VerifyEndpointAdapterRejectionRollback();
                 currentFixture = "NestedDataFlows";
                 VerifyNestedPathRefusal();
             }
@@ -33,7 +38,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Console.Error.WriteLine("Exact-path fixture failed at " + currentFixture + " (" + code + ").");
                 throw;
             }
-            Console.WriteLine("Exact-path splice fixtures: PASS; Branch, Merge, CrossedPaths rewired one selected path and reloaded; NestedDataFlows refused absent task-scoped paths.");
+            Console.WriteLine("Exact-path splice fixtures: PASS; Branch, Merge, CrossedPaths rewired one selected path and reloaded; configuration failure restored topology; Union All output conflict refused before mutation; NestedDataFlows refused absent task-scoped paths.");
         }
 
         private static void VerifyFixture(string fixtureName, string taskName)
@@ -141,6 +146,192 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
             Require(File.ReadAllBytes(fixturePath).SequenceEqual(originalBytes), "nested.source_unchanged");
         }
+
+        private static void VerifyConfigureFailureRollback()
+        {
+            var fixturePath = Path.Combine(FindRepositoryRoot(), "tests", "LayoutFixtures", "Branch.dtsx");
+            var originalBytes = File.ReadAllBytes(fixturePath);
+            using (var package = new Application().LoadPackage(fixturePath, null))
+            {
+                var task = FindPipelineTask(package, "BranchFlow");
+                var pipeline = (IDTSPipeline130)task.InnerObject;
+                var originalPaths = pipeline.PathCollection.Cast<IDTSPath100>()
+                    .Select(EndpointKey).OrderBy(key => key, StringComparer.Ordinal).ToArray();
+                var originalComponentIds = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                    .Select(component => component.ID).OrderBy(id => id).ToArray();
+                var selectedPathId = pipeline.PathCollection.Cast<IDTSPath100>().First().ID
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var inserted = AddMulticast(pipeline, "RejectedInsertion");
+                var rejected = false;
+                try
+                {
+                    DataFlowPathSplicer.Splice(pipeline, selectedPathId, inserted,
+                        configureInput: _ => { throw new InvalidOperationException("test.adapter.reject"); });
+                }
+                catch (InvalidOperationException exception)
+                {
+                    rejected = exception.Message == "mutation.insertion.path_splice.component_configure_failed";
+                }
+
+                Require(rejected, "configure_failure.reported");
+                var restoredPaths = pipeline.PathCollection.Cast<IDTSPath100>()
+                    .Select(EndpointKey).OrderBy(key => key, StringComparer.Ordinal).ToArray();
+                var restoredComponentIds = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                    .Select(component => component.ID).OrderBy(id => id).ToArray();
+                Require(originalPaths.SequenceEqual(restoredPaths), "configure_failure.paths_restored");
+                Require(originalComponentIds.SequenceEqual(restoredComponentIds), "configure_failure.component_removed");
+            }
+            Require(File.ReadAllBytes(fixturePath).SequenceEqual(originalBytes), "configure_failure.source_unchanged");
+        }
+
+        private static void VerifyEndpointAdapterRejectionRollback()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "SsisUnionAllRollback-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var sourcePath = Path.Combine(directory, "source.txt");
+            File.WriteAllText(sourcePath, "42" + Environment.NewLine, System.Text.Encoding.ASCII);
+            try
+            {
+                using (var package = new Package { Name = "UnionAllRollbackFixture", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+                {
+                    var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                    task.Name = "UnionAllFlow";
+                    var pipeline = (IDTSPipeline130)task.InnerObject;
+                    var application = new Application();
+                    var connection = CreateFlatFileConnection(package, sourcePath);
+                    var sourceA = AddFlatFileSource(pipeline, application, connection, "Source A");
+                    var sourceB = AddFlatFileSource(pipeline, application, connection, "Source B");
+                    var unionCreationName = application.PipelineComponentInfos.Cast<PipelineComponentInfo>()
+                        .Single(info => info.CreationName.StartsWith("DTSTransform.UnionAll.", StringComparison.OrdinalIgnoreCase))
+                        .CreationName;
+                    var union = pipeline.ComponentMetaDataCollection.New();
+                    union.ComponentClassID = unionCreationName;
+                    union.Name = "Union All";
+                    var unionDesign = union.Instantiate();
+                    unionDesign.ProvideComponentProperties();
+                    while (union.InputCollection.Count < 2)
+                    {
+                        var input = union.InputCollection.New();
+                        input.Name = "Union All Input " + union.InputCollection.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    }
+
+                    var input1 = union.InputCollection[0];
+                    var input2 = union.InputCollection[1];
+                    var sourceAOutput = sourceA.OutputCollection.Cast<IDTSOutput100>().First(output => !output.IsErrorOut);
+                    var sourceBOutput = sourceB.OutputCollection.Cast<IDTSOutput100>().First(output => !output.IsErrorOut);
+                    var sourceAColumn = sourceAOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                        .Single(column => column.Name == "SharedValue");
+                    var sourceBColumn = sourceBOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                        .Single(column => column.Name == "SharedValue");
+                    pipeline.PathCollection.New().AttachPathAndPropagateNotifications(sourceAOutput, input1);
+                    pipeline.PathCollection.New().AttachPathAndPropagateNotifications(sourceBOutput, input2);
+                    SelectInputColumn(unionDesign, input1, sourceAColumn.LineageID);
+                    SelectInputColumn(unionDesign, input2, sourceBColumn.LineageID);
+                    unionDesign.ReinitializeMetaData();
+
+                    var selectedPath = pipeline.PathCollection.Cast<IDTSPath100>()
+                        .Single(path => path.StartPoint.Component.ID == sourceA.ID && path.EndPoint.ID == input1.ID);
+                    var unionOutput = union.OutputCollection.Cast<IDTSOutput100>().First(output => !output.IsErrorOut);
+                    var conflictColumn = unionOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                        .Single(column => column.Name == "SharedValue");
+                    var originalPaths = pipeline.PathCollection.Cast<IDTSPath100>()
+                        .Select(EndpointKey).OrderBy(key => key, StringComparer.Ordinal).ToArray();
+                    var originalComponentIds = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                        .Select(component => component.ID).OrderBy(id => id).ToArray();
+                    var originalInputs = union.InputCollection.Cast<IDTSInput100>()
+                        .Select(UnionInputState).OrderBy(state => state, StringComparer.Ordinal).ToArray();
+                    var inserted = AddMulticast(pipeline, "RejectedUnionAllInsertion");
+                    var rejectionEvidence = string.Empty;
+                    try
+                    {
+                        DataFlowPathSplicer.Splice(pipeline,
+                            selectedPath.ID.ToString(System.Globalization.CultureInfo.InvariantCulture), inserted,
+                            insertedOutputName: conflictColumn.Name);
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        var aggregate = exception.InnerException as AggregateException;
+                        var details = aggregate == null ? exception.InnerException?.Message
+                            : string.Join(";", aggregate.Flatten().InnerExceptions.Select(inner => inner.ToString()));
+                        rejectionEvidence = exception.Message + ":" + details;
+                    }
+
+                    Require(rejectionEvidence ==
+                        "mutation.insertion.path_splice.endpoint_prepare_failed:mutation.insertion.union_all.output_name_conflict",
+                        "endpoint_adapter_rejection.reported:" + rejectionEvidence);
+                    var restoredPaths = pipeline.PathCollection.Cast<IDTSPath100>()
+                        .Select(EndpointKey).OrderBy(key => key, StringComparer.Ordinal).ToArray();
+                    var restoredComponentIds = pipeline.ComponentMetaDataCollection.Cast<IDTSComponentMetaData100>()
+                        .Select(component => component.ID).OrderBy(id => id).ToArray();
+                    var restoredInputs = union.InputCollection.Cast<IDTSInput100>()
+                        .Select(UnionInputState).OrderBy(state => state, StringComparer.Ordinal).ToArray();
+                    Require(originalPaths.SequenceEqual(restoredPaths), "endpoint_adapter_rejection.paths_restored");
+                    Require(originalComponentIds.SequenceEqual(restoredComponentIds), "endpoint_adapter_rejection.component_removed");
+                    Require(originalInputs.SequenceEqual(restoredInputs), "endpoint_adapter_rejection.inputs_restored");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) { Directory.Delete(directory, true); }
+            }
+        }
+
+        private static void SelectInputColumn(IDTSDesigntimeComponent100 design, IDTSInput100 input, int lineageId) =>
+            design.SetUsageType(input.ID, input.GetVirtualInput(), lineageId, DTSUsageType.UT_READONLY);
+
+        private static ConnectionManager CreateFlatFileConnection(Package package, string path)
+        {
+            var connection = package.Connections.Add("FLATFILE");
+            connection.Name = "UnionAllRollbackSource";
+            connection.ConnectionString = path;
+            var file = (RuntimeWrapper.IDTSConnectionManagerFlatFile100)connection.InnerObject;
+            file.Format = "Delimited";
+            file.Unicode = false;
+            file.LocaleID = 1033;
+            file.ColumnNamesInFirstDataRow = false;
+            var column = file.Columns.Add();
+            column.ColumnType = "Delimited";
+            column.ColumnDelimiter = Environment.NewLine;
+            column.DataType = RuntimeWrapper.DataType.DT_I4;
+            column.MaximumWidth = 4;
+            ((RuntimeWrapper.IDTSName100)column).Name = "SharedValue";
+            return connection;
+        }
+
+        private static IDTSComponentMetaData100 AddFlatFileSource(IDTSPipeline130 pipeline, Application application,
+            ConnectionManager connection, string name)
+        {
+            var component = pipeline.ComponentMetaDataCollection.New();
+            component.ComponentClassID = application.PipelineComponentInfos.Cast<PipelineComponentInfo>()
+                .Single(info => info.CreationName.StartsWith("DTSAdapter.FlatFileSource.", StringComparison.OrdinalIgnoreCase))
+                .CreationName;
+            var design = component.Instantiate();
+            design.ProvideComponentProperties();
+            component.Name = name;
+            component.LocaleID = 1033;
+            component.RuntimeConnectionCollection[0].ConnectionManagerID = connection.ID;
+            component.RuntimeConnectionCollection[0].ConnectionManager = DtsConvert.GetExtendedInterface(connection);
+            design.AcquireConnections(null);
+            try { design.ReinitializeMetaData(); }
+            finally { design.ReleaseConnections(); }
+            return component;
+        }
+
+        private static string UnionInputState(IDTSInput100 input)
+        {
+            var mappings = input.InputColumnCollection.Cast<IDTSInputColumn100>().Select(column =>
+            {
+                var property = column.CustomPropertyCollection.Cast<IDTSCustomProperty100>()
+                    .SingleOrDefault(item => item.Name == "OutputColumnLineageID");
+                return column.Name + ":" + column.LineageID.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    ":" + Convert.ToString(property?.Value, System.Globalization.CultureInfo.InvariantCulture);
+            }).OrderBy(value => value, StringComparer.Ordinal);
+            return input.Name + "|" + string.Join(";", mappings);
+        }
+
+        private static string EndpointKey(IDTSPath100 path) =>
+            path.StartPoint.Component.ID + ":" + path.StartPoint.ID + "->" +
+            path.EndPoint.Component.ID + ":" + path.EndPoint.ID;
 
         private static IDTSComponentMetaData100 AddMulticast(IDTSPipeline130 pipeline, string name)
         {

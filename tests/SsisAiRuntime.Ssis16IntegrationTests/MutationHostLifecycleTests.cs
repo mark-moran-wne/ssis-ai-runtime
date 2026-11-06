@@ -896,8 +896,46 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(connectionCheck.Succeeded, "insert.connection.reload");
                 try { Require(connectionCheck.Session.Package.Connections.Count == 2, "insert.connection.preserved"); }
                 finally { connectionCheck.Session.Package.Dispose(); }
+
+                var saveFailureDestination = Path.Combine(directory, "save-failure-output.dtsx");
+                var saveFailureCheckpoint = new TestCheckpoint(Path.Combine(directory, "save-failure-checkpoint.dtsx"));
+                var saveFailureHost = new FaultHost(saveFailureCheckpoint, new TestValidator(), saveFails: true, reloadFails: false);
+                var saveFailureResult = saveFailureHost.ExecuteAsync(new MutationHostRequest(sourcePath,
+                    saveFailureDestination, plan, sourceHash), CancellationToken.None).GetAwaiter().GetResult();
+                Require(!saveFailureResult.Completed && saveFailureResult.Code == "mutation.execution.failed" &&
+                    saveFailureResult.CheckpointCreated && !saveFailureResult.SaveAsCompleted &&
+                    !File.Exists(saveFailureDestination) && Hash(sourcePath) == sourceHash,
+                    "insert.save_failure_cleanup");
+
+                var reloadFailureDestination = Path.Combine(directory, "reload-failure-output.dtsx");
+                var reloadFailureCheckpoint = new TestCheckpoint(Path.Combine(directory, "reload-failure-checkpoint.dtsx"));
+                var reloadFailureValidator = new TestValidator();
+                var reloadFailureHost = new FaultHost(reloadFailureCheckpoint, reloadFailureValidator,
+                    saveFails: false, reloadFails: true);
+                var reloadFailureResult = reloadFailureHost.ExecuteAsync(new MutationHostRequest(sourcePath,
+                    reloadFailureDestination, plan, sourceHash), CancellationToken.None).GetAwaiter().GetResult();
+                Require(!reloadFailureResult.Completed && reloadFailureResult.Code == "mutation.reload.test_failed" &&
+                    reloadFailureResult.CheckpointCreated && !reloadFailureResult.ReloadSucceeded &&
+                    reloadFailureValidator.Calls == 0 && !File.Exists(reloadFailureDestination) &&
+                    Hash(sourcePath) == sourceHash,
+                    "insert.reload_failure_cleanup:" + reloadFailureResult.Code + ":" +
+                    reloadFailureResult.SaveAsCompleted + ":" + reloadFailureResult.ReloadSucceeded);
+
+                var deltaDestination = Path.Combine(directory, "unexpected-delta-output.dtsx");
+                var deltaCheckpoint = new TestCheckpoint(Path.Combine(directory, "unexpected-delta-checkpoint.dtsx"));
+                var deltaValidator = new TestValidator { AlterPackageName = true };
+                var deltaHost = new Host(new PackageLoader(), new PackageAnalysisSnapshotFactory(), new CorpusSnapshotBuilder(),
+                    new CorpusFingerprintProvider(), new MutationPreviewer(), deltaCheckpoint, deltaValidator,
+                    new MutationArtifactStager());
+                var deltaResult = deltaHost.ExecuteAsync(new MutationHostRequest(sourcePath, deltaDestination, plan, sourceHash),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                Require(!deltaResult.Completed && deltaResult.DiagnosticCodes.Contains("mutation.insertion.package_identity_changed") &&
+                    deltaResult.CheckpointCreated && deltaResult.ReloadSucceeded && deltaResult.ValidationSucceeded &&
+                    !deltaResult.SemanticDiffMatched && !File.Exists(deltaDestination) && Hash(sourcePath) == sourceHash,
+                    "insert.unexpected_delta_rejected:" + deltaResult.Code + ":" +
+                    string.Join(",", deltaResult.DiagnosticCodes));
                 passedCases++;
-                Console.WriteLine("Mutation host derived-column insertion: PASS; checkpoint/save-as/reload/layout verification with validator double; no data-source connection or package execution.");
+                Console.WriteLine("Mutation host derived-column insertion: PASS; success, save/reload failure cleanup, unexpected semantic-delta refusal, and checkpoint/save-as/reload/layout verification; no data-source connection or package execution.");
             }
             finally
             {

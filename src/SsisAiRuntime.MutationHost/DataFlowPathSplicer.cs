@@ -47,6 +47,7 @@ namespace SsisAiRuntime.MutationHost
                 if (endpointAdapter != null)
                 {
                     stage = "endpoint_prepare";
+                    endpointAdapter.ValidateOutputName(insertedOutputName);
                     destinationInput = endpointAdapter.Prepare();
                     sourceOutput = FindComponent(pipeline, sourceComponentId).OutputCollection.Cast<IDTSOutput100>()
                         .Single(output => output.ID == sourceOutputId);

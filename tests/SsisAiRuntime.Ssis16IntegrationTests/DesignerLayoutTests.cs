@@ -79,6 +79,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 new[] { new DesignerPoint(200, 125), new DesignerPoint(280, 125) });
             var snapshot = new DesignerLayoutSnapshot(new[] { first, second, otherFlowNode }, new[] { path });
             var service = new DesignerLayoutService();
+            RequireArgumentOutOfRange(() => new ComponentPlacementIntent(owner,
+                ComponentPlacementRelation.RightOf, first.NativeId, 0, 40), "placement.zero_width_refused");
+            RequireArgumentOutOfRange(() => new ComponentPlacementIntent(owner,
+                ComponentPlacementRelation.RightOf, first.NativeId, 40, -1), "placement.negative_height_refused");
             var right = service.PlaceRightOf(snapshot, owner, second.NativeId, 60, 40);
             Require(right.Position.Left == 412 && right.Position.Top == 100, "placement.right_of");
             var below = service.PlaceBelow(snapshot, owner, first.NativeId, 60, 40);
@@ -294,6 +298,13 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
         {
             try { action(); }
             catch (InvalidOperationException) { return; }
+            throw new InvalidOperationException(code);
+        }
+
+        private static void RequireArgumentOutOfRange(Action action, string code)
+        {
+            try { action(); }
+            catch (ArgumentOutOfRangeException) { return; }
             throw new InvalidOperationException(code);
         }
 

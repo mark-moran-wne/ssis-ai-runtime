@@ -21,6 +21,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
 
         private static int Main(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--create-corpus-fixtures")
+            {
+                return CreateCorpusFixtures(args[1]);
+            }
             if (args.Length == 2 && args[0] == "--create-designer-fixtures")
             {
                 return CreateDesignerFixtures(args[1]);
@@ -59,7 +63,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             }
             if (args.Length > 1)
             {
-                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --path-splice-probe | --union-all-probe | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory> | --verify-designer-fixtures <directory>]");
+                Console.Error.WriteLine("Usage: SsisAiRuntime.Ssis16IntegrationTests.exe [package.dtsx | --execute-flow-probe | --mutation-host-probe | --column-resize-probe | --designer-layout-probe | --path-splice-probe | --union-all-probe | --create-corpus-fixtures <directory> | --create-designer-fixtures <directory> | --inspect-designer-fixtures <directory> | --verify-designer-fixtures <directory>]");
                 return 2;
             }
             var directory = Path.Combine(Path.GetTempPath(), "SsisAiRuntimeFixture-" + Guid.NewGuid().ToString("N"));
@@ -160,6 +164,7 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     VerifyDerivedFixture(directory);
                     VerifyHeuristicExpressions(directory);
                     VerifySqlDependencies(directory);
+                    VerifyExecutePackageTargetCoverage(directory);
                     if (args.Length == 1) { VerifyExistingPackage(args[0]); }
                     return 0;
                 }
@@ -206,6 +211,21 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             catch (Exception error)
             {
                 Console.Error.WriteLine("Designer fixture generation failed: " + error.Message);
+                return 1;
+            }
+        }
+
+        private static int CreateCorpusFixtures(string directory)
+        {
+            try
+            {
+                var paths = CorpusFixtureGenerator.Create(directory);
+                foreach (var path in paths) { Console.WriteLine("Synthetic corpus fixture: PASS; " + Path.GetFileName(path)); }
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine("Synthetic corpus fixture generation failed: " + error.Message);
                 return 1;
             }
         }
@@ -318,6 +338,51 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 RunCli(new[] { "ai", "dependency.graph", path, "--include-sanitized-text" }, 2);
                 Require(Hash(path) == before, "sql.hash");
                 Console.WriteLine("Parsed SQL verification: PASS; connection-scoped schema objects, parsed evidence, dynamic gaps, default redaction, unchanged hash; no database connection, execution, or validation.");
+            }
+            finally { loaded.Session.Package.Dispose(); }
+        }
+
+        private static void VerifyExecutePackageTargetCoverage(string directory)
+        {
+            stage = "execute-package.fixture.creation";
+            var path = Path.Combine(directory, "ExecutePackageTargetCoverage.dtsx");
+            var application = new Application();
+            var taskInfo = application.TaskInfos.Cast<TaskInfo>().SingleOrDefault(info =>
+                info.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0);
+            Require(taskInfo != null, "execute-package.task-unavailable");
+            string taskId;
+            using (var package = new Package
+            {
+                Name = "ExecutePackageTargetCoverage",
+                ProtectionLevel = DTSProtectionLevel.DontSaveSensitive
+            })
+            {
+                var task = (TaskHost)package.Executables.Add(taskInfo.CreationName);
+                task.Name = "RunChildPackage";
+                taskId = task.ID;
+                application.SaveToXml(path, package, null);
+            }
+
+            stage = "execute-package.fixture.reload";
+            var loaded = new PackageLoader().Load(path);
+            Require(loaded.Succeeded, "execute-package.load");
+            try
+            {
+                var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var taskNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Executable &&
+                    node.NativeId == taskId);
+                Require(snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
+                    edge.From == "Package:" + loaded.Session.Package.ID && edge.To == taskNode.Key),
+                    "execute-package.containment");
+                Require(snapshot.Dependencies.UnsupportedItems.Any(item =>
+                    item.Id == taskId && item.ReasonCode == UnsupportedItem.ExecutePackageTargetUnresolvedCode),
+                    "execute-package.unresolved-target-coverage");
+                Require(!snapshot.Dependencies.Nodes.Any(node => node.Kind == SemanticObjectKind.SchemaObject) &&
+                    !snapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key &&
+                        (edge.Kind == DependencyKind.ReadsSchemaObject || edge.Kind == DependencyKind.WritesSchemaObject ||
+                         edge.Kind == DependencyKind.ExecutesSchemaObject)),
+                    "execute-package.no-guessed-target");
+                Console.WriteLine("Execute Package dependency probe: PASS; native task recognized, target explicitly unresolved, no guessed target edge.");
             }
             finally { loaded.Session.Package.Dispose(); }
         }

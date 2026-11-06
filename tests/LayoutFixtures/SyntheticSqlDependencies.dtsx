@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="11/5/2026 10:39:46 PM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="COLLODS02"
+  DTS:CreatorName="WNE\colladmin"
+  DTS:DTSID="{28F72CDD-771D-4BA2-9BF8-38A20EA988F3}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticSqlDependencies"
+  DTS:ProtectionLevel="0"
+  DTS:VersionGUID="{8A06F6FE-94E5-40E1-82E9-E69FA89FD86A}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[SyntheticWarehouse]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{F01CC8E2-CCB5-4054-9087-9889E418E9EB}"
+      DTS:ObjectName="SyntheticWarehouse">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=(local);Initial Catalog=CorpusFixture;Provider=SQLOLEDB;Integrated Security=SSPI;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables />
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\ReadAndLoadStudents"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{3C803B9A-8F8C-4367-AF17-CFCDA2731982}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="ReadAndLoadStudents"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{F01CC8E2-CCB5-4054-9087-9889E418E9EB}"
+          SQLTask:SqlStatementSource="SELECT StudentId FROM dbo.Students; EXEC dbo.LoadStudents; SELECT dbo.GetStudentCount();" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

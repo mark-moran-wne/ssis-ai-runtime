@@ -135,13 +135,18 @@ namespace SsisAiRuntime.MutationHost
             return replacementInput;
         }
 
+        internal void ValidateOutputName(string outputName)
+        {
+            if (string.IsNullOrWhiteSpace(outputName) || outputColumnsBefore.Any(column =>
+                string.Equals(column.Name, outputName, StringComparison.OrdinalIgnoreCase)))
+            { throw new InvalidOperationException("mutation.insertion.union_all.output_name_conflict"); }
+        }
+
         public void Complete(string outputName)
         {
             if (!prepared || completed || replacementInput == null)
             { throw new InvalidOperationException("mutation.insertion.union_all.adapter_state_invalid"); }
-            if (string.IsNullOrWhiteSpace(outputName) || outputColumnsBefore.Any(column =>
-                string.Equals(column.Name, outputName, StringComparison.OrdinalIgnoreCase)))
-            { throw new InvalidOperationException("mutation.insertion.union_all.output_name_conflict"); }
+            ValidateOutputName(outputName);
 
             var virtualInput = replacementInput.GetVirtualInput();
             foreach (var mapping in selectedBefore.Mappings)

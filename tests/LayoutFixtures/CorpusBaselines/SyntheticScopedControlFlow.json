@@ -1,0 +1,470 @@
+{
+  "kind": "ssis-ai-runtime.corpus.baseline",
+  "schemaVersion": "1.0",
+  "generatedUtc": "2026-11-06T03:40:45.8728812Z",
+  "generator": "SsisAiRuntime.Cli",
+  "command": "corpus.approve",
+  "packagePath": "SyntheticScopedControlFlow.dtsx",
+  "upgraded": false,
+  "previousSchemaVersion": "",
+  "snapshot": {
+    "schemaVersion": "1.0",
+    "package": {
+      "id": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}",
+      "name": "SyntheticScopedControlFlow"
+    },
+    "isComplete": false,
+    "nodeCount": 53,
+    "edgeCount": 10,
+    "coverageGapCount": 5,
+    "nodes": [
+      {
+        "key": "DataFlow:{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "kind": "DataFlow",
+        "name": "Load",
+        "nativeId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "parentId": ""
+      },
+      {
+        "key": "DataFlow:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "kind": "DataFlow",
+        "name": "Prepare",
+        "nativeId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "parentId": ""
+      },
+      {
+        "key": "Executable:{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "kind": "Executable",
+        "name": "Load",
+        "nativeId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "parentId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}"
+      },
+      {
+        "key": "Executable:{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}",
+        "kind": "Executable",
+        "name": "SyntheticScope",
+        "nativeId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}",
+        "parentId": ""
+      },
+      {
+        "key": "Executable:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "kind": "Executable",
+        "name": "Prepare",
+        "nativeId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "parentId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}"
+      },
+      {
+        "key": "ExpressionOwner:Constraint:{5697BE5F-CAE3-44C0-A82F-C7C379ACD837}",
+        "kind": "ExpressionOwner",
+        "name": "ConstraintExpression",
+        "nativeId": "{5697BE5F-CAE3-44C0-A82F-C7C379ACD837}",
+        "parentId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}"
+      },
+      {
+        "key": "Package:{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}",
+        "kind": "Package",
+        "name": "SyntheticScopedControlFlow",
+        "nativeId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}",
+        "parentId": ""
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3AContainerStartTime",
+        "kind": "Variable",
+        "name": "System::ContainerStartTime",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3ACreationName",
+        "kind": "Variable",
+        "name": "System::CreationName",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3ALocaleID",
+        "kind": "Variable",
+        "name": "System::LocaleID",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3AParentContainerGUID",
+        "kind": "Variable",
+        "name": "System::ParentContainerGUID",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3ATaskID",
+        "kind": "Variable",
+        "name": "System::TaskID",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3ATaskName",
+        "kind": "Variable",
+        "name": "System::TaskName",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF%7D:System%3A%3ATaskTransactionOption",
+        "kind": "Variable",
+        "name": "System::TaskTransactionOption",
+        "nativeId": "",
+        "parentId": "{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3ACancelEvent",
+        "kind": "Variable",
+        "name": "System::CancelEvent",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AContainerStartTime",
+        "kind": "Variable",
+        "name": "System::ContainerStartTime",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3ACreationDate",
+        "kind": "Variable",
+        "name": "System::CreationDate",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3ACreatorComputerName",
+        "kind": "Variable",
+        "name": "System::CreatorComputerName",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3ACreatorName",
+        "kind": "Variable",
+        "name": "System::CreatorName",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AExecutionInstanceGUID",
+        "kind": "Variable",
+        "name": "System::ExecutionInstanceGUID",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AFailedConfigurations",
+        "kind": "Variable",
+        "name": "System::FailedConfigurations",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AIgnoreConfigurationsOnLoad",
+        "kind": "Variable",
+        "name": "System::IgnoreConfigurationsOnLoad",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AInteractiveMode",
+        "kind": "Variable",
+        "name": "System::InteractiveMode",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3ALastModifiedProductVersion",
+        "kind": "Variable",
+        "name": "System::LastModifiedProductVersion",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3ALocaleID",
+        "kind": "Variable",
+        "name": "System::LocaleID",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AMachineName",
+        "kind": "Variable",
+        "name": "System::MachineName",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AOfflineMode",
+        "kind": "Variable",
+        "name": "System::OfflineMode",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3APackageID",
+        "kind": "Variable",
+        "name": "System::PackageID",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3APackageName",
+        "kind": "Variable",
+        "name": "System::PackageName",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AParentContainerGUID",
+        "kind": "Variable",
+        "name": "System::ParentContainerGUID",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AProductVersion",
+        "kind": "Variable",
+        "name": "System::ProductVersion",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AServerExecutionID",
+        "kind": "Variable",
+        "name": "System::ServerExecutionID",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AStartTime",
+        "kind": "Variable",
+        "name": "System::StartTime",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AUserName",
+        "kind": "Variable",
+        "name": "System::UserName",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AVersionBuild",
+        "kind": "Variable",
+        "name": "System::VersionBuild",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AVersionComments",
+        "kind": "Variable",
+        "name": "System::VersionComments",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AVersionGUID",
+        "kind": "Variable",
+        "name": "System::VersionGUID",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AVersionMajor",
+        "kind": "Variable",
+        "name": "System::VersionMajor",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7B8E74356F-A0CC-48FB-81E1-2BA9F706CE0B%7D:System%3A%3AVersionMinor",
+        "kind": "Variable",
+        "name": "System::VersionMinor",
+        "nativeId": "",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BA34FD647-61B2-44E7-BCCB-D148F4BD8C33%7D:System%3A%3ALocaleID",
+        "kind": "Variable",
+        "name": "System::LocaleID",
+        "nativeId": "",
+        "parentId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BA34FD647-61B2-44E7-BCCB-D148F4BD8C33%7D:System%3A%3AParentContainerGUID",
+        "kind": "Variable",
+        "name": "System::ParentContainerGUID",
+        "nativeId": "",
+        "parentId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3AContainerStartTime",
+        "kind": "Variable",
+        "name": "System::ContainerStartTime",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3ACreationName",
+        "kind": "Variable",
+        "name": "System::CreationName",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3ALocaleID",
+        "kind": "Variable",
+        "name": "System::LocaleID",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3AParentContainerGUID",
+        "kind": "Variable",
+        "name": "System::ParentContainerGUID",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3ATaskID",
+        "kind": "Variable",
+        "name": "System::TaskID",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3ATaskName",
+        "kind": "Variable",
+        "name": "System::TaskName",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:SystemVariable:%7BCECCFCDE-6BE2-4290-85D2-128C495BE353%7D:System%3A%3ATaskTransactionOption",
+        "kind": "Variable",
+        "name": "System::TaskTransactionOption",
+        "nativeId": "",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:Variable:%7B015BA727-C4D3-4EC7-888A-746B4BA55E74%7D",
+        "kind": "Variable",
+        "name": "User::BatchNumber",
+        "nativeId": "{015BA727-C4D3-4EC7-888A-746B4BA55E74}",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:Variable:%7B4E924C78-B94C-4660-ADFD-973951640BDD%7D",
+        "kind": "Variable",
+        "name": "User::NextBatch",
+        "nativeId": "{4E924C78-B94C-4660-ADFD-973951640BDD}",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:Variable:%7B65E3B8EF-6936-4A06-9E4A-AD7F9180F4E7%7D",
+        "kind": "Variable",
+        "name": "User::Enabled",
+        "nativeId": "{65E3B8EF-6936-4A06-9E4A-AD7F9180F4E7}",
+        "parentId": "{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}"
+      },
+      {
+        "key": "Variable:Variable:%7BDA05F413-199E-42DE-9DFD-E5257D401A12%7D",
+        "kind": "Variable",
+        "name": "User::LocalFlag",
+        "nativeId": "{DA05F413-199E-42DE-9DFD-E5257D401A12}",
+        "parentId": "{CECCFCDE-6BE2-4290-85D2-128C495BE353}"
+      },
+      {
+        "key": "Variable:Variable:%7BE72D6665-4858-49E0-AD79-E5B5C9A383B9%7D",
+        "kind": "Variable",
+        "name": "User::Enabled",
+        "nativeId": "{E72D6665-4858-49E0-AD79-E5B5C9A383B9}",
+        "parentId": "{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}"
+      }
+    ],
+    "edges": [
+      {
+        "from": "Executable:{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "to": "DataFlow:{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "kind": "ContainsDataFlow",
+        "evidence": ""
+      },
+      {
+        "from": "Executable:{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}",
+        "to": "Executable:{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "kind": "ContainsTask",
+        "evidence": ""
+      },
+      {
+        "from": "Executable:{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}",
+        "to": "Executable:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "kind": "ContainsTask",
+        "evidence": ""
+      },
+      {
+        "from": "Executable:{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}",
+        "to": "ExpressionOwner:Constraint:{5697BE5F-CAE3-44C0-A82F-C7C379ACD837}",
+        "kind": "HasExpression",
+        "evidence": ""
+      },
+      {
+        "from": "Executable:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "to": "DataFlow:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "kind": "ContainsDataFlow",
+        "evidence": ""
+      },
+      {
+        "from": "Executable:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "to": "Executable:{6CE621CF-D97A-46BE-8AE1-7DF2818BBDFF}",
+        "kind": "DependsOnTask",
+        "evidence": ""
+      },
+      {
+        "from": "Executable:{CECCFCDE-6BE2-4290-85D2-128C495BE353}",
+        "to": "Variable:Variable:%7BE72D6665-4858-49E0-AD79-E5B5C9A383B9%7D",
+        "kind": "UsesVariable",
+        "evidence": "LexicalAndScopeResolved"
+      },
+      {
+        "from": "ExpressionOwner:Constraint:{5697BE5F-CAE3-44C0-A82F-C7C379ACD837}",
+        "to": "Variable:Variable:%7BE72D6665-4858-49E0-AD79-E5B5C9A383B9%7D",
+        "kind": "UsesVariable",
+        "evidence": "LexicalAndScopeResolved"
+      },
+      {
+        "from": "Package:{8E74356F-A0CC-48FB-81E1-2BA9F706CE0B}",
+        "to": "Executable:{A34FD647-61B2-44E7-BCCB-D148F4BD8C33}",
+        "kind": "ContainsTask",
+        "evidence": ""
+      },
+      {
+        "from": "Variable:Variable:%7B4E924C78-B94C-4660-ADFD-973951640BDD%7D",
+        "to": "Variable:Variable:%7B015BA727-C4D3-4EC7-888A-746B4BA55E74%7D",
+        "kind": "UsesVariable",
+        "evidence": "LexicalAndScopeResolved"
+      }
+    ],
+    "coverageGaps": [
+      {
+        "reasonCode": "coverage.intentional_omission",
+        "count": 2
+      },
+      {
+        "reasonCode": "coverage.task_properties_not_inspected",
+        "count": 2
+      },
+      {
+        "reasonCode": "coverage.unspecified",
+        "count": 1
+      }
+    ]
+  }
+}

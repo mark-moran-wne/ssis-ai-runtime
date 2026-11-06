@@ -1,5 +1,21 @@
 # SSIS AI Runtime History
 
+## 2026-11-05 Synthetic Semantic Corpus Fixtures
+
+- Added `SyntheticScopedControlFlow.dtsx` for nested scope, shadowing, precedence, and expression references, plus `SyntheticSqlDependencies.dtsx` for connection-scoped table, procedure, and function edges. Both are generated through SSIS 16's object model, contain no production data, and do not execute or connect to a data source.
+- Reviewed each metadata-only snapshot for intended nodes, evidence-bearing edges, explicit coverage gaps, deterministic repeated output, and absence of raw SQL/expression/connection fields; then explicitly approved the two baselines. `Invoke-CorpusBaselineGate.ps1` passes all nine fixtures.
+- The full `SSIS16-Mutation-Gate` passes after the additions: Release solution build, 202 runtime tests, 13 corpus tests, 23 mutation tests, all nine corpus baselines, default native harness, 30 MutationHost lifecycle cases, designer/layout, 15 resize cases, exact-path splice, and Union All offline validation. The known `CS8012` interop warning remains; no package execution or data-source connection occurred.
+- These synthetic packages expand semantic shape coverage only; they are not representative business packages, and no operation-specific corpus promotion or Required CI claim follows from them.
+- Added a native Execute Package Task graph probe. It verifies executable containment and the explicit unresolved-target gap without inventing a package target or executing the task; positive target extraction remains future work.
+
+## 2026-11-05 Status Matrix and Roadmap Separation
+
+- Split current operation maturity/evidence into `STATUS.md` and ordered future work into `PLAN.md`; the roadmap now treats the mutation lifecycle as mandatory and keeps SSISDB/SQL Agent deployment as an independent subsystem.
+- Expanded `ai variable.properties` to report variables in inspectable nested executable scopes with scope native IDs and incomplete-coverage reporting for unreadable or uncertain ownership. Variable mutations remain package-scope-only.
+- Expanded `ai mutation.capabilities` with each advertised operation's lifecycle requirements and documented variable-operation limits. The focused Release integration build and native harness pass; the full gate and provider-required status still need the evidence/configuration described in `STATUS.md` and `PLAN.md`.
+- Added exact-path failure coverage: component-configuration failure rolls back to the original path endpoints and component inventory, and a duplicate Union All output name is refused during adapter preflight before mutation. Derived Column host tests inject save/reload failures and reject an unexpected package-identity delta using host/validator test doubles. The focused Release build and MutationHost/path-splice probes pass. Rollback after failures during/after native adapter refresh and corresponding Data Conversion failure cases remain open.
+- Added designer-layout assertions that zero-width and negative-height placement intents are rejected. The Release integration build and `--designer-layout-probe` pass; endpoint-adapter rejection and insertion-specific save/reload/delta failure cases remain open.
+
 ## 2026-11-05 Variable Properties and Description Update
 
 - Added read-only `ai variable.properties` for package-scope variables, including native IDs, scope, type, read-only/system/expression flags, and explicit `Unclassified` sensitivity. Values and expression text are omitted; nested executable scopes return `coverage.variable_scopes_not_inspected`.
@@ -88,7 +104,7 @@
 - Host packages are now disposed on normal/error paths; source read sharing spans loading through publication. Production checkpoint/validation services, result serialization, and authorization/journaling remain unverified or unimplemented.
 - Hardened the lifecycle suite to 22 cases with a gated, genuinely asynchronous checkpoint callback and test-only malformed duplicate native IDs. The async test proves the operation was pending before release and that copying/resumption runs off the caller thread; the duplicate-ID case verifies refusal before checkpointing/publication. Both pass on this host. Added a documented required native regression gate; no SSIS-enabled CI runner or branch-protection check is configured yet.
 
-This document records completed milestones, investigation evidence, and dated verification results. For current behavior and safety limits, see [README.md](README.md). For remaining work and design decisions, see [Plan.md](Plan.md). Build and verification commands are in [BuildPackage.md](BuildPackage.md).
+This document records completed milestones, investigation evidence, and dated verification results. For current operation maturity and evidence, see [STATUS.md](STATUS.md). For ordered remaining work and design decisions, see [PLAN.md](PLAN.md). Runtime behavior and safety limits are in [README.md](README.md); build and verification commands are in [BuildPackage.md](BuildPackage.md).
 
 ## 2026-10-07 Synthetic SSIS Execution
 
