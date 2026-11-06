@@ -113,6 +113,32 @@ public class DependencyAndPlanningTests
     }
 
     [Fact]
+    public void ExecutePackageProjectReferencePreservesDeclaredTargetWithoutClaimingResolution()
+    {
+        var package = new PackageOverview(Guid.NewGuid(), "Parent", "parent", string.Empty, DateTime.UnixEpoch,
+            1, 0, 0, "DontSaveSensitive", "Default", 0, 0, 1, 0, 0, false);
+        var task = new ExecutableOverview("execute-package", string.Empty, "Run Child Package",
+            "Microsoft.SqlServer.Dts.Tasks.ExecutePackageTask.ExecutePackageTask, Microsoft.SqlServer.ExecPkgTask",
+            string.Empty, 0, false, false, "ProjectReference", "ChildPackage");
+        var graph = new PackageDependencyGraphBuilder().Build(package,
+            Array.Empty<ConnectionOverview>(), new[] { task }, Array.Empty<SqlStatementOverview>(),
+            Array.Empty<DataFlowOverview>(),
+            new ControlFlowGraph(Array.Empty<ControlFlowNode>(), Array.Empty<ControlFlowEdge>(), Array.Empty<UnsupportedItem>()),
+            Array.Empty<UnsupportedItem>());
+        var externalTarget = Assert.Single(graph.Nodes, node =>
+            node.Kind == SemanticObjectKind.ExternalPackageReference && node.Name == "ChildPackage");
+
+        Assert.Contains(graph.Edges, edge => edge.From == "Executable:execute-package" &&
+            edge.To == externalTarget.Key && edge.Kind == DependencyKind.InvokesPackage &&
+            edge.Evidence == "DeclaredProjectReference");
+        Assert.Contains(graph.UnsupportedItems, item =>
+            item.Id == "execute-package" && item.ReasonCode == "dependency.execute_package_target_unresolved");
+        Assert.DoesNotContain(graph.Nodes, node => node.Kind == SemanticObjectKind.Package && node.Name == "ChildPackage");
+        var consumers = new DependencyQuery().Find(graph, externalTarget.Key, incoming: true, recursive: true).Items.Single();
+        Assert.Contains(consumers.Nodes, node => node.Key == "Executable:execute-package");
+    }
+
+    [Fact]
     public void PlannerRoutesDependencyQuestionWithoutResolvingItsSelector()
     {
         var plan = new QuestionPlanner().Plan("What uses WarehouseDB?");

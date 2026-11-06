@@ -41,6 +41,27 @@ public sealed class SqlDependencyGraphTests
         Assert.NotEqual(SqlDependencyGraphBuilder.ObjectKey("a", new[] { "dbo.Student" }), SqlDependencyGraphBuilder.ObjectKey("a", new[] { "dbo", "Student" }));
         Assert.NotEqual(SqlDependencyGraphBuilder.ObjectKey("a", new[] { "Student" }), SqlDependencyGraphBuilder.ObjectKey("a", new[] { "dbo", "Student" }));
     }
+
+    [Fact]
+    public void MergeProjectsConnectionScopedReadAndWriteEdges()
+    {
+        var sql = "merge dbo.Target as T using dbo.Source as S on T.Id=S.Id " +
+            "when matched then update set Value=S.Value " +
+            "when not matched then insert (Id, Value) values (S.Id, S.Value);";
+        var graph = new SqlDependencyGraphBuilder().Enrich(BaseGraph(), new[] { Statement("a", sql) });
+        var target = Assert.Single(graph.Nodes, node => node.Kind == SemanticObjectKind.SchemaObject &&
+            node.Name == "[dbo].[Target]");
+        var source = Assert.Single(graph.Nodes, node => node.Kind == SemanticObjectKind.SchemaObject &&
+            node.Name == "[dbo].[Source]");
+
+        Assert.Equal("a", target.ParentId);
+        Assert.Equal("a", source.ParentId);
+        Assert.Contains(graph.Edges, edge => edge.To == target.Key && edge.Kind == DependencyKind.WritesSchemaObject &&
+            edge.Evidence == "ParsedSchemaObject");
+        Assert.Contains(graph.Edges, edge => edge.To == source.Key && edge.Kind == DependencyKind.ReadsSchemaObject &&
+            edge.Evidence == "ParsedSchemaObject");
+    }
+
     private static SqlStatementOverview Statement(string connection, string sql) => new("task", "Task", "ExecuteSQLTask", "DirectInput", "", true, connection, "", 0, new SqlDependencyAnalyzer().Analyze(sql));
     private static PackageDependencyGraph BaseGraph() => new(new[] {
         new DependencyNode("Executable:task", SemanticObjectKind.Executable, "Task", "task"),

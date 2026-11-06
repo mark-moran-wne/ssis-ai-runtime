@@ -25,6 +25,7 @@ namespace SsisAiRuntime.Ssis16
             var unsupportedItems = new List<UnsupportedItem>();
             AddConstraintCollection(session.Package.PrecedenceConstraints, constraints, unsupportedItems);
             AddNestedConstraints(session.Package.Executables, constraints, unsupportedItems);
+            AddEventHandlerConstraints(session.Package, constraints, unsupportedItems);
             return new InspectionResult<PrecedenceConstraintOverview>(constraints, unsupportedItems);
         }
 
@@ -40,6 +41,22 @@ namespace SsisAiRuntime.Ssis16
                     AddConstraintCollection(sequence.PrecedenceConstraints, constraints, unsupportedItems);
                     AddNestedConstraints(sequence.Executables, constraints, unsupportedItems);
                 }
+                if (executable is DtsRuntime.EventsProvider eventsProvider)
+                {
+                    AddEventHandlerConstraints(eventsProvider, constraints, unsupportedItems);
+                }
+            }
+        }
+
+        private static void AddEventHandlerConstraints(
+            DtsRuntime.EventsProvider provider,
+            ICollection<PrecedenceConstraintOverview> constraints,
+            ICollection<UnsupportedItem> unsupportedItems)
+        {
+            foreach (DtsRuntime.DtsEventHandler handler in provider.EventHandlers)
+            {
+                AddConstraintCollection(handler.PrecedenceConstraints, constraints, unsupportedItems);
+                AddNestedConstraints(handler.Executables, constraints, unsupportedItems);
             }
         }
 

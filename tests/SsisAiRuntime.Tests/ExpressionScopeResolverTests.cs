@@ -21,7 +21,7 @@ public sealed class ExpressionScopeResolverTests
     {
         var catalog = new ExpressionScopeCatalog(new[] { Scope("package", "", Variable("package-var", "package")),
             Scope("task", "package", Variable("task-var", "task")), Scope("nested", "task", Variable("nested-var", "nested")), Scope("child", "nested") });
-        var result = Resolve(catalog, owner, "@[user::value]");
+        var result = Resolve(catalog, owner, "@[User::Value]");
         Assert.Equal(ExpressionReferenceResolutionStatus.Resolved, result.Status);
         Assert.Equal(expected, result.ResolvedSymbol.NativeId);
         Assert.Equal(ExpressionResolutionEvidence.LexicalAndScopeResolved, result.Evidence);
@@ -35,6 +35,24 @@ public sealed class ExpressionScopeResolverTests
         var result = Resolve(catalog, "task", "@[User::Value]");
         Assert.Equal(ExpressionReferenceResolutionStatus.Ambiguous, result.Status);
         Assert.Equal(new[] { "first", "second" }, result.Candidates.Select(item => item.NativeId));
+    }
+
+    [Theory]
+    [InlineData("@[user::Value]")]
+    [InlineData("@[User::value]")]
+    [InlineData("@[USER::VALUE]")]
+    public void CaseMismatchDoesNotResolve(string expression)
+    {
+        var catalog = new ExpressionScopeCatalog(new[]
+        {
+            Scope("package", "", Variable("exact", "package", "Value", "User"))
+        });
+
+        var result = Resolve(catalog, "package", expression);
+
+        Assert.Equal(ExpressionReferenceResolutionStatus.NotFound, result.Status);
+        Assert.Null(result.ResolvedSymbol);
+        Assert.Empty(result.Candidates);
     }
 
     [Fact]

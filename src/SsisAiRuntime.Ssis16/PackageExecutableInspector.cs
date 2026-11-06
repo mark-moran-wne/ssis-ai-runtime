@@ -40,6 +40,25 @@ namespace SsisAiRuntime.Ssis16
                 var metadata = (DtsRuntime.IDTSName)executable;
                 var sequence = executable as DtsRuntime.IDTSSequence;
                 var expressionProvider = executable as DtsRuntime.IDTSPropertiesProviderEx;
+                var executePackageReferenceType = string.Empty;
+                var executePackageTargetName = string.Empty;
+                if (executable is DtsRuntime.TaskHost taskHost &&
+                    metadata.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    try
+                    {
+                        if ((bool)taskHost.Properties["UseProjectReference"].GetValue(taskHost))
+                        {
+                            executePackageReferenceType = "ProjectReference";
+                            executePackageTargetName = taskHost.Properties["PackageName"].GetValue(taskHost) as string ?? string.Empty;
+                        }
+                    }
+                    catch
+                    {
+                        unsupportedItems.Add(new UnsupportedItem(metadata.ID, metadata.Name, metadata.CreationName,
+                            "Execute Package target metadata could not be inspected.", UnsupportedItem.ReadFailureCode));
+                    }
+                }
                 overviews.Add(new ExecutableOverview(
                     metadata.ID,
                     parentId,
@@ -48,7 +67,9 @@ namespace SsisAiRuntime.Ssis16
                     metadata.Description,
                     depth,
                     sequence != null,
-                    expressionProvider != null && expressionProvider.HasExpressions));
+                    expressionProvider != null && expressionProvider.HasExpressions,
+                    executePackageReferenceType,
+                    executePackageTargetName));
 
                 if (sequence != null)
                 {

@@ -135,6 +135,44 @@ public class DataFlowOverviewTests
     }
 
     [Fact]
+    public void ConditionalSplitInputLineageCanReachMultipleSynchronousOutputs()
+    {
+        var source = Column("source", "out", "source-column", "Output", 42, "Value");
+        var splitInput = Column("split", "in", "split-input", "Input", 42, "Value");
+        var trueOutput = Column("split", "true-out", "true-column", "Output", 42, "Value");
+        var falseOutput = Column("split", "false-out", "false-column", "Output", 42, "Value");
+        var trueInput = Column("true-target", "in", "true-input", "Input", 42, "Value");
+        var falseInput = Column("false-target", "in", "false-input", "Input", 42, "Value");
+        var split = new DataFlowComponentOverview("split", "Conditional Split", "DTSTransform.ConditionalSplit", "", 1, 2,
+            new[] { splitInput }, new[] { trueOutput, falseOutput }, Array.Empty<DataFlowColumnOverview>(),
+            Array.Empty<DataFlowRuntimeConnectionOverview>(), Array.Empty<DataFlowSettingOverview>(), new[]
+            {
+                new DataFlowOutputOverview("true-out", "True", "in", false),
+                new DataFlowOutputOverview("false-out", "False", "in", false)
+            });
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { source }),
+            split,
+            Component("true-target", new[] { trueInput }, Array.Empty<DataFlowColumnOverview>()),
+            Component("false-target", new[] { falseInput }, Array.Empty<DataFlowColumnOverview>())
+        }, new[]
+        {
+            new DataFlowPathOverview("into-split", "Into Split", "source", "out", "split", "in"),
+            new DataFlowPathOverview("true-path", "True", "split", "true-out", "true-target", "in"),
+            new DataFlowPathOverview("false-path", "False", "split", "false-out", "false-target", "in")
+        });
+
+        var result = new ColumnLineageQuery().Trace(flow, "source", "source-column");
+
+        Assert.True(result.IsComplete);
+        Assert.Contains(trueInput, result.Items[0].Columns);
+        Assert.Contains(falseInput, result.Items[0].Columns);
+        Assert.Contains(result.Items[0].Links, link => link.PathId == "true-path");
+        Assert.Contains(result.Items[0].Links, link => link.PathId == "false-path");
+    }
+
+    [Fact]
     public void ColumnTraceTreatsAnUnconnectedKnownErrorOutputAsATerminalPort()
     {
         var input = Column("target", "in", "t", "Input", 42, "Value");
@@ -144,6 +182,25 @@ public class DataFlowOverviewTests
             new[] { new DataFlowOutputOverview("error-out", "Error", "in", true) });
         var flow = new DataFlowOverview("flow", "Flow", new[] { target }, Array.Empty<DataFlowPathOverview>());
         Assert.True(new ColumnLineageQuery().Trace(flow, "target", "t").IsComplete);
+    }
+
+    [Fact]
+    public void ColumnTracePreservesAnUnattachedOutputWithoutInventingADownstreamPath()
+    {
+        var detached = Column("source", "out", "s", "Output", 42, "Value");
+        var destination = Column("target", "in", "t", "Input", 42, "Value");
+        var flow = new DataFlowOverview("flow", "Flow", new[]
+        {
+            Component("source", Array.Empty<DataFlowColumnOverview>(), new[] { detached }),
+            Component("target", new[] { destination }, Array.Empty<DataFlowColumnOverview>())
+        }, Array.Empty<DataFlowPathOverview>());
+
+        var result = new ColumnLineageQuery().Trace(flow, "source", "s");
+
+        Assert.True(result.IsComplete);
+        Assert.Same(detached, Assert.Single(result.Items).Columns.Single());
+        Assert.Empty(result.Items[0].Links);
+        Assert.DoesNotContain(destination, result.Items[0].Columns);
     }
 
     [Fact]

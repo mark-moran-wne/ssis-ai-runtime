@@ -42,6 +42,36 @@ public sealed class SqlDependencyAnalyzerTests
         Assert.Contains(result.References, item => item.QualifiedName == "[dbo].[Output]" && item.Access == SqlDependencyAccess.Write);
     }
 
+    [Fact]
+    public void MergeClassifiesTargetAsWriteAndSourceAsRead()
+    {
+        var result = new SqlDependencyAnalyzer().Analyze(
+            "merge dbo.Target as T using dbo.Source as S on T.Id=S.Id " +
+            "when matched then update set Value=S.Value " +
+            "when not matched then insert (Id, Value) values (S.Id, S.Value);");
+
+        Assert.True(result.IsComplete);
+        Assert.Contains(result.References, item => item.QualifiedName == "[dbo].[Target]" &&
+            item.Access == SqlDependencyAccess.Write && item.Evidence == SqlDependencyEvidence.ParsedSchemaObject);
+        Assert.Contains(result.References, item => item.QualifiedName == "[dbo].[Source]" &&
+            item.Access == SqlDependencyAccess.Read && item.Evidence == SqlDependencyEvidence.ParsedSchemaObject);
+        Assert.DoesNotContain(result.References, item => item.QualifiedName == "[T]" || item.QualifiedName == "[S]");
+    }
+
+    [Fact]
+    public void DeleteAliasClassifiesPhysicalTargetAsWrite()
+    {
+        var result = new SqlDependencyAnalyzer().Analyze(
+            "delete T from dbo.Target as T join dbo.Source as S on T.Id=S.Id;");
+
+        Assert.True(result.IsComplete);
+        Assert.Contains(result.References, item => item.QualifiedName == "[dbo].[Target]" &&
+            item.Access == SqlDependencyAccess.Write && item.Evidence == SqlDependencyEvidence.ParsedSchemaObject);
+        Assert.Contains(result.References, item => item.QualifiedName == "[dbo].[Source]" &&
+            item.Access == SqlDependencyAccess.Read && item.Evidence == SqlDependencyEvidence.ParsedSchemaObject);
+        Assert.DoesNotContain(result.References, item => item.QualifiedName == "[T]" || item.QualifiedName == "[S]");
+    }
+
     [Theory]
     [InlineData("exec(@sql)")]
     [InlineData("exec sys.sp_executesql @statement")]

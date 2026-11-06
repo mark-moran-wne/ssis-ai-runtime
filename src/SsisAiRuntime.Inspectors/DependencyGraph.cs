@@ -21,7 +21,8 @@ namespace SsisAiRuntime.Inspectors
         ReadsSchemaObject,
         WritesSchemaObject,
         ExecutesSchemaObject,
-        ReferencesSqlFunction
+        ReferencesSqlFunction,
+        InvokesPackage
     }
 
     public sealed class DependencyNode
@@ -62,7 +63,8 @@ namespace SsisAiRuntime.Inspectors
     public static class DependencyEvidence
     {
         public static string Safe(string evidence) => evidence == "LexicalAndScopeResolved" || evidence == "ParsedSchemaObject" ||
-            evidence == "ParsedExecuteTarget" || evidence == "ParsedFunctionReference" ? evidence : string.Empty;
+            evidence == "ParsedExecuteTarget" || evidence == "ParsedFunctionReference" ||
+            evidence == "DeclaredProjectReference" ? evidence : string.Empty;
     }
 
     public sealed class PackageDependencyGraph
@@ -115,14 +117,28 @@ namespace SsisAiRuntime.Inspectors
             }
             foreach (var executable in executables)
             {
+                var key = Key(SemanticObjectKind.Executable, executable.Id);
                 AddEdge(nodes, edges, unsupported, new DependencyEdge(string.IsNullOrEmpty(executable.ParentId)
                     ? packageKey
                     : Key(SemanticObjectKind.Executable, executable.ParentId), Key(SemanticObjectKind.Executable, executable.Id),
                     DependencyKind.ContainsTask), executable.Id, executable.Name);
                 if (executable.CreationName.IndexOf("ExecutePackageTask", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
+                    if (string.Equals(executable.ExecutePackageReferenceType, "ProjectReference", StringComparison.Ordinal) &&
+                        !string.IsNullOrWhiteSpace(executable.ExecutePackageTargetName))
+                    {
+                        var targetKey = "ExternalPackageReference:ProjectReference:" +
+                            Uri.EscapeDataString(executable.ExecutePackageTargetName);
+                        Add(nodes, new DependencyNode(targetKey, SemanticObjectKind.ExternalPackageReference,
+                            executable.ExecutePackageTargetName, string.Empty));
+                        AddEdge(nodes, edges, unsupported, new DependencyEdge(key, targetKey,
+                            DependencyKind.InvokesPackage, "DeclaredProjectReference"), executable.Id, executable.Name);
+                    }
                     unsupported.Add(new UnsupportedItem(executable.Id, executable.Name, executable.CreationName,
-                        "The referenced package target is not projected.", UnsupportedItem.ExecutePackageTargetUnresolvedCode));
+                        string.IsNullOrWhiteSpace(executable.ExecutePackageTargetName)
+                            ? "The referenced package target is not projected."
+                            : "The declared package target is not resolved against project inventory.",
+                        UnsupportedItem.ExecutePackageTargetUnresolvedCode));
                 }
             }
 

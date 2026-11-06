@@ -10,7 +10,9 @@ namespace SsisAiRuntime.Inspectors
             string description,
             int depth,
             bool isContainer,
-            bool hasExpressions)
+            bool hasExpressions,
+            string executePackageReferenceType = "",
+            string executePackageTargetName = "")
         {
             Id = id ?? string.Empty;
             ParentId = parentId ?? string.Empty;
@@ -20,6 +22,8 @@ namespace SsisAiRuntime.Inspectors
             Depth = depth;
             IsContainer = isContainer;
             HasExpressions = hasExpressions;
+            ExecutePackageReferenceType = executePackageReferenceType ?? string.Empty;
+            ExecutePackageTargetName = executePackageTargetName ?? string.Empty;
         }
 
         public string Id { get; }
@@ -37,5 +41,9 @@ namespace SsisAiRuntime.Inspectors
         public bool IsContainer { get; }
 
         public bool HasExpressions { get; }
+
+        public string ExecutePackageReferenceType { get; }
+
+        public string ExecutePackageTargetName { get; }
     }
 }

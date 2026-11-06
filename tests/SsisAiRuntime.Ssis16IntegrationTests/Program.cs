@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using Microsoft.SqlServer.Dts.Pipeline.Wrapper;
 using Microsoft.SqlServer.Dts.Runtime;
+using SsisAiRuntime.AI;
 using SsisAiRuntime.Corpus;
 using SsisAiRuntime.Ssis16;
 using SsisAiRuntime.Inspectors;
@@ -163,8 +164,10 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     Require(Hash(path) == before, "fixture.parser.hash");
                     VerifyDerivedFixture(directory);
                     VerifyHeuristicExpressions(directory);
+                    VerifyUnconnectedControlFlowStructure(directory);
                     VerifySqlDependencies(directory);
                     VerifyExecutePackageTargetCoverage(directory);
+                    VerifyPrecedenceConstraintSemantics(directory);
                     if (args.Length == 1) { VerifyExistingPackage(args[0]); }
                     return 0;
                 }
@@ -360,6 +363,14 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var task = (TaskHost)package.Executables.Add(taskInfo.CreationName);
                 task.Name = "RunChildPackage";
                 taskId = task.ID;
+                var projectReferenceProperty = task.Properties["UseProjectReference"];
+                var packageNameProperty = task.Properties["PackageName"];
+                Require(projectReferenceProperty.Get && projectReferenceProperty.Set &&
+                    projectReferenceProperty.Type == TypeCode.Boolean && packageNameProperty.Get &&
+                    packageNameProperty.Set && packageNameProperty.Type == TypeCode.String,
+                    "execute-package.project-reference.properties");
+                projectReferenceProperty.SetValue(task, true);
+                packageNameProperty.SetValue(task, "SyntheticMissingChild");
                 application.SaveToXml(path, package, null);
             }
 
@@ -369,6 +380,12 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
             try
             {
                 var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var executePackageTask = (TaskHost)loaded.Session.Package.Executables.Cast<Executable>()
+                    .Single(executable => ((IDTSName)executable).ID == taskId);
+                var taskPropertyNames = executePackageTask.Properties.Cast<DtsProperty>()
+                    .Select(property => property.Name + ":" + property.Type + ":read=" + property.Get + ":write=" + property.Set)
+                    .OrderBy(value => value, StringComparer.Ordinal);
+                Console.WriteLine("Execute Package task property inventory: " + string.Join(", ", taskPropertyNames));
                 var taskNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Executable &&
                     node.NativeId == taskId);
                 Require(snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
@@ -377,14 +394,192 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(snapshot.Dependencies.UnsupportedItems.Any(item =>
                     item.Id == taskId && item.ReasonCode == UnsupportedItem.ExecutePackageTargetUnresolvedCode),
                     "execute-package.unresolved-target-coverage");
+                var externalTarget = snapshot.Dependencies.Nodes.Single(node =>
+                    node.Kind == SemanticObjectKind.ExternalPackageReference && node.Name == "SyntheticMissingChild");
+                Require(snapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key && edge.To == externalTarget.Key &&
+                    edge.Kind == DependencyKind.InvokesPackage && edge.Evidence == "DeclaredProjectReference"),
+                    "execute-package.declared-reference-edge");
                 Require(!snapshot.Dependencies.Nodes.Any(node => node.Kind == SemanticObjectKind.SchemaObject) &&
                     !snapshot.Dependencies.Edges.Any(edge => edge.From == taskNode.Key &&
                         (edge.Kind == DependencyKind.ReadsSchemaObject || edge.Kind == DependencyKind.WritesSchemaObject ||
                          edge.Kind == DependencyKind.ExecutesSchemaObject)),
                     "execute-package.no-guessed-target");
-                Console.WriteLine("Execute Package dependency probe: PASS; native task recognized, target explicitly unresolved, no guessed target edge.");
+                Console.WriteLine("Execute Package dependency probe: PASS; declared project reference retained as an external invocation edge, target unresolved without project inventory.");
             }
             finally { loaded.Session.Package.Dispose(); }
+        }
+
+        private static void VerifyPrecedenceConstraintSemantics(string directory)
+        {
+            stage = "precedence.semantics.fixture.creation";
+            var path = Path.Combine(directory, "PrecedenceSemantics.dtsx");
+            string sourceId;
+            string sequenceId;
+            string successTargetId;
+            string failureTargetId;
+            string completionTargetId;
+            string expressionTargetId;
+            string andTargetId;
+            string orTargetId;
+            string secondarySourceId;
+            string fanInTargetId;
+            var constraintIds = new Dictionary<string, string>(StringComparer.Ordinal);
+            using (var package = new Package
+            {
+                Name = "PrecedenceSemantics",
+                ProtectionLevel = DTSProtectionLevel.DontSaveSensitive
+            })
+            {
+                package.Variables.Add("Gate", false, "User", true);
+                var sequence = (Sequence)package.Executables.Add("STOCK:Sequence");
+                sequence.Name = "ConstraintScope";
+                sequenceId = sequence.ID;
+                var source = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                source.Name = "Source";
+                sourceId = source.ID;
+                var successTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                successTarget.Name = "SuccessTarget";
+                successTargetId = successTarget.ID;
+                var failureTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                failureTarget.Name = "FailureTarget";
+                failureTargetId = failureTarget.ID;
+                var completionTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                completionTarget.Name = "CompletionTarget";
+                completionTargetId = completionTarget.ID;
+                var expressionTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                expressionTarget.Name = "ExpressionTarget";
+                expressionTargetId = expressionTarget.ID;
+                var andTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                andTarget.Name = "AndTarget";
+                andTargetId = andTarget.ID;
+                var orTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                orTarget.Name = "OrTarget";
+                orTargetId = orTarget.ID;
+                var secondarySource = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                secondarySource.Name = "SecondarySource";
+                secondarySourceId = secondarySource.ID;
+                var fanInTarget = (TaskHost)sequence.Executables.Add("STOCK:PipelineTask");
+                fanInTarget.Name = "FanInTarget";
+                fanInTargetId = fanInTarget.ID;
+
+                var success = sequence.PrecedenceConstraints.Add(source, successTarget);
+                success.EvalOp = DTSPrecedenceEvalOp.Constraint;
+                success.Value = DTSExecResult.Success;
+                constraintIds.Add("Success", success.ID);
+
+                var failure = sequence.PrecedenceConstraints.Add(source, failureTarget);
+                failure.EvalOp = DTSPrecedenceEvalOp.Constraint;
+                failure.Value = DTSExecResult.Failure;
+                constraintIds.Add("Failure", failure.ID);
+
+                var completion = sequence.PrecedenceConstraints.Add(source, completionTarget);
+                completion.EvalOp = DTSPrecedenceEvalOp.Constraint;
+                completion.Value = DTSExecResult.Completion;
+                constraintIds.Add("Completion", completion.ID);
+
+                var expressionOnly = sequence.PrecedenceConstraints.Add(source, expressionTarget);
+                expressionOnly.EvalOp = DTSPrecedenceEvalOp.Expression;
+                expressionOnly.Expression = "@[User::Gate]";
+                constraintIds.Add("Expression", expressionOnly.ID);
+
+                var expressionAnd = sequence.PrecedenceConstraints.Add(source, andTarget);
+                expressionAnd.EvalOp = DTSPrecedenceEvalOp.ExpressionAndConstraint;
+                expressionAnd.Value = DTSExecResult.Success;
+                expressionAnd.LogicalAnd = true;
+                expressionAnd.Expression = "@[User::Gate]";
+                constraintIds.Add("ExpressionAndConstraint", expressionAnd.ID);
+
+                var expressionOr = sequence.PrecedenceConstraints.Add(source, orTarget);
+                expressionOr.EvalOp = DTSPrecedenceEvalOp.ExpressionOrConstraint;
+                expressionOr.Value = DTSExecResult.Success;
+                expressionOr.LogicalAnd = false;
+                expressionOr.Expression = "@[User::Gate]";
+                constraintIds.Add("ExpressionOrConstraint", expressionOr.ID);
+
+                var fanInSuccess = sequence.PrecedenceConstraints.Add(source, fanInTarget);
+                fanInSuccess.EvalOp = DTSPrecedenceEvalOp.Constraint;
+                fanInSuccess.Value = DTSExecResult.Success;
+                fanInSuccess.LogicalAnd = true;
+                constraintIds.Add("FanInSuccess", fanInSuccess.ID);
+
+                var fanInCompletion = sequence.PrecedenceConstraints.Add(secondarySource, fanInTarget);
+                fanInCompletion.EvalOp = DTSPrecedenceEvalOp.Constraint;
+                fanInCompletion.Value = DTSExecResult.Completion;
+                fanInCompletion.LogicalAnd = true;
+                constraintIds.Add("FanInCompletion", fanInCompletion.ID);
+                new Application().SaveToXml(path, package, null);
+            }
+
+            stage = "precedence.semantics.fixture.reload";
+            var loaded = new PackageLoader().Load(path);
+            Require(loaded.Succeeded, "precedence.semantics.load");
+            try
+            {
+                var constraints = new PackagePrecedenceInspector().InspectDetailed(loaded.Session).Items;
+                var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var graph = snapshot.ControlFlow;
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["Success"], "Constraint", "Success", true,
+                    false, sourceId, successTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["Failure"], "Constraint", "Failure", true,
+                    false, sourceId, failureTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["Completion"], "Constraint", "Completion", true,
+                    false, sourceId, completionTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["Expression"], "Expression", "Success", true,
+                    true, sourceId, expressionTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["ExpressionAndConstraint"],
+                    "ExpressionAndConstraint", "Success", true, true, sourceId, andTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["ExpressionOrConstraint"],
+                    "ExpressionOrConstraint", "Success", false, true, sourceId, orTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["FanInSuccess"], "Constraint", "Success", true,
+                    false, sourceId, fanInTargetId);
+                AssertPrecedenceSemantics(constraints, graph, constraintIds["FanInCompletion"], "Constraint", "Completion", true,
+                    false, secondarySourceId, fanInTargetId);
+
+                var sequenceNode = graph.Nodes.Single(node => node.NativeId == sequenceId);
+                var containedTasks = snapshot.Dependencies.Edges.Where(edge => edge.From == "Executable:" + sequenceId &&
+                    edge.Kind == DependencyKind.ContainsTask).Select(edge => edge.To).ToArray();
+                Require(containedTasks.Contains("Executable:" + sourceId) &&
+                    containedTasks.Contains("Executable:" + fanInTargetId) &&
+                    !snapshot.Dependencies.Edges.Any(edge => edge.From == "Package:" + loaded.Session.Package.ID &&
+                        edge.To == "Executable:" + fanInTargetId && edge.Kind == DependencyKind.ContainsTask),
+                    "precedence.sequence.containment_scope");
+
+                var fanInEdges = graph.Edges.Where(edge => edge.Kind == ControlFlowEdgeKind.Precedence &&
+                    graph.Nodes.Single(node => node.Handle.Equals(edge.To)).NativeId == fanInTargetId).ToArray();
+                Require(fanInEdges.Length == 2 && fanInEdges.All(edge => edge.LogicalAnd == true),
+                    "precedence.multiple_incoming_preserved");
+                var predecessors = new ControlFlowQuery().FindRelated(graph, fanInTargetId, predecessors: true);
+                Require(predecessors.Items.Count == 1 &&
+                    predecessors.Items[0].Edges.Count == 2 && predecessors.Items[0].Nodes.Count == 3 &&
+                    predecessors.Items[0].Nodes.Any(node => node.NativeId == sourceId) &&
+                    predecessors.Items[0].Nodes.Any(node => node.NativeId == secondarySourceId),
+                    "precedence.multiple_incoming_query");
+                Console.WriteLine("Precedence graph probe: PASS; exact Success/Failure/Completion and expression operators, Sequence scope, and two LogicalAnd predecessors preserved.");
+            }
+            finally { loaded.Session.Package.Dispose(); }
+        }
+
+        private static void AssertPrecedenceSemantics(
+            IReadOnlyList<PrecedenceConstraintOverview> constraints,
+            ControlFlowGraph graph,
+            string constraintId,
+            string evaluationOperation,
+            string constraintValue,
+            bool logicalAnd,
+            bool hasExpression,
+            string expectedFromId,
+            string expectedToId)
+        {
+            var overview = constraints.Single(constraint => constraint.Id == constraintId);
+            Require(overview.EvaluationOperation == evaluationOperation && overview.ConstraintValue == constraintValue &&
+                overview.LogicalAnd == logicalAnd && overview.HasExpression == hasExpression,
+                "precedence.semantics.overview:" + evaluationOperation + ":" + constraintValue);
+            var edge = graph.Edges.Single(candidate => candidate.Kind == ControlFlowEdgeKind.Precedence &&
+                candidate.EvaluationOperation == evaluationOperation && candidate.ConstraintValue == constraintValue &&
+                candidate.LogicalAnd == logicalAnd && graph.Nodes.Single(node => node.Handle.Equals(candidate.From)).NativeId == expectedFromId &&
+                graph.Nodes.Single(node => node.Handle.Equals(candidate.To)).NativeId == expectedToId);
+            Require(edge.EvaluationOperation == evaluationOperation && edge.ConstraintValue == constraintValue &&
+                edge.LogicalAnd == logicalAnd, "precedence.semantics.graph_edge:" + evaluationOperation + ":" + constraintValue);
         }
 
         private static void VerifyCorpusCli(string packagePath, string directory)
@@ -677,10 +872,23 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
         {
             stage = "heuristic.fixture.creation";
             var path = Path.Combine(directory, "ExpressionScopes.dtsx");
+            const string sensitiveParameterValue = "synthetic-sensitive-parameter-value";
+            string handlerPrepareId;
+            string handlerFinishId;
+            string siblingScopeTaskId;
+            string outsideTaskId;
+            string mixedReferenceTaskId;
+            string projectParameterOwnerId;
+            string ambiguousReferenceOwnerId;
+            string packageVariableOwnerId;
+            string systemVariableOwnerId;
             using (var package = new Package { Name = "ExpressionScopes", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
             {
                 package.Variables.Add("Flag", false, "User", false);
                 package.Parameters.Add("Toggle", TypeCode.Boolean).Value = false;
+                var sensitiveParameter = package.Parameters.Add("SensitiveToggle", TypeCode.Boolean);
+                sensitiveParameter.Sensitive = true;
+                sensitiveParameter.Value = true;
                 package.SetExpression("Disable", "@[User::Flag]");
                 package.SetExpression("DelayValidation", "@[$Package::Toggle]");
                 package.Variables.Add("FixturePath", false, "User", Path.Combine(directory, "unused.txt"));
@@ -690,8 +898,27 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var task = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
                 task.Name = "TaskOwner";
                 task.Variables.Add("Flag", false, "User", true);
+                task.Variables.Add("TaskOnly", false, "User", true);
                 task.SetExpression("Disable", "@[User::Flag] || @[User::Flag]");
                 task.SetExpression("DelayValidation", "@[$Package::Toggle]");
+                var caseMismatchTask = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                caseMismatchTask.Name = "CaseMismatchOwner";
+                caseMismatchTask.SetExpression("Disable", "@[User::flag]");
+                var sensitiveParameterOwner = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                sensitiveParameterOwner.Name = "SensitiveParameterOwner";
+                sensitiveParameterOwner.SetExpression("DelayValidation", "@[$Package::SensitiveToggle]");
+                var mixedReferenceTask = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                mixedReferenceTask.Name = "MixedReferenceOwner";
+                mixedReferenceTask.SetExpression("Disable", "@[User::Flag] && @[$Package::Toggle]");
+                mixedReferenceTaskId = mixedReferenceTask.ID;
+                var projectParameterOwner = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                projectParameterOwner.Name = "ProjectParameterOwner";
+                projectParameterOwner.SetExpression("DelayValidation", "@[$Project::ProjectToggle]");
+                projectParameterOwnerId = projectParameterOwner.ID;
+                var ambiguousReferenceOwner = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                ambiguousReferenceOwner.Name = "AmbiguousReferenceOwner";
+                ambiguousReferenceOwner.SetExpression("Disable", "@Ambiguous");
+                ambiguousReferenceOwnerId = ambiguousReferenceOwner.ID;
                 var outer = (Sequence)package.Executables.Add("STOCK:Sequence");
                 outer.Name = "OuterOwner";
                 outer.Variables.Add("Flag", false, "User", true);
@@ -699,10 +926,27 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var inner = (Sequence)outer.Executables.Add("STOCK:Sequence");
                 inner.Name = "InnerOwner";
                 inner.Variables.Add("Flag", false, "User", false);
+                inner.Variables.Add("InnerOnly", false, "User", true);
                 inner.SetExpression("Disable", "@[User::Flag]");
                 var child = (TaskHost)inner.Executables.Add("STOCK:PipelineTask");
                 child.Name = "ChildOwner";
                 child.SetExpression("Disable", "@[User::Flag]");
+                var siblingScopeTask = (TaskHost)outer.Executables.Add("STOCK:PipelineTask");
+                siblingScopeTask.Name = "SiblingScopeTask";
+                siblingScopeTask.SetExpression("Disable", "@[User::InnerOnly]");
+                siblingScopeTaskId = siblingScopeTask.ID;
+                var outsideTask = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                outsideTask.Name = "OutsideTask";
+                outsideTask.SetExpression("Disable", "@[User::TaskOnly]");
+                outsideTaskId = outsideTask.ID;
+                var foreachOwner = (ForEachLoop)outer.Executables.Add("STOCK:ForEachLoop");
+                foreachOwner.Name = "NestedForeach";
+                foreachOwner.Variables.Add("Flag", false, "User", true);
+                var foreachSequence = (Sequence)foreachOwner.Executables.Add("STOCK:Sequence");
+                foreachSequence.Name = "ForeachSequence";
+                var foreachChild = (TaskHost)foreachSequence.Executables.Add("STOCK:PipelineTask");
+                foreachChild.Name = "ForeachChild";
+                foreachChild.SetExpression("Disable", "@[User::Flag]");
                 var loop = (ForLoop)package.Executables.Add("STOCK:ForLoop");
                 loop.Name = "LoopOwner";
                 loop.Variables.Add("Counter", false, "User", 0);
@@ -715,12 +959,36 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 var handler = (DtsEventHandler)task.EventHandlers.Add("OnError");
                 handler.Variables.Add("HandlerFlag", false, "User", false);
                 handler.Variables.Add("Flag", false, "User", false);
+                var handlerPrepare = (TaskHost)handler.Executables.Add("STOCK:PipelineTask");
+                handlerPrepare.Name = "HandlerPrepare";
+                handlerPrepareId = handlerPrepare.ID;
+                var handlerFinish = (TaskHost)handler.Executables.Add("STOCK:PipelineTask");
+                handlerFinish.Name = "HandlerFinish";
+                handlerFinishId = handlerFinish.ID;
+                var handlerConstraint = handler.PrecedenceConstraints.Add(handlerPrepare, handlerFinish);
+                handlerConstraint.Value = DTSExecResult.Failure;
                 handler.SetExpression("Disable", "@[User::Flag]");
                 handler.SetExpression("DelayValidation", "@[$Package::Toggle]");
                 package.Variables.Add("Number", false, "User", 1);
+                package.Variables.Add("Ambiguous", false, "User", false);
+                package.Variables.Add("Ambiguous", false, "Other", false);
                 var expressionVariable = package.Variables.Add("Calculated", false, "User", 0);
                 expressionVariable.Expression = "@[User::Number] + 1";
                 expressionVariable.EvaluateAsExpression = true;
+                var chainedVariable = package.Variables.Add("Chained", false, "User", 0);
+                chainedVariable.Expression = "@[User::Calculated] + 1";
+                chainedVariable.EvaluateAsExpression = true;
+                var chainConsumer = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                chainConsumer.Name = "ChainConsumer";
+                chainConsumer.SetExpression("Disable", "@[User::Chained]");
+                var packageVariableOwner = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                packageVariableOwner.Name = "PackageVariableOwner";
+                packageVariableOwner.SetExpression("Disable", "@[User::Number]");
+                packageVariableOwnerId = packageVariableOwner.ID;
+                var systemVariableOwner = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                systemVariableOwner.Name = "SystemVariableOwner";
+                systemVariableOwner.SetExpression("Disable", "@[System::TaskName]");
+                systemVariableOwnerId = systemVariableOwner.ID;
                 new Application().SaveToXml(path, package, null);
             }
             stage = "heuristic.fixture.reload";
@@ -734,9 +1002,17 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(report.Analyses.UnsupportedItems.Count == 0, "heuristic.coverage");
                 var package = loaded.Session.Package;
                 var task = (TaskHost)package.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "TaskOwner");
+                var caseMismatchTask = (TaskHost)package.Executables.Cast<Executable>()
+                    .Single(item => ((IDTSName)item).Name == "CaseMismatchOwner");
                 var outer = (Sequence)package.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "OuterOwner");
-                var inner = (Sequence)outer.Executables.Cast<Executable>().Single();
+                var inner = (Sequence)outer.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "InnerOwner");
                 var child = (TaskHost)inner.Executables.Cast<Executable>().Single(item => ((IDTSName)item).Name == "ChildOwner");
+                var sensitiveParameterOwner = (TaskHost)package.Executables.Cast<Executable>()
+                    .Single(item => ((IDTSName)item).Name == "SensitiveParameterOwner");
+                var foreachOwner = (ForEachLoop)outer.Executables.Cast<Executable>()
+                    .Single(item => ((IDTSName)item).Name == "NestedForeach");
+                var foreachSequence = (Sequence)foreachOwner.Executables.Cast<Executable>().Single();
+                var foreachChild = (TaskHost)foreachSequence.Executables.Cast<Executable>().Single();
                 foreach (var owner in new DtsContainer[] { package, task, outer, inner, child })
                 {
                     var expectedScope = owner == child ? inner.ID : owner.ID;
@@ -746,6 +1022,11 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     var scope = report.Catalog.Scopes.Single(item => item.Id == owner.ID);
                     Require(scope.Symbols.All(symbol => symbol.ScopeId == owner.ID), "heuristic.declarations");
                 }
+                var foreachResolutions = report.Analyses.Items.Where(item => item.OwnerNativeId == foreachChild.ID)
+                    .SelectMany(item => item.Resolutions).Where(item => item.Reference.Name == "Flag").ToArray();
+                Require(foreachResolutions.Length == 1 && foreachResolutions[0].ResolvedSymbol != null &&
+                    foreachResolutions[0].ResolvedSymbol.ScopeId == foreachOwner.ID,
+                    "heuristic.foreach.nearest_scope");
                 Require(report.Analyses.Items.SelectMany(item => item.Resolutions).Any(item => item.ResolvedSymbol != null &&
                     item.ResolvedSymbol.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionSymbolKind.PackageParameter), "heuristic.parameter");
                 Require(report.Analyses.Items.Where(item => item.PropertyName == "LoopExpression").Count() == 3 &&
@@ -754,12 +1035,57 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                 Require(report.Catalog.Scopes.Any(scope => scope.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionScopeKind.EventHandler &&
                     scope.Symbols.Any(symbol => symbol.Name == "HandlerFlag")), "heuristic.handler");
                 var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var numberVariable = package.Variables["User::Number"];
+                var calculatedVariable = package.Variables["User::Calculated"];
+                var chainedVariable = package.Variables["User::Chained"];
+                var chainConsumer = (TaskHost)package.Executables.Cast<Executable>()
+                    .Single(item => ((IDTSName)item).Name == "ChainConsumer");
+                var dependencyEdges = snapshot.Dependencies.Edges;
+                Require(dependencyEdges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
+                    edge.From == "Executable:" + outer.ID && edge.To == "Executable:" + foreachOwner.ID) &&
+                    dependencyEdges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
+                    edge.From == "Executable:" + foreachOwner.ID && edge.To == "Executable:" + foreachSequence.ID) &&
+                    dependencyEdges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
+                    edge.From == "Executable:" + foreachSequence.ID && edge.To == "Executable:" + foreachChild.ID),
+                    "control-flow.foreach.sequence.containment");
+                Require(snapshot.Dependencies.UnsupportedItems.Any(item => item.Id == caseMismatchTask.ID &&
+                    item.ReasonCode == "expression.reference_not_found") &&
+                    !dependencyEdges.Any(edge => edge.From == "Executable:" + caseMismatchTask.ID &&
+                        edge.Kind == DependencyKind.UsesVariable),
+                    "heuristic.case_mismatch.unresolved");
+                foreach (var outOfScopeOwnerId in new[] { siblingScopeTaskId, outsideTaskId })
+                {
+                    Require(snapshot.Dependencies.UnsupportedItems.Any(item => item.Id == outOfScopeOwnerId &&
+                        item.ReasonCode == "expression.reference_not_found") &&
+                        !dependencyEdges.Any(edge => edge.From == "Executable:" + outOfScopeOwnerId &&
+                            edge.Kind == DependencyKind.UsesVariable),
+                        "heuristic.scope.negative_edge:" + outOfScopeOwnerId);
+                }
                 var handler = task.EventHandlers.Cast<DtsEventHandler>().Single();
                 var connection = package.Connections.Cast<ConnectionManager>().Single();
                 VerifyExpressionOwner(report, snapshot.Dependencies, package.Variables["User::Calculated"].ID, package.ID,
                     "Number", package.Variables["User::Number"].ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, packageVariableOwnerId, packageVariableOwnerId,
+                    "Number", package.Variables["User::Number"].ID, DependencyKind.UsesVariable);
+                var systemTaskNameId = ((TaskHost)package.Executables.Cast<Executable>()
+                    .Single(item => ((IDTSName)item).ID == systemVariableOwnerId)).Variables["System::TaskName"].ID;
+                VerifyExpressionOwner(report, snapshot.Dependencies, systemVariableOwnerId, systemVariableOwnerId,
+                    "TaskName", systemTaskNameId, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, chainedVariable.ID, package.ID,
+                    "Calculated", calculatedVariable.ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, chainConsumer.ID, chainConsumer.ID,
+                    "Chained", chainedVariable.ID, DependencyKind.UsesVariable);
                 VerifyExpressionOwner(report, snapshot.Dependencies, task.ID, task.ID,
                     "Flag", task.Variables["User::Flag"].ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, sensitiveParameterOwner.ID, sensitiveParameterOwner.ID,
+                    "SensitiveToggle", package.Parameters["SensitiveToggle"].ID, DependencyKind.UsesParameter);
+                VerifyExpressionOwner(report, snapshot.Dependencies, mixedReferenceTaskId, mixedReferenceTaskId,
+                    "Flag", package.Variables["User::Flag"].ID, DependencyKind.UsesVariable);
+                VerifyExpressionOwner(report, snapshot.Dependencies, mixedReferenceTaskId, mixedReferenceTaskId,
+                    "Toggle", package.Parameters["Toggle"].ID, DependencyKind.UsesParameter);
+                var sensitiveParameterOverview = new PackageParameterInspector().InspectDetailed(loaded.Session).Items
+                    .Single(parameter => parameter.Name == "SensitiveToggle");
+                Require(sensitiveParameterOverview.IsSensitive, "heuristic.sensitive_parameter.classification");
                 VerifyExpressionOwner(report, snapshot.Dependencies, connection.ID, package.ID,
                     "FixturePath", package.Variables["User::FixturePath"].ID, DependencyKind.UsesVariable);
                 VerifyExpressionOwner(report, snapshot.Dependencies, handler.ID, handler.ID,
@@ -769,9 +1095,41 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     VerifyExpressionOwner(report, snapshot.Dependencies, owner, owner,
                         "Toggle", package.Parameters["Toggle"].ID, DependencyKind.UsesParameter);
                 }
+                Require(snapshot.Dependencies.UnsupportedItems.Any(item => item.Id == projectParameterOwnerId &&
+                    item.ReasonCode == "expression.project_context_unavailable") &&
+                    !snapshot.Dependencies.Edges.Any(edge => edge.From == "Executable:" + projectParameterOwnerId &&
+                        edge.Kind == DependencyKind.UsesParameter),
+                    "heuristic.project_parameter.without_context");
+                var projectParameter = new SsisAiRuntime.Inspectors.Expressions.ExpressionSymbol(
+                    "synthetic-project-toggle", package.ID,
+                    SsisAiRuntime.Inspectors.Expressions.ExpressionSymbolKind.ProjectParameter,
+                    "$Project", "ProjectToggle");
+                var projectBackedSnapshot = new PackageAnalysisSnapshotFactory()
+                    .Create(loaded.Session, new[] { projectParameter }).Items.Single();
+                var projectParameterNode = projectBackedSnapshot.Dependencies.Nodes.Single(node =>
+                    node.Kind == SemanticObjectKind.Parameter && node.NativeId == projectParameter.NativeId);
+                Require(projectBackedSnapshot.Dependencies.Edges.Any(edge =>
+                    edge.From == "Executable:" + projectParameterOwnerId && edge.To == projectParameterNode.Key &&
+                    edge.Kind == DependencyKind.UsesParameter && edge.Evidence == "LexicalAndScopeResolved"),
+                    "heuristic.project_parameter.with_context");
+                var ambiguousAnalysis = report.Analyses.Items.Single(item => item.OwnerNativeId == ambiguousReferenceOwnerId);
+                var ambiguousResolution = ambiguousAnalysis.Resolutions.Single();
+                Require(ambiguousResolution.Status == SsisAiRuntime.Inspectors.Expressions.ExpressionReferenceResolutionStatus.Ambiguous &&
+                    ambiguousResolution.Candidates.Count == 2 &&
+                    snapshot.Dependencies.UnsupportedItems.Any(item => item.Id == ambiguousReferenceOwnerId &&
+                        item.ReasonCode == "expression.reference_ambiguous") &&
+                    !snapshot.Dependencies.Edges.Any(edge => edge.From == "Executable:" + ambiguousReferenceOwnerId &&
+                        edge.Kind == DependencyKind.UsesVariable),
+                    "heuristic.ambiguous_unwrapped.no_edge");
                 var eventScope = report.Catalog.Scopes.Single(scope => scope.Kind == SsisAiRuntime.Inspectors.Expressions.ExpressionScopeKind.EventHandler);
                 Require(snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.ContainsTask &&
                     edge.From == "Executable:" + task.ID && edge.To == "Executable:" + eventScope.Id), "heuristic.handler.containment");
+                var handlerPrepareNode = snapshot.ControlFlow.Nodes.Single(node => node.NativeId == handlerPrepareId);
+                var handlerFinishNode = snapshot.ControlFlow.Nodes.Single(node => node.NativeId == handlerFinishId);
+                var handlerPrecedence = snapshot.ControlFlow.Edges.Single(edge => edge.Kind == ControlFlowEdgeKind.Precedence &&
+                    edge.From.Equals(handlerPrepareNode.Handle) && edge.To.Equals(handlerFinishNode.Handle));
+                Require(handlerPrecedence.ConstraintValue == "Failure" && handlerPrecedence.EvaluationOperation == "Constraint",
+                    "heuristic.handler.local_precedence");
                 var invalidProject = new[] { new SsisAiRuntime.Inspectors.Expressions.ExpressionSymbol("invalid-project", "missing-scope",
                     SsisAiRuntime.Inspectors.Expressions.ExpressionSymbolKind.ProjectParameter, "$Project", "Unavailable") };
                 var invalidSnapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session, invalidProject).Items.Single();
@@ -779,14 +1137,83 @@ namespace SsisAiRuntime.Ssis16IntegrationTests
                     !invalidSnapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.UsesVariable || edge.Kind == DependencyKind.UsesParameter), "heuristic.catalog.failure");
                 var edges = snapshot.Dependencies.Edges.Where(edge => edge.Kind == DependencyKind.UsesVariable || edge.Kind == DependencyKind.UsesParameter).ToArray();
                 Require(edges.Length >= 7 && edges.All(edge => edge.Evidence == "LexicalAndScopeResolved"), "heuristic.edges");
+                var numberNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Variable &&
+                    node.NativeId == numberVariable.ID);
+                var calculatedNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Variable &&
+                    node.NativeId == calculatedVariable.ID);
+                var chainedNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Variable &&
+                    node.NativeId == chainedVariable.ID);
+                var consumerNode = snapshot.Dependencies.Nodes.Single(node => node.Kind == SemanticObjectKind.Executable &&
+                    node.NativeId == chainConsumer.ID);
+                Require(dependencyEdges.Any(edge => edge.From == calculatedNode.Key && edge.To == numberNode.Key &&
+                        edge.Kind == DependencyKind.UsesVariable) &&
+                    dependencyEdges.Any(edge => edge.From == chainedNode.Key && edge.To == calculatedNode.Key &&
+                        edge.Kind == DependencyKind.UsesVariable) &&
+                    dependencyEdges.Any(edge => edge.From == consumerNode.Key && edge.To == chainedNode.Key &&
+                        edge.Kind == DependencyKind.UsesVariable) &&
+                    !dependencyEdges.Any(edge => edge.From == chainedNode.Key && edge.To == numberNode.Key) &&
+                    !dependencyEdges.Any(edge => edge.From == consumerNode.Key && edge.To == numberNode.Key),
+                    "heuristic.chain.direct_edges_only");
+                var recursiveDependencies = new DependencyQuery().Find(snapshot.Dependencies, numberNode.Key,
+                    incoming: true, recursive: true).Items.Single();
+                Require(recursiveDependencies.Nodes.Count(node => node.Key == calculatedNode.Key ||
+                        node.Key == chainedNode.Key || node.Key == consumerNode.Key) == 3 &&
+                    recursiveDependencies.Edges.Count(edge => edge.Kind == DependencyKind.UsesVariable) >= 3,
+                    "heuristic.chain.recursive_dependency_query");
+                var classifiedImpact = new RichImpactAnalysisQuery().Analyze(snapshot.Dependencies, numberNode.Key).Items.Single();
+                Require(classifiedImpact.Impacts.Any(item => item.Node.Key == calculatedNode.Key && item.Distance == 1) &&
+                    classifiedImpact.Impacts.Any(item => item.Node.Key == chainedNode.Key && item.Distance == 2 &&
+                        item.Category == ImpactCategory.Indirect) &&
+                    classifiedImpact.Impacts.Any(item => item.Node.Key == consumerNode.Key && item.Distance == 3 &&
+                        item.Category == ImpactCategory.Indirect),
+                    "heuristic.chain.indirect_impact");
                 stage = "heuristic.cli.graph";
                 var cli = RunCli(new[] { "ai", "dependency.graph", path }, 0, 5);
                 var projectedEdges = ((JArray)cli["results"]["edges"]).Where(edge => (string)edge["kind"] == "UsesVariable" || (string)edge["kind"] == "UsesParameter").ToArray();
                 Require(projectedEdges.Length > 0 && projectedEdges.All(edge => (string)edge["evidence"] == "LexicalAndScopeResolved"), "heuristic.cli.evidence");
                 RequireNoValues(cli);
+                Require(!cli.ToString().Contains(sensitiveParameterValue), "heuristic.sensitive_parameter.value_redacted");
                 Require(!cli.ToString().Contains("@[User::Flag]") && !cli.ToString().Contains("@[$Package::Toggle]"), "heuristic.cli.text");
                 Require(Hash(path) == before, "heuristic.hash");
-                Console.WriteLine("Heuristic expression verification: PASS; native declaration IDs, nearest-scope shadowing, package parameters, redaction, CLI evidence, and unchanged hash; no execution or validation.");
+                Console.WriteLine("Heuristic expression verification: PASS; native declaration IDs, Sequence/Foreach shadowing, event-handler precedence, package parameters, chained variable impacts, redaction, CLI evidence, and unchanged hash; no execution or validation.");
+            }
+            finally { loaded.Session.Package.Dispose(); }
+        }
+
+        private static void VerifyUnconnectedControlFlowStructure(string directory)
+        {
+            stage = "control-flow.unconnected.fixture.creation";
+            var path = Path.Combine(directory, "UnconnectedTasks.dtsx");
+            string firstId;
+            string secondId;
+            using (var package = new Package { Name = "UnconnectedTasks", ProtectionLevel = DTSProtectionLevel.DontSaveSensitive })
+            {
+                var first = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                first.Name = "FirstTask";
+                firstId = first.ID;
+                var second = (TaskHost)package.Executables.Add("STOCK:PipelineTask");
+                second.Name = "SecondTask";
+                secondId = second.ID;
+                new Application().SaveToXml(path, package, null);
+            }
+
+            stage = "control-flow.unconnected.fixture.reload";
+            var loaded = new PackageLoader().Load(path);
+            Require(loaded.Succeeded, "control-flow.unconnected.load");
+            try
+            {
+                var snapshot = new PackageAnalysisSnapshotFactory().Create(loaded.Session).Items.Single();
+                var tasks = snapshot.ControlFlow.Nodes.Where(node => node.NativeId == firstId || node.NativeId == secondId).ToArray();
+                Require(tasks.Length == 2 && !snapshot.ControlFlow.Edges.Any(edge => edge.Kind == ControlFlowEdgeKind.Precedence),
+                    "control-flow.unconnected.no_order_edge");
+                Require(snapshot.Dependencies.Edges.Count(edge => edge.Kind == DependencyKind.ContainsTask &&
+                    edge.From == "Package:" + loaded.Session.Package.ID &&
+                    (edge.To == "Executable:" + firstId || edge.To == "Executable:" + secondId)) == 2,
+                    "control-flow.unconnected.package_containment");
+                Require(!snapshot.Dependencies.Edges.Any(edge => edge.Kind == DependencyKind.DependsOnTask &&
+                    (edge.From == "Executable:" + firstId || edge.From == "Executable:" + secondId)),
+                    "control-flow.unconnected.no_dependency_edge");
+                Console.WriteLine("Unconnected control-flow probe: PASS; two package-contained tasks and no invented precedence/dependency order.");
             }
             finally { loaded.Session.Package.Dispose(); }
         }
